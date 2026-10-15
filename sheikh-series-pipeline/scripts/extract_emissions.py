@@ -189,7 +189,58 @@ def emissions_torch_parallel(model, wave, window, context, halves, sr=SR):
     if bad or any(r is None for r in res):
         raise RuntimeError('فشل التوازي: %s' % (bad[:2] or 'مقطع بلا مخرجات'))
     em = np.concatenate([r[0] for r in res], axis=0)
-    return em, res[0][1]
+    return torch.from_numpy(em), res[0][1]
+
+
+def emissions_torch_procs(model, wave, window, context, procs, sr=SR, threads=2):
+    """المسار أ (٤/٤): عمليات مستقلة (fork) تتقاسم أوزان النموذج عبر COW.
+
+    لماذا لا الخيوط: قياس 2026-10-15 ⇒ تقاسم الزمن على خيوط كسَب 167% من 400% (GIL يمسك
+    حلقة النوافذ)، وبقيت عملية واحدة بـ4 خيوط أفضل (178%). العمليات ترفع السقف إلى procs×threads.
+    الحدود مضبوطة على شبكة الإطارات (320 عينة) ⇒ مجموع الإطارات = إطارات الملف كاملًا بالضبط،
+    وكل جزء يُحسب على نطاق موسّع بالسياق ثم تُقتطع إطارات السياق ⇒ بلا أثر درزات.
+    """
+    import multiprocessing as mp
+    frame = int(round(sr / 50.0))
+    n = wave.size(0)
+    total_frames = n // frame
+    step = total_frames // procs
+    ctx_f = int(round(context * 50.0))
+    jobs = []
+    for i in range(procs):
+        f0 = i * step
+        f1 = total_frames if i == procs - 1 else (i + 1) * step
+        jobs.append((i, f0, f1, max(0, (f0 - ctx_f) * frame), min(n, (f1 + ctx_f) * frame)))
+    ctxm = mp.get_context('fork')
+    q = ctxm.SimpleQueue()
+
+    def work(i, f0, f1, a0, a1, q):
+        try:
+            torch.set_num_threads(threads)
+            with torch.inference_mode():
+                e, stride = generate_emissions(model, wave[a0:a1], window_length=window,
+                                               context_length=context, batch_size=1)
+            arr = np.ascontiguousarray(e.float().numpy())
+            lead = f0 - a0 // frame
+            q.put((i, arr[lead:lead + (f1 - f0)]))
+        except Exception as ex:                      # noqa: BLE001
+            q.put((i, ('ERR', '%s: %s' % (type(ex).__name__, str(ex)[:140]))))
+
+    ps = [ctxm.Process(target=work, args=j + (q,)) for j in jobs]
+    for p in ps:
+        p.start()
+    got = {}
+    for _ in jobs:
+        i, arr = q.get()
+        got[i] = arr
+    for p in ps:
+        p.join()
+    for i in sorted(got):
+        if isinstance(got[i], tuple):
+            raise RuntimeError('فشل الجزء %d: %s' % (i, got[i][1]))
+    em = np.concatenate([got[i] for i in sorted(got)], axis=0)
+    print('[توزيع] %d عمليات × %d خيوط ⇒ إطارات %d' % (procs, threads, em.shape[0]), flush=True)
+    return torch.from_numpy(em), 20.0
 
 
 def peak_mb():
@@ -207,6 +258,8 @@ def main():
     ap.add_argument('--threads', type=int, default=4, help='خيوط torch (تُوزَّع على المقاطع في --par-halves)')
     ap.add_argument('--layers', type=int, default=0,
                     help='(٤/٤ مسار ب) اقتطاع طبقات المحرّك إلى N طبقة (0 = الكل 24) — يقلّل الزمن والذاكرة')
+    ap.add_argument('--par-procs', type=int, default=1,
+                    help='(٤/٤ مسار أ) عمليات مستقلة بـfork تتقاسم الأوزان (COW) × threads خيطًا')
     ap.add_argument('--par-halves', type=int, default=1,
                     help='المسار أ: عدد المقاطع المتوازية (1 = معطّل · 2 = خيطان × خيطين داخليين)')
     ap.add_argument('--engine', default='auto', choices=['auto', 'torch', 'onnx'],
@@ -287,7 +340,10 @@ def main():
         t_load = time.time() - t0
         t0 = time.time()
         wav_in = wave if idx_map is None else torch.from_numpy(np.asarray(data).copy())
-        if a.par_halves and a.par_halves > 1:
+        if a.par_procs and a.par_procs > 1:
+            em, stride = emissions_torch_procs(model, wav_in, a.window, a.context, a.par_procs,
+                                               threads=int(a.threads))
+        elif a.par_halves and a.par_halves > 1:
             em, stride = emissions_torch_parallel(model, wav_in, a.window, a.context, a.par_halves)
         else:
             with torch.inference_mode():
@@ -322,7 +378,7 @@ def main():
                 window=a.window, context=a.context, batch=1,
                 silence_compact=bool(idx_map is not None),
                 silence_stats=(sc_stats if idx_map is not None else None),
-                unpad_deficit=int(deficit), par_halves=int(a.par_halves),
+                unpad_deficit=int(deficit), par_halves=int(a.par_halves), par_procs=int(a.par_procs),
                 layers=int(a.layers), threads=int(a.threads))
     json.dump(meta, open(a.out + '.meta.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 

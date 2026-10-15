@@ -41,7 +41,7 @@ echo "[$TAG] المرحلة ١: مصفوفة الانبعاثات (بلا Whispe
 #   الافتراضي الآمن: نافذة ٢٠ث + عامِلان (جلسة ONNX لكل عامل) ≈1.3–1.5GB.
 "$PY" -u "$SKILL_DIR/scripts/extract_emissions.py" --audio "$AUDIO" --txt "$TXT" --out "$PRE" \
     --engine "${EM_ENGINE:-torch}" --window "${EM_WINDOW:-20}" --onnx-workers "${ONNX_WORKERS:-2}" \
-    --onnx-threads "${ONNX_THREADS:-2}" --threads "${THREADS:-4}" --par-halves "${PAR_HALVES:-1}" \
+    --onnx-threads "${ONNX_THREADS:-2}" --threads "${THREADS:-4}" --par-halves "${PAR_HALVES:-1}" --par-procs "${PAR_PROCS:-1}" \
     --silence-compact "${SILENCE_COMPACT:-0}" --silence-rel "${SILENCE_REL:-5.0}" --layers "${LAYERS:-0}"
 T1=$(date +%s)
 echo "[$TAG] المرحلة ٢: محاذاة الشريحة المتحركة على المصفوفة (بلا نموذج)"

@@ -385,7 +385,9 @@ def main():
             ds = sorted(devs)
             report['vs_v1'] = dict(n=len(devs), text_match=ntxt, text_match_pct=round(ntxt / len(devs) * 100, 1),
                                    median=round(st.median(devs), 2), p90=round(ds[int(len(ds) * 0.9)], 2),
-                                   max=round(max(devs), 2), within_0_5=round(sum(1 for d in devs if d <= 0.5) / len(devs) * 100, 1),
+                                   max=round(max(devs), 2), within_0_1=round(sum(1 for d in devs if d <= 0.1) / len(devs) * 100, 1),
+                                   within_0_2=round(sum(1 for d in devs if d <= 0.2) / len(devs) * 100, 1),
+                                   within_0_5=round(sum(1 for d in devs if d <= 0.5) / len(devs) * 100, 1),
                                    within_1=round(sum(1 for d in devs if d <= 1.0) / len(devs) * 100, 1),
                                    within_1_5=round(sum(1 for d in devs if d <= 1.5) / len(devs) * 100, 1),
                                    window_20_25_n=len(reg),
@@ -408,7 +410,7 @@ def main():
     if 'vs_v1' in report:
         v = report['vs_v1']
         print('[%s] تحقق متقاطع مع v1 (بالفهرس): n=%d · تطابق نصي %.0f%% · وسيط=%.2fث ±0.5ث=%.0f%% ±1ث=%.0f%% | النافذة ٤ (20–25د): n=%d وسيط=%sث p90=%sث >1ث=%s%% >2ث=%s%%' % (
-            a.tag, v['n'], v['text_match_pct'], v['median'], v['within_0_5'], v['within_1'], v['window_20_25_n'],
+            a.tag, v['n'], v['text_match_pct'], v['median'], v['within_0_1'], v['within_0_2'], v['within_0_5'], v['within_1'], v['window_20_25_n'],
             v['window_20_25_median'], v['window_20_25_p90'], v['window_20_25_gt1'], v['window_20_25_gt2']))
 
 
