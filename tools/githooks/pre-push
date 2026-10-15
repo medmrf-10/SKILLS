@@ -1,0 +1,12 @@
+#!/bin/sh
+# pre-push: إشعار رفع للفرع الرئيسي فقط (مع كتم تكرار الالتزام نفسه)
+# المصدر: tools/githooks/pre-push
+R=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -f "$R/tools/git-mail-sync.py" ] || exit 0
+while read -r lref lsha rref rsha; do
+  case "$rref" in
+    refs/heads/main|refs/heads/master)
+      [ -n "$lsha" ] && timeout 300 python3 "$R/tools/git-mail-sync.py" --trigger push --sha "$lsha" >>"$R/.git/git-mail-sync.err" 2>&1 || true ;;
+  esac
+done
+exit 0

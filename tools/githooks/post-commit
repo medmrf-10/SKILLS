@@ -1,0 +1,14 @@
+#!/bin/sh
+# post-commit: (١) نسخ مهارات المستودع إلى شجرة Hermes  (٢) إشعار Gmail بالالتزام
+# لا تُحرِّر هذا الملف في .git/hooks مباشرة — المصدر هو tools/githooks/post-commit
+R=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$R/tools/sync-skills.sh" ] && "$R/tools/sync-skills.sh" >/dev/null 2>&1
+# حارس انزياح: إن حُدِّث خطاف في المستودع ولم يُثبَّت، يُسجَّل الخطأ (لا كتم أبدًا)
+for h in post-commit post-merge post-rewrite pre-push; do
+  cmp -s "$R/tools/githooks/$h" "$R/.git/hooks/$h" || \
+    echo "$(date '+%Y-%m-%d %H:%M:%S') انزياح خطاف: $h — شغّل bash tools/install-githooks.sh" >>"$R/.git/skills-sync.err"
+done
+if [ -f "$R/tools/git-mail-sync.py" ]; then
+  timeout 300 python3 "$R/tools/git-mail-sync.py" --trigger commit >>"$R/.git/git-mail-sync.err" 2>&1 || true
+fi
+exit 0

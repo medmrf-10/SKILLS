@@ -1,0 +1,9 @@
+#!/bin/sh
+# post-merge: يغطي الالتزامات القادمة من origin — نسخ المهارات ثم إشعار الدمج
+# المصدر: tools/githooks/post-merge
+R=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$R/tools/sync-skills.sh" ] && "$R/tools/sync-skills.sh" >/dev/null 2>&1
+if [ -f "$R/tools/git-mail-sync.py" ]; then
+  timeout 300 python3 "$R/tools/git-mail-sync.py" --trigger merge >>"$R/.git/git-mail-sync.err" 2>&1 || true
+fi
+exit 0
