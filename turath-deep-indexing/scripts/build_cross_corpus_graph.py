@@ -123,6 +123,26 @@ PERSON_CANONICAL_ALIASES = {
 }
 
 
+GENERIC_KUNYA_OR_NASAB_KEYS = {
+    "ابو بكر",
+    "ابو الحسن",
+    "ابو حنيفه",
+    "ابو هريره",
+    "ابن عباس",
+    "ابن عمر",
+    "عمر",
+    "عثمان",
+    "علي",
+    "احمد",
+    "مالك",
+    "مسلم",
+    "موسي",
+    "ابراهيم",
+    "عيسي",
+    "نوح",
+}
+
+
 def canonicalize_person(cname: str, cat: str = "") -> tuple[str, str, str]:
     raw = re.sub(r"\([^\)]*\)", "", cname or "").strip()
     n = norm_ar(raw)
@@ -150,10 +170,16 @@ def canonicalize_person(cname: str, cat: str = "") -> tuple[str, str, str]:
     if n in PERSON_CANONICAL_ALIASES:
         disp, ccat = PERSON_CANONICAL_ALIASES[n]
         return norm_ar(disp), disp, (cat or ccat)
-    for k, (disp, ccat) in PERSON_CANONICAL_ALIASES.items():
-        if len(k) >= 6 and (k in n or n in k):
+    # Safe containment match: only allow k in n when k is NOT a generic Kunya/Patronymic,
+    # never allow `n in k` (which merges short names like 'عبد الله' into 'ابو عبد الله السنوسي'),
+    # and require word-bounded match at the end of `n` (distinctive Nisbah/full name).
+    for k, (disp, ccat) in sorted(PERSON_CANONICAL_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
+        if k in GENERIC_KUNYA_OR_NASAB_KEYS or k.startswith("ابو "):
+            continue
+        if len(k) >= 7 and (n.endswith(" " + k) or n.startswith(k + " ")):
             return norm_ar(disp), disp, (cat or ccat)
     return n, raw, cat
+
 
 
 def parse_ayah_key(source_str: str) -> tuple[str | None, int | None, int | None, str | None]:
@@ -297,13 +323,22 @@ def build_matn_system_clauses(
     }
 
 
-def build_graph():
-    # 1. Load all 81 classical books
+def build_graph(work_dir: Path | None = None):
+    books_dir = work_dir if work_dir is not None else BOOKS_DIR
+    usdb_dir = work_dir if (work_dir is not None and (work_dir / "raw_lectures.json").exists()) else (books_dir / "usdb_v5")
+
+    # 1. Load all classical books dynamically (Round 1 + any roundN_9_books_deep.json)
     books_records = []
-    for r in range(1, 11):
-        fp = BOOKS_DIR / ("all_9_books_deep.json" if r == 1 else f"round{r}_9_books_deep.json")
-        if not fp.exists():
-            continue
+    candidate_files = []
+    if (books_dir / "all_9_books_deep.json").exists():
+        candidate_files.append((1, books_dir / "all_9_books_deep.json"))
+    for fp in sorted(books_dir.glob("round*_9_books_deep.json")):
+        m = re.match(r"round(\d+)_9_books_deep\.json$", fp.name)
+        if m:
+            candidate_files.append((int(m.group(1)), fp))
+    candidate_files.sort(key=lambda x: x[0])
+
+    for r, fp in candidate_files:
         rd = json.loads(fp.read_text(encoding="utf-8"))
         items = rd.items() if isinstance(rd, dict) else [(b.get("science", ""), b) for b in rd if isinstance(b, dict)]
         for sc, bk in items:
@@ -312,11 +347,11 @@ def build_graph():
             books_records.append((r, sc, bk))
 
     # 2. Load spoken lectures
-    lec_path = USDB_DIR / "lectures_deep_merged.json"
+    lec_path = usdb_dir / "lectures_deep_merged.json"
     lectures_map = json.loads(lec_path.read_text(encoding="utf-8")) if lec_path.exists() else {}
 
     # 3. Load technical courses
-    crs_path = USDB_DIR / "courses_deep_merged.json"
+    crs_path = usdb_dir / "courses_deep_merged.json"
     courses_map = json.loads(crs_path.read_text(encoding="utf-8")) if crs_path.exists() else {}
 
     # 4. Build Bridge 1: Cross-Corpus Ayah Graph (Books <-> Video Lectures <-> Firdaws Tafsirs)
@@ -411,30 +446,56 @@ def build_graph():
     for node in top_ayahs:
         node["firdaws_tafsirs"] = fetch_firdaws_tafsir(node["surah_num"], node["ayah_num"])
 
-    # 5. Build Bridge 2: Multi-Matn Triangulation Graph (Umm al-Barahin + Matn al-Akhdari)
-    raw_lecs = json.loads((USDB_DIR / "raw_lectures.json").read_text(encoding="utf-8"))
-    ub_system = build_matn_system_clauses(
-        base_work_id="umm-al-barahin",
-        base_work_title="متن أم البراهين (العقيدة السنوسية الصغرى)",
-        base_work_author="الإمام أبو عبد الله محمد بن يوسف السنوسي (ت 895هـ)",
-        science_target="akida",
-        clauses_raw=raw_lecs["alamri_barahin_12"]["base_matn_clauses"],
-        lectures_map=lectures_map,
-        books_records=books_records,
-        keywords_pool=["الحكم العقلي", "الواجب", "حدوث العالم", "القدم", "الدور", "التسلسل", "البقاء", "الحوادث", "قيامه بنفسه"],
-    )
-    akh_clauses_raw = raw_lecs.get("binsayib_akhdari_01", {}).get("base_matn_clauses", [])
-    akh_system = build_matn_system_clauses(
-        base_work_id="matn-al-akhdari",
-        base_work_title="متن الأخضري في العبادات على مذهب الإمام مالك (الكتاب 3418)",
-        base_work_author="العلامة عبد الرحمن بن محمد الصغير الأخضري (ت 983هـ)",
-        science_target="maliki",
-        clauses_raw=akh_clauses_raw,
-        lectures_map=lectures_map,
-        books_records=books_records,
-        keywords_pool=["الطهارة", "طهارة الحدث", "طهارة الخبث", "الماء المطلق", "فرائض الوضوء", "النية", "غسل الوجه"],
-    )
-    matn_systems_bridge = [ub_system, akh_system] if akh_clauses_raw else [ub_system]
+    # 5. Build Bridge 2: Dynamic Multi-Matn Triangulation Graph
+    raw_lec_path = usdb_dir / "raw_lectures.json"
+    raw_lecs = json.loads(raw_lec_path.read_text(encoding="utf-8")) if raw_lec_path.exists() else {}
+    KNOWN_MATN_META = {
+        "umm-al-barahin": {
+            "title": "متن أم البراهين (العقيدة السنوسية الصغرى)",
+            "author": "الإمام أبو عبد الله محمد بن يوسف السنوسي (ت 895هـ)",
+            "science": "akida",
+            "keywords": ["الحكم العقلي", "الواجب", "حدوث العالم", "القدم", "الدور", "التسلسل", "البقاء", "الحوادث", "قيامه بنفسه"],
+        },
+        "matn-al-akhdari": {
+            "title": "متن الأخضري في العبادات على مذهب الإمام مالك (الكتاب 3418)",
+            "author": "العلامة عبد الرحمن بن محمد الصغير الأخضري (ت 983هـ)",
+            "science": "maliki",
+            "keywords": ["الطهارة", "طهارة الحدث", "طهارة الخبث", "الماء المطلق", "فرائض الوضوء", "النية", "غسل الوجه"],
+        },
+        "shudhur-al-dhahab": {
+            "title": "متن شذور الذهب في معرفة كلام العرب",
+            "author": "الإمام جمال الدين ابن هشام الأنصاري (ت 761هـ)",
+            "science": "nahw",
+            "keywords": ["الكلمة", "الاسم", "الفعل", "الحرف", "الإعراب", "البناء"],
+        },
+    }
+    discovered_matns = {}
+    for lid, rlec in raw_lecs.items():
+        bwid = rlec.get("base_work_id")
+        bclauses = rlec.get("base_matn_clauses") or []
+        if bwid and bclauses and bwid not in discovered_matns:
+            meta = KNOWN_MATN_META.get(bwid, {})
+            discovered_matns[bwid] = {
+                "title": meta.get("title") or rlec.get("base_work_title") or bwid,
+                "author": meta.get("author") or rlec.get("base_work_author") or "",
+                "science": meta.get("science") or rlec.get("science") or "akida",
+                "clauses_raw": bclauses,
+                "keywords": meta.get("keywords") or [c.get("title", "") for c in bclauses if c.get("title")],
+            }
+
+    matn_systems_bridge = []
+    for bwid, minfo in discovered_matns.items():
+        sys_obj = build_matn_system_clauses(
+            base_work_id=bwid,
+            base_work_title=minfo["title"],
+            base_work_author=minfo["author"],
+            science_target=minfo["science"],
+            clauses_raw=minfo["clauses_raw"],
+            lectures_map=lectures_map,
+            books_records=books_records,
+            keywords_pool=minfo["keywords"],
+        )
+        matn_systems_bridge.append(sys_obj)
 
     # 6. Build Bridge 3: Unified Scholar & Person Graph across Books and Spoken Lectures
     person_index = {}
@@ -509,7 +570,7 @@ def build_graph():
     )[:25]
 
     graph_out = {
-        "engine_version": "USDB v5.5 — Universal Source-to-Database Flagship Engine",
+        "engine_version": "USDB v5.6 — Universal Source-to-Database Flagship Engine",
         "stats": {
             "books_indexed": len(books_records),
             "book_passages": sum(len(b.get("deep_toc_passages", [])) for _, _, b in books_records),
@@ -526,25 +587,35 @@ def build_graph():
             "cross_media_persons_count": len(cross_media_persons),
         },
         "matn_systems_bridge": matn_systems_bridge,
-        "matn_triangulation_bridge": ub_system["clauses"],
+        "matn_triangulation_bridge": matn_systems_bridge[0]["clauses"] if matn_systems_bridge else [],
         "ayah_bridge_top": top_ayahs,
         "cross_media_persons_bridge": cross_media_persons,
         "lectures": lectures_map,
         "courses": courses_map,
     }
 
-    out_json = USDB_DIR / "cross_corpus_graph.json"
+    out_json = usdb_dir / "cross_corpus_graph.json"
     out_json.write_text(json.dumps(graph_out, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    bundle_js = BOOKS_DIR / "web_data" / "usdb_v5_bundle.js"
-    bundle_js.parent.mkdir(parents=True, exist_ok=True)
-    bundle_js.write_text(
-        "window.USDB_V5_DATA = " + json.dumps(graph_out, ensure_ascii=False) + ";\n",
-        encoding="utf-8",
-    )
-    print(f"Built {out_json} and {bundle_js}:")
+    if work_dir is None:
+        bundle_js = books_dir / "web_data" / "usdb_v5_bundle.js"
+        bundle_js.parent.mkdir(parents=True, exist_ok=True)
+        bundle_js.write_text(
+            "window.USDB_V5_DATA = " + json.dumps(graph_out, ensure_ascii=False) + ";\n",
+            encoding="utf-8",
+        )
+        print(f"Built {out_json} and {bundle_js}:")
+    else:
+        print(f"Built {out_json}:")
     print(json.dumps(graph_out["stats"], ensure_ascii=False, indent=2))
+    return graph_out
 
 
 if __name__ == "__main__":
-    build_graph()
+    import sys
+    args = sys.argv[1:]
+    wdir = None
+    if "--work-dir" in args:
+        idx = args.index("--work-dir")
+        wdir = Path(args[idx + 1])
+    build_graph(work_dir=wdir)

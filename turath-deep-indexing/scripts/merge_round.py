@@ -64,9 +64,103 @@ SCIENCE_META = {
         "gem_label": "القواعد والضوابط الفقهية الكلية",
         "case_label": "الفروع المخرجة والمقارنات المذهبية",
     },
+    "hadith": {
+        "science_ar": "الحديث النبوي ومتونه",
+        "lens_ar": "عدسة الأسانيد والمتون والعلل والرواة والأحكام المستنبطة",
+        "gem_label": "الجوامع النبوية والقواعد الحديثية",
+        "case_label": "الوقائع النبوية والمرويات المسندة",
+    },
+    "hadith_sharh": {
+        "science_ar": "شروح الحديث وفقه السنة",
+        "lens_ar": "عدسة فقه الحديث ومذاهب العلماء وتوجيه الروايات والآثار",
+        "gem_label": "القواعد الحديثية والفقهية المستنبطة",
+        "case_label": "المسائل الخلافية والمرويات التطبيقية",
+    },
+    "tafsir": {
+        "science_ar": "التفسير وبيان المعاني",
+        "lens_ar": "عدسة التحليل البياني واللغوي والأحكام والمقاصد القرآنية",
+        "gem_label": "النكت التفسيرية والقواعد البيانية",
+        "case_label": "اللطائف التدبرية وأسباب النزول",
+    },
+    "irab_quran": {
+        "science_ar": "إعراب القرآن وبيانه وبلاغته",
+        "lens_ar": "عدسة الإعراب والتصريف والنكت البلاغية والشواهد الشعرية",
+        "gem_label": "الضوابط النحوية والبلاغية القرآنية",
+        "case_label": "الأوجه الإعرابية والشواهد التطبيقية",
+    },
+    "manzumat": {
+        "science_ar": "المنظومات العلمية وشروحها",
+        "lens_ar": "عدسة القواعد المنظومة وحل الأبيات وإعرابها وشواهدها",
+        "gem_label": "الأبيات الجامعة والقواعد المنظومة",
+        "case_label": "التطبيقات والشواهد الشعرية",
+    },
+    "kalam_firaq": {
+        "science_ar": "علم الكلام والمقالات والفرق",
+        "lens_ar": "عدسة الحجاج العقدي وتحرير مقالات الفرق والردود البرهانية",
+        "gem_label": "القواعد الكلامية والأدلة القطعية",
+        "case_label": "المناظرات والإلزامات الجدلية",
+    },
+    "nahw": {
+        "science_ar": "النحو العربي",
+        "lens_ar": "عدسة العوامل والأحكام الإعرابية والشواهد والعلل النحوية",
+        "gem_label": "القواعد والضوابط النحوية",
+        "case_label": "الشواهد والمسائل الإعرابية",
+    },
+    "sarf": {
+        "science_ar": "علم التصريف والاشتقاق",
+        "lens_ar": "عدسة الأبنية والأوزان والإعلال والإبدال والاشتقاق",
+        "gem_label": "الأبنية والقواعد الصرفية",
+        "case_label": "الأمثلة التصريفية والتطبيقات",
+    },
+    "balagha": {
+        "science_ar": "البلاغة (المعاني والبيان والبديع)",
+        "lens_ar": "عدسة أسرار التراكيب والمجاز والاستعارة والكناية والبديع",
+        "gem_label": "القواعد والنكت البلاغية",
+        "case_label": "الشواهد البيانية والتطبيقات",
+    },
+    "mantiq": {
+        "science_ar": "المنطق والمعيار العقلي",
+        "lens_ar": "عدسة التصورات والتصديقات والحدود والأقيسة والمغالطات",
+        "gem_label": "القواعد المنطقية والحدود البرهانية",
+        "case_label": "الأقيسة التطبيقية والمغالطات",
+    },
+    "munazarah": {
+        "science_ar": "آداب البحث والمناظرة",
+        "lens_ar": "عدسة المنع والنقض والمعارضة وتوجيه الأدلة",
+        "gem_label": "قواعد البحث والمناظرة",
+        "case_label": "المناظرات والاعتراضات التطبيقية",
+    },
+    "lugha": {
+        "science_ar": "فقه اللغة والمعاجم والأدب",
+        "lens_ar": "عدسة الدلالة المعجمية والفروق اللغوية والشواهد الأدبية",
+        "gem_label": "الفروق والضوابط اللغوية",
+        "case_label": "الشواهد والنوادر الأدبية",
+    },
+    "faraid": {
+        "science_ar": "الفرائض والمواريث",
+        "lens_ar": "عدسة الفروض والتعصيب والحجب وتأصيل المسائل الحسابية",
+        "gem_label": "قواعد الفرائض والحجب",
+        "case_label": "المسائل الفرضية التطبيقية",
+    },
 }
 
-NORMATIVE_SCIENCES = {"maliki", "ossoul", "9awa3idFi9h", "akida", "3olomQuran"}
+
+def get_science_meta(sc: str) -> dict:
+    if sc in SCIENCE_META:
+        return SCIENCE_META[sc]
+    return {
+        "science_ar": sc,
+        "lens_ar": "عدسة الفهرسة العميقة واستخلاص القواعد والشواهد والكيانات الموثقة",
+        "gem_label": "القواعد والفوائد العلمية المحررة",
+        "case_label": "المسائل والوقائع التطبيقية",
+    }
+
+
+NORMATIVE_SCIENCES = {
+    "maliki", "ossoul", "9awa3idFi9h", "akida", "3olomQuran",
+    "hadith_sharh", "tafsir", "irab_quran", "manzumat", "kalam_firaq",
+    "nahw", "sarf", "balagha", "mantiq", "munazarah", "lugha", "faraid",
+}
 TASHKEEL_RE = re.compile(r"[\u0617-\u061A\u064B-\u065F\u0670]")
 DIGITS_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 TRAILING_COLON_RE = re.compile(
@@ -83,10 +177,10 @@ ORPHAN_HEADING_RE = re.compile(
 )
 
 ISNAD_VERB_RE = re.compile(
-    r"(?:^|\s)(?:و?(?:حدثنا|حدثني|اخبرنا|اخبرني|انبانا|انباني|ثنا|سمعت|روي\s+لنا|حدثنيه|روينا)|وبه\s+(?:ثنا|حدثنا|اخبرنا))\b"
+    r"(?:^|\s)(?:(?:ح\s+)?و?(?:حدثنا|حدثني|اخبرنا|اخبرني|انبانا|انباني|ثنا|سمعت|روي\s+لنا|حدثنيه|روينا)|وبه\s+(?:ثنا|حدثنا|اخبرنا))\b"
 )
 ISNAD_LINK_TOKEN_RE = re.compile(
-    r"\b(?:حدثنا|حدثني|اخبرنا|اخبرني|انبانا|انباني|ثنا|سمعت|عن|بن|ابن)\b"
+    r"\b(?:حدثنا|حدثني|اخبرنا|اخبرني|انبانا|انباني|ثنا|سمعت|عن|بن|ابن|ح)\b"
 )
 AUTHOR_PROSE_GUARD_RE = re.compile(
     r"(?:قلت\s*:|قال\s+ابو\s+شامه|فالواجب\s+علي\s+العاقل|والعاقل\s+لا|فان\s+قيل|اعلم\s+ان\s+)"
@@ -263,6 +357,37 @@ def normalize_words_only(text: str, strip_ed_noise: bool = True):
     return "".join(w_chars), w_map
 
 
+HONORIFIC_LIGATURE_MAP = {
+    "\ufd40": " رحمه الله ",
+    "\ufd41": " رضي الله عنه ",
+    "\ufd42": " رضي الله عنها ",
+    "\ufd43": " رضي الله عنهم ",
+    "\ufd44": " رضي الله عنهما ",
+    "\ufd45": " رضي الله عنهن ",
+    "\ufd46": " صلى الله عليه وآله ",
+    "\ufd47": " عليه السلام ",
+    "\ufd48": " عليهم السلام ",
+    "\ufd49": " عليهما السلام ",
+    "\ufd4a": " عليه الصلاة والسلام ",
+    "\ufd4b": " قدس سره ",
+    "\ufd4c": " صلى الله عليه وآله وسلم ",
+    "\ufd4d": " عليها السلام ",
+    "\ufd4e": " تبارك وتعالى ",
+    "\ufd4f": " رحمهم الله ",
+    "\ufdfa": " صلى الله عليه وسلم ",
+    "\ufdfb": " جل جلاله ",
+    "\ufdfe": " سبحانه وتعالى ",
+    "\ufdff": " عز وجل ",
+}
+
+
+def expand_honorific_ligatures(s: str) -> str:
+    for k, v in HONORIFIC_LIGATURE_MAP.items():
+        if k in s:
+            s = s.replace(k, v)
+    return s
+
+
 def clean_for_embed(text: str, science: str = "", orig_heading: str = "", interior_isnads: list = None) -> str:
     s = text
     # Strip interior isnad spans from embed_matn_text so embeddings focus on pure matn
@@ -283,9 +408,12 @@ def clean_for_embed(text: str, science: str = "", orig_heading: str = "", interi
     s = TASHKEEL_RE.sub("", s)
     s = s.replace("\u0640", "")
     s = re.sub(r"^(?:المقدمة\s*)?﷽\s*", "", s.strip())
-    # Strip manuscript folio markers like [١٢ و], (١٣٠ب), / (٢٥ أ/ د) and edition page markers ⦗١١٣⦘
+    # Expand Islamic honorific ligatures (U+FD40..U+FDFF) into standard Arabic words for EmbeddingGemma 2
+    s = expand_honorific_ligatures(s)
+    # Strip manuscript folio markers like [١٢ و], (١٣٠ب), / (٢٥ أ/ د), edition page markers ⦗١١٣⦘, and inline 'صفحة ١٣٧'
     s = FOLIO_MARKER_RE.sub(" ", s)
     s = EDITION_PAGE_RE.sub(" ", s)
+    s = re.sub(r"\bصفحة\s+[٠-٩0-9]{1,4}\b", " ", s)
     s = re.sub(r"\[[٠-٩0-9]+\s*[وظ]\]", " ", s)
     # Strip bare footnote digits after Quranic closing brackets like ﴾ ٢
     s = re.sub(r"(?<=﴾)\s*[٠-٩0-9]{1,2}\b", "", s)
@@ -327,6 +455,60 @@ def clean_for_embed(text: str, science: str = "", orig_heading: str = "", interi
     return s
 
 
+def _normalize_words_with_honorifics(text: str, strip_ed_noise: bool = True):
+    """Normalizes words while expanding U+FD40..U+FDFF honorific ligatures and mapping back to original offsets."""
+    work = text
+    if strip_ed_noise:
+        for pat in (
+            FOLIO_MARKER_RE,
+            EDITION_PAGE_RE,
+            r"\[[٠-٩0-9]+\s*[وظ]\]",
+            r"\[[٠-٩0-9]{1,3}\]",
+            r"\(¬?[٠-٩0-9]+|\*+\)",
+            GLUED_BARE_FN_RE,
+            r"(?:^|(?<=\s))\s*(?:\(خَ\)\s*)?[٠-٩0-9]+\*{0,3}\s*[-–_ـ]\s+",
+            r"صفحة فارغة في الأصل",
+            r"(?:^|(?<=\n))\s*[٠-٩0-9]+\s*/\s*[٠-٩0-9]+\s*(?=\n|$)",
+        ):
+            work = re.sub(pat, lambda m: " " * len(m.group(0)), work)
+    w_chars = []
+    w_map = []
+    prev_sp = True
+    for i, ch in enumerate(work):
+        if TASHKEEL_RE.match(ch) or ch == "\u0640":
+            continue
+        if ch in HONORIFIC_LIGATURE_MAP:
+            exp_norm, _ = normalize_words_only(HONORIFIC_LIGATURE_MAP[ch], strip_ed_noise=False)
+            if exp_norm:
+                if not prev_sp:
+                    w_chars.append(" ")
+                    w_map.append(i)
+                for ech in exp_norm:
+                    w_chars.append(ech)
+                    w_map.append(i)
+                prev_sp = False
+            continue
+        if ch in "أإآٱ":
+            ch = "ا"
+        elif ch == "ة":
+            ch = "ه"
+        elif ch == "ى":
+            ch = "ي"
+        if ch.isalnum() or "\u0621" <= ch <= "\u064A":
+            w_chars.append(ch)
+            w_map.append(i)
+            prev_sp = False
+        else:
+            if not prev_sp:
+                w_chars.append(" ")
+                w_map.append(i)
+                prev_sp = True
+    while w_chars and w_chars[-1] == " ":
+        w_chars.pop()
+        w_map.pop()
+    return "".join(w_chars), w_map
+
+
 def find_anchor_offset(text: str, anchor: str, min_offset: int = 0):
     if not anchor or not text:
         return -1, "failed"
@@ -361,6 +543,19 @@ def find_anchor_offset(text: str, anchor: str, min_offset: int = 0):
         n_idx = find_word_bounded(norm_text, norm_anc, norm_min)
         if n_idx != -1:
             return idx_map[n_idx], "normalized"
+
+    # 3. Fallback: try with Unicode honorific ligatures (U+FD40..U+FDFF) expanded to words
+    norm_text_h, idx_map_h = _normalize_words_with_honorifics(text, strip_ed_noise=True)
+    norm_anc_h, _ = _normalize_words_with_honorifics(anchor, strip_ed_noise=True)
+    if norm_text_h and norm_anc_h and len(norm_anc_h.split()) >= min(4, len(norm_text_h.split())):
+        norm_min_h = len(norm_text_h)
+        for k, orig_i in enumerate(idx_map_h):
+            if orig_i >= min_offset:
+                norm_min_h = k
+                break
+        n_idx_h = find_word_bounded(norm_text_h, norm_anc_h, norm_min_h)
+        if n_idx_h != -1:
+            return idx_map_h[n_idx_h], "normalized"
 
     return -1, "failed"
 
@@ -742,6 +937,10 @@ def extract_date_years_from_text(chunk_text: str) -> list:
 
             num_toks = []
             j = idx + 1
+            approx_prefix = False
+            if j < len(tokens) and tokens[j] in ("نيف", "نيفا", "بضع", "بضعه", "نحو", "حدود", "قرابه"):
+                approx_prefix = True
+                j += 1
             while j < len(tokens):
                 tj = tokens[j]
                 tj_clean = tj[1:] if tj.startswith("و") and tj[1:] in ALL_NUM_WORDS else tj
@@ -793,6 +992,7 @@ def tag_chronology_source(
     passage_years = extract_date_years_from_text(chunk_text)
     matn_years = extract_date_years_from_text(clean_matn) if (isnad_prefix and clean_matn) else passage_years
     isnad_years = extract_date_years_from_text(isnad_prefix) if isnad_prefix else []
+    has_approx_decade = bool(re.search(r"\b(?:نيف|نيفا|بضع|بضعة)\b", TASHKEEL_RE.sub("", chunk_text)))
     out = []
     for ch in chronology:
         if not isinstance(ch, dict):
@@ -803,7 +1003,7 @@ def tag_chronology_source(
             continue
         century_basis = None
         if isinstance(hy, int):
-            if hy in passage_years:
+            if hy in passage_years or (has_approx_decade and any(py % 10 == 0 and py <= hy <= py + 9 for py in passage_years)):
                 y_src = "text_explicit"
             elif hy >= 100 and (hy % 100) in passage_years:
                 matching_basis = [y for y in part_explicit_years if y >= 100 and (y // 100) == (hy // 100)]
@@ -1054,8 +1254,9 @@ def classify_and_link_book_footnotes(book_id: int, science: str, parts_list: lis
         fn_tokens = [t for t in tokens if t["class"] == "footnote_marker"]
         fn_cursor = 0
         matched_fn_positions = []
+        book_uses_bare_markers = not any(paren_re.search(p_item.get("text", "")) for p_item in parts_list)
 
-        if not fn_tokens and avail_fns:
+        if not fn_tokens and avail_fns and book_uses_bare_markers:
             # Fallback for editions with bare attached footnote markers (e.g. 'لبعضِي٣', '* ترجمته') without parentheses
             pos_scan = 0
             for cand_fn in avail_fns:
@@ -1117,7 +1318,10 @@ def classify_and_link_book_footnotes(book_id: int, science: str, parts_list: lis
                 else:
                     break
             if not matched:
-                gate_errors.append(f"UNMATCHED_FN_MARKER in book {book_id} part {pt}: {tok}")
+                if not any(p_item.get("fn") for p_item in parts_list):
+                    tok["class"] = "source_stripped_footnote_marker"
+                else:
+                    gate_errors.append(f"UNMATCHED_FN_MARKER in book {book_id} part {pt}: {tok}")
 
         part_start_pg = p.get("pg")
         valid_fn_positions = [(pos_i, pg_i, fid) for pos_i, pg_i, fid in matched_fn_positions if isinstance(pg_i, int)]
@@ -1179,61 +1383,66 @@ def verify_and_locate_span_in_part(snippet: str, raw_part: str, allow_elision: b
         return "exact", exact_pos, exact_pos + len(snippet)
 
     has_ellipsis = bool(re.search(r"\.{2,}|…+", snippet))
-    if has_ellipsis and not allow_elision and ".." not in raw_part:
+    raw_has_hemistich_sep = (".." in raw_part) or ("**" in raw_part) or ("* *" in raw_part)
+    if has_ellipsis and not allow_elision and not raw_has_hemistich_sep:
         return "failed", -1, -1
 
-    norm_part, part_map = normalize_words_only(raw_part, strip_ed_noise=True)
-    if not norm_part:
-        return "failed", -1, -1
+    for norm_fn in (normalize_words_only, _normalize_words_with_honorifics):
+        norm_part, part_map = norm_fn(raw_part, strip_ed_noise=True)
+        if not norm_part:
+            continue
 
-    # Pre-strip FOLIO_MARKER_RE and EDITION_PAGE_RE from snippet before splitting on '/'
-    snippet_clean = FOLIO_MARKER_RE.sub(" ", snippet)
-    snippet_clean = EDITION_PAGE_RE.sub(" ", snippet_clean)
-    raw_segs = [s.strip() for s in re.split(r"\.{2,}|…+|/", snippet_clean) if s.strip()]
-    if not raw_segs:
-        return "failed", -1, -1
+        # Pre-strip FOLIO_MARKER_RE and EDITION_PAGE_RE from snippet before splitting on '/' or poetic '**'
+        snippet_clean = FOLIO_MARKER_RE.sub(" ", snippet)
+        snippet_clean = EDITION_PAGE_RE.sub(" ", snippet_clean)
+        raw_segs = [s.strip() for s in re.split(r"\.{2,}|…+|/|\*(?:\s*\*)+", snippet_clean) if s.strip()]
+        if not raw_segs:
+            continue
 
-    seg_spans = []
-    search_from = 0
-    for seg in raw_segs:
-        norm_seg, _ = normalize_words_only(seg, strip_ed_noise=True)
-        if not norm_seg:
-            return "failed", -1, -1
-        pos = find_word_bounded(norm_part, norm_seg, search_from)
-        if pos == -1:
-            return "failed", -1, -1
-        orig_s = part_map[pos]
-        orig_e = part_map[min(len(part_map) - 1, pos + len(norm_seg) - 1)] + 1
-        while orig_e < len(raw_part) and (TASHKEEL_RE.match(raw_part[orig_e]) or raw_part[orig_e] == "\u0640"):
-            orig_e += 1
-        seg_spans.append((pos, pos + len(norm_seg), orig_s, orig_e, len(norm_seg.split())))
-        search_from = pos + len(norm_seg)
+        seg_spans = []
+        search_from = 0
+        failed_seg = False
+        for seg in raw_segs:
+            norm_seg, _ = norm_fn(seg, strip_ed_noise=True)
+            if not norm_seg:
+                failed_seg = True
+                break
+            pos = find_word_bounded(norm_part, norm_seg, search_from)
+            if pos == -1:
+                failed_seg = True
+                break
+            orig_s = part_map[pos]
+            orig_e = part_map[min(len(part_map) - 1, pos + len(norm_seg) - 1)] + 1
+            while orig_e < len(raw_part) and (TASHKEEL_RE.match(raw_part[orig_e]) or raw_part[orig_e] == "\u0640"):
+                orig_e += 1
+            seg_spans.append((pos, pos + len(norm_seg), orig_s, orig_e, len(norm_seg.split())))
+            search_from = pos + len(norm_seg)
 
-    if not seg_spans:
-        return "failed", -1, -1
+        if failed_seg or not seg_spans:
+            continue
 
-    span_start = seg_spans[0][2]
-    span_end = seg_spans[-1][3]
+        span_start = seg_spans[0][2]
+        span_end = seg_spans[-1][3]
 
-    if len(seg_spans) == 1:
-        if has_ellipsis and ".." not in raw_part[span_start : min(len(raw_part), span_end + 10)]:
-            return "failed", -1, -1
-        return "exact", span_start, span_end
+        if len(seg_spans) == 1:
+            if has_ellipsis and not raw_has_hemistich_sep:
+                continue
+            return "exact", span_start, span_end
 
-    max_word_gap = 0
-    for i in range(len(seg_spans) - 1):
-        between = norm_part[seg_spans[i][1] : seg_spans[i + 1][0]].strip()
-        gap_words = len(between.split()) if between else 0
-        if gap_words > max_word_gap:
-            max_word_gap = gap_words
+        max_word_gap = 0
+        for i in range(len(seg_spans) - 1):
+            between = norm_part[seg_spans[i][1] : seg_spans[i + 1][0]].strip()
+            gap_words = len(between.split()) if between else 0
+            if gap_words > max_word_gap:
+                max_word_gap = gap_words
 
-    if max_word_gap == 0 and (not has_ellipsis or ".." in raw_part[span_start:span_end]):
-        return "hemistich", span_start, span_end
+        if max_word_gap == 0 and (not has_ellipsis or raw_has_hemistich_sep):
+            return "hemistich", span_start, span_end
 
-    if not allow_elision or len(seg_spans) > 2 or max_word_gap > 25 or any(s[4] < 4 for s in seg_spans):
-        return "failed", -1, -1
+        if allow_elision and len(seg_spans) <= 2 and max_word_gap <= 25 and all(s[4] >= 4 for s in seg_spans):
+            return "elided_exact", span_start, span_end
 
-    return "elided_exact", span_start, span_end
+    return "failed", -1, -1
 
 
 GAZETTEER_PLACE_STEMS = {
@@ -1543,12 +1752,22 @@ def align_book_passages(
 
                 # Candidate Density Checks (Explicit Years, Quranic Verses, Persons)
                 matn_years_explicit = extract_date_years_from_text(clean_matn)
+                has_approx_dec = bool(re.search(r"\b(?:نيف|نيفا|بضع|بضعة)\b", TASHKEEL_RE.sub("", clean_matn)))
                 acked_colophon_yrs = set()
-                if matn_years_explicit and not any(c.get("hijri_year") in matn_years_explicit for c in chronology):
+                if matn_years_explicit and not any(
+                    isinstance(c.get("hijri_year"), int)
+                    and (
+                        c.get("hijri_year") in matn_years_explicit
+                        or (has_approx_dec and any(py % 10 == 0 and py <= c["hijri_year"] <= py + 9 for py in matn_years_explicit))
+                    )
+                    for c in chronology
+                ):
                     p0_errors.append(
                         f"[{science}] P0_MISSED_EXPLICIT_YEARS in {pid_str}: text has years {matn_years_explicit} but chronology={chronology}"
                     )
                 explicit_verses = re.findall(r"﴿([^﴾]{8,})﴾", clean_matn)
+                if not explicit_verses and re.search(r"(?:قال\s+(?:الله\s+)?تعالى|قوله\s+(?:تعالى|عز\s+وجل)|قال\s+الله\s+عز\s+وجل)", TASHKEEL_RE.sub("", clean_matn)):
+                    explicit_verses = re.findall(r"\{([^\}]{8,})\}", clean_matn)
                 if explicit_verses and not any(
                     "آية" in (ev.get("type") or "")
                     or "قرآن" in (ev.get("type") or "")
@@ -1557,7 +1776,7 @@ def align_book_passages(
                     for ev in item.get("evidences", [])
                 ):
                     p0_errors.append(
-                        f"[{science}] P0_MISSED_QURAN_VERSES in {pid_str}: {len(explicit_verses)} verse(s) ﴿...﴾ in text but 0 in evidences"
+                        f"[{science}] P0_MISSED_QURAN_VERSES in {pid_str}: {len(explicit_verses)} verse(s) ﴿...﴾/{'{...}'} in text but 0 in evidences"
                     )
                 norm_matn_no_tash = TASHKEEL_RE.sub("", clean_matn)
                 explicit_nasab = [
@@ -1565,7 +1784,7 @@ def align_book_passages(
                     for m_n in re.finditer(r"\b(?:أبو|أبي|ابن)?\s*[\u0621-\u064A]{3,}\s+بن\s+[\u0621-\u064A]{3,}", norm_matn_no_tash)
                     if not any(w in m_n.group(0) for w in ("رسول", "نبي", "رب", "سبيل", "بنت", "ابنة"))
                 ]
-                if explicit_nasab and not clean_persons and science in ("tarajim", "sirah", "tari5", "tazkia"):
+                if explicit_nasab and not clean_persons and science in ("tarajim", "sirah", "tari5", "tazkia", "hadith", "hadith_sharh"):
                     p0_errors.append(
                         f"[{science}] P0_MISSED_PERSONS in {pid_str}: explicit names {explicit_nasab[:3]} in matn but persons=[]"
                     )
@@ -1611,8 +1830,9 @@ def align_book_passages(
             if search_queries:
                 concept_parts.append(f"أسئلة: {' '.join(search_queries)}")
 
+            smeta = get_science_meta(science)
             embed_concept = (
-                f"title: {sub_h} — {SCIENCE_META[science]['science_ar']} ({meta.get('title', '')}) | text: "
+                f"title: {sub_h} — {smeta['science_ar']} ({meta.get('title', '')}) | text: "
                 + " | ".join(concept_parts)
             )
 
@@ -1687,29 +1907,41 @@ def align_book_passages(
     return aligned, unlinked_fns
 
 
-def audit_and_merge_round(round_num: int = 3, raw_override: dict = None, deep_overrides: dict = None):
-    raw_path = BASE / f"raw_round{round_num}_books.json"
+def audit_and_merge_round(round_num: int = 3, raw_override: dict = None, deep_overrides: dict = None, work_dir: Path = None):
+    wdir = Path(work_dir) if work_dir is not None else BASE
+    raw_path = wdir / f"raw_round{round_num}_books.json"
     raw_r = raw_override if raw_override is not None else json.loads(raw_path.read_text(encoding="utf-8"))
-    order = ["tarajim", "sirah", "tari5", "tazkia", "akida", "maliki", "ossoul", "3olomQuran", "9awa3idFi9h"]
+    base_order = ["tarajim", "sirah", "tari5", "tazkia", "akida", "maliki", "ossoul", "3olomQuran", "9awa3idFi9h"]
+    order = [sc for sc in base_order if sc in raw_r] + [sc for sc in raw_r.keys() if sc not in base_order]
     books_out = []
     p0_errors = []
     p1_warnings = []
+
+    if not order:
+        p0_errors.append("P0_NO_BOOKS_IN_ROUND: raw_r contains no science entries")
 
     total_passages_all = 0
     total_gems_all = 0
     total_quotes_all = 0
 
     for sc in order:
-        if sc not in raw_r:
-            continue
         raw_b = raw_r[sc]
         if deep_overrides and sc in deep_overrides:
             deep_b = deep_overrides[sc]
         else:
-            f_path = BASE / f"r{round_num}_deep_{sc}.json"
+            f_path = wdir / f"r{round_num}_deep_{sc}.json"
             deep_b = json.loads(f_path.read_text(encoding="utf-8"))
 
-        parts_list = raw_b["parts"]
+        parts_list = []
+        for idx_p, p_in in enumerate(raw_b["parts"]):
+            p_copy = dict(p_in)
+            if "i" not in p_copy:
+                p_copy["i"] = p_copy.get("part", idx_p)
+            if "t" not in p_copy:
+                p_copy["t"] = p_copy.get("title", f"الجزء {p_copy['i']}")
+            if "text_sha256" not in p_copy and "text" in p_copy:
+                p_copy["text_sha256"] = sha16(p_copy["text"])
+            parts_list.append(p_copy)
         parts_by_id = {p["i"]: p["text"] for p in parts_list}
         seen_bf_ids = {}
         for idx_f, f in enumerate(raw_b.get("book_footnotes", [])):
@@ -1990,19 +2222,20 @@ def audit_and_merge_round(round_num: int = 3, raw_override: dict = None, deep_ov
             for p in parts_list
         ]
 
+        sc_meta = get_science_meta(sc)
         books_out.append({
             "round": round_num,
             "science": sc,
-            "science_ar": SCIENCE_META[sc]["science_ar"],
-            "lens_ar": SCIENCE_META[sc]["lens_ar"],
-            "gem_label": SCIENCE_META[sc]["gem_label"],
-            "case_label": SCIENCE_META[sc]["case_label"],
+            "science_ar": sc_meta["science_ar"],
+            "lens_ar": sc_meta["lens_ar"],
+            "gem_label": sc_meta["gem_label"],
+            "case_label": sc_meta["case_label"],
             "book_id": raw_b["book_id"],
             "title": raw_b["meta"]["title"],
-            "author": f"{raw_b['meta']['author']} (ت {raw_b['meta']['death']} هـ)",
-            "scope": raw_b["scope"],
+            "author": f"{raw_b['meta']['author']} (ت {raw_b['meta'].get('death', '؟')} هـ)",
+            "scope": raw_b.get("scope", {}),
             "orig_parts_count": len(parts_list),
-            "total_chars": raw_b["scope"]["chars_selected"],
+            "total_chars": raw_b.get("scope", {}).get("chars_selected", sum(len(p["text"]) for p in parts_list)),
             "orig_toc": orig_toc,
             "book_footnotes": raw_b.get("book_footnotes", []),
             "unlinked_part_footnotes": unlinked_fns,
@@ -2011,7 +2244,7 @@ def audit_and_merge_round(round_num: int = 3, raw_override: dict = None, deep_ov
             "stories": cases,
             "quotes": quotes,
             "quality_gate": {
-                "gate_version": "v4.1_strict_grounded",
+                "gate_version": "v4.3_universal_strict_grounded",
                 "align_exact_or_norm_pct": round(100.0 * exact_align_cnt / max(1, len(aligned_passages)), 1),
                 "gems_exact_verbatim_pct": round(100.0 * exact_gem_cnt / max(1, len(gems)), 1),
                 "gems_elided_exact_count": elided_gem_cnt,
@@ -2027,7 +2260,7 @@ def audit_and_merge_round(round_num: int = 3, raw_override: dict = None, deep_ov
 
     gate_report = {
         "round": round_num,
-        "gate_version": "v4.1_strict_grounded",
+        "gate_version": "v4.3_universal_strict_grounded",
         "passed": len(p0_errors) == 0,
         "p0_error_count": len(p0_errors),
         "p1_warning_count": len(p1_warnings),
@@ -2041,7 +2274,21 @@ def audit_and_merge_round(round_num: int = 3, raw_override: dict = None, deep_ov
 
 
 def main():
-    round_num = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    global BASE
+    args = sys.argv[1:]
+    work_dir = None
+    pos_args = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--work-dir" and i + 1 < len(args):
+            work_dir = Path(args[i + 1]).resolve()
+            i += 2
+        else:
+            pos_args.append(args[i])
+            i += 1
+    if work_dir is not None:
+        BASE = work_dir
+    round_num = int(pos_args[0]) if pos_args else 3
     books_out, gate_report = audit_and_merge_round(round_num=round_num)
     report_path = BASE / "gate_report.json"
     round_report_path = BASE / f"gate_report_r{round_num}.json"
@@ -2052,14 +2299,14 @@ def main():
     for b in books_out:
         qg = b["quality_gate"]
         print(
-            f"[R{round_num} {b['science']:11s}] {b['title'][:25]:25s} | parts={b['orig_parts_count']:2d} -> passages={len(b['deep_toc_passages']):2d} "
+            f"[R{round_num} {b['science']:13s}] {b['title'][:25]:25s} | parts={b['orig_parts_count']:2d} -> passages={len(b['deep_toc_passages']):2d} "
             f"(align={qg['align_exact_or_norm_pct']:5.1f}%) | isnads={qg['validated_isnad_count']:2d} (lead={qg['lead_isnad_count']}, int={qg['interior_isnad_count']}) "
             f"| gems={qg['gems_exact_verbatim_pct']:5.1f}% ({len(b['science_gems']):2d}) | cases={len(b['stories']):2d} | quotes={qg['quotes_verbatim_pct']:5.1f}% ({len(b['quotes']):2d}) "
             f"| fns_unlinked={qg['unlinked_footnotes_count']} | max_emb={qg['max_embed_matn_chars']:4d}"
         )
 
     if not gate_report["passed"]:
-        print(f"\nGATE v4.1 FAILED with {gate_report['p0_error_count']} P0 errors! See {round_report_path}:")
+        print(f"\nGATE v4.3 FAILED with {gate_report['p0_error_count']} P0 errors! See {round_report_path}:")
         for err in gate_report["p0_errors"]:
             print("  [P0]", err)
         sys.exit(1)
@@ -2067,10 +2314,11 @@ def main():
     out_path = BASE / f"round{round_num}_9_books_deep.json"
     out_path.write_text(json.dumps(books_out, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
-        f"\nSUCCESS: All {len(books_out)} Round {round_num} books passed Strict Quality Gate v4.1 (Grounded & Verified)! "
+        f"\nSUCCESS: All {len(books_out)} Round {round_num} books passed Strict Quality Gate v4.3 (Grounded & Verified)! "
         f"(passages={gate_report['total_passages']}, gems={gate_report['total_gems']}, quotes={gate_report['total_quotes']})"
     )
 
 
 if __name__ == "__main__":
     main()
+

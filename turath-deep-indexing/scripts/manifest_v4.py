@@ -14,6 +14,7 @@ BASE = Path(os.environ.get("TURATH_BOOKS_REPO", "/Users/macm1pro/REPOS/books"))
 SNAPSHOT_DIR = BASE / "source_snapshots"
 PATCH_DIR = BASE / "source_patches"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(BASE))
 import fn_linker_v4 as fnv4
 
@@ -206,8 +207,12 @@ def build_book_window_and_manifest(round_num: int, sc: str, bid: int) -> dict:
 
     pfiles = sorted(bdir.glob("0*.json"))
     raw_loaded = []
-    for pf in pfiles:
+    for idx_pf, pf in enumerate(pfiles):
         p = json.loads(pf.read_text(encoding="utf-8"))
+        if "i" not in p:
+            p["i"] = p.get("part", idx_pf)
+        if "t" not in p and "title" in p:
+            p["t"] = p["title"]
         raw_loaded.append(p)
 
     kept_parts = []

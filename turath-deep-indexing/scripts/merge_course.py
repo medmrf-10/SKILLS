@@ -1,38 +1,66 @@
 #!/usr/bin/env python3
 """
-Gate v5.0 — Technical & Educational Course Engine (Adapter D: Technical Course Profile).
-Enforces 100% lossless verbatim partitioning, Atomic Code/Table/Math Block Protection,
+Gate v5.1 — Technical & Educational Course Engine (Adapter D: Technical Course Profile).
+Enforces 100% lossless verbatim partitioning, Atomic Code/Table/Math/Callout/Details Block Protection,
 and the User's Cognitive DNA (Root-Cause First, Wrong-vs-Canonical Contrast, Zero Childish Analogies,
-and RTL-Safe English Term Prefixing).
+and UAX #9 Bidi P2 RTL-Safe English Term Prefixing).
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/Users/macm1pro/REPOS/books")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import merge_round as mr
 
-USDB_DIR = Path("/Users/macm1pro/REPOS/books/usdb_v5")
+if not hasattr(mr, "find_anchor_pos"):
+    mr.find_anchor_pos = lambda text, anchor, start=0: mr.find_anchor_offset(text, anchor, start)[0]
+if not hasattr(mr, "verify_quote_verbatim"):
+    def _verify_quote_verbatim(snippet: str, raw_text: str):
+        mode, _s, _e = mr.verify_and_locate_span_in_part(snippet, raw_text, allow_elision=False)
+        return (mode != "failed"), mode
+    mr.verify_quote_verbatim = _verify_quote_verbatim
+
+USDB_DIR = Path(os.environ.get("USDB_WORK_DIR", "/Users/macm1pro/REPOS/books/usdb_v5"))
 
 BANNED_FLUFF_OR_ANALOGY_RE = re.compile(
-    r"(?:تخيل\s+شجرة|تخيل\s+دفتر|تخيل\s+عامل|يا\s+صديقي|سؤال\s+ممتاز|أهلاً\s+بك|مرحباً\s+بك|هل\s+ننتقل|هل\s+نبدأ)"
+    r"(?:تخيل\s+شجرة|تخيل\s+دفتر|تخيل\s+عامل|تخيل\s+صندوق|يا\s+صديقي|سؤال\s+ممتاز|أهلاً\s+بك|مرحباً\s+بك|هل\s+ننتقل|هل\s+نبدأ)"
 )
-BARE_ENGLISH_LINE_START_RE = re.compile(r"^\s*[A-Za-z][A-Za-z0-9_+-]*\s+[\u0600-\u06FF]", re.M)
+# UAX #9 Rule P2: First strong directional character determines paragraph base direction,
+# skipping all leading neutral/weak characters (backticks, quotes, parens, dashes, bullets).
+BARE_ENGLISH_LINE_START_RE = re.compile(
+    r"^\s*(?:[-*+•]\s+|\d+[.)]\s+)?[`\"'«(\[{—–\-]*[A-Za-z][A-Za-z0-9_.+-]*[`\"'»)\]}]*\s+.*[\u0600-\u06FF]",
+    re.M,
+)
 
 
 def find_atomic_blocks(raw_text: str):
     """
-    Return list of `(char_start, char_end, kind)` for fenced code blocks (```...```)
-    and contiguous Markdown tables (`|...|`) that MUST NOT be split across passages.
+    Return list of `(char_start, char_end, kind)` for:
+    1. Fenced code/diagram blocks (```...```, including ```mermaid)
+    2. Contiguous Markdown tables (`|...|`)
+    3. Multi-line or block LaTeX display math (`$$...$$`)
+    4. GitHub Callout / Alert blockquotes (`> [!NOTE]` ... contiguous `>` lines)
+    5. Collapsible HTML `<details>...</details>` blocks
+    None of these may EVER be split across passage boundaries.
     """
     blocks = []
-    # 1. Fenced code blocks
+    # 1. Fenced code & mermaid blocks
     for m in re.finditer(r"^```[^\n]*\n.*?^```[ \t]*$", raw_text, flags=re.M | re.S):
         blocks.append((m.start(), m.end(), "code_fence"))
     # 2. Contiguous Markdown tables (at least 2 lines starting/ending with |)
-    for m in re.finditer(r"(?:^[ \t]*\|[^\n]+\|[ \t]*\n){2,}", raw_text, flags=re.M):
+    for m in re.finditer(r"(?:^[ \t]*\|[^\n]+\|[ \t]*\n?){2,}", raw_text, flags=re.M):
         blocks.append((m.start(), m.end(), "markdown_table"))
+    # 3. Display LaTeX math blocks $$...$$
+    for m in re.finditer(r"\$\$.*?\$\$", raw_text, flags=re.S):
+        blocks.append((m.start(), m.end(), "display_math"))
+    # 4. Contiguous callout / alert blockquotes (> [!...] followed by > lines)
+    for m in re.finditer(r"(?:^[ \t]*>[^\n]*\n?){2,}", raw_text, flags=re.M):
+        blocks.append((m.start(), m.end(), "callout_blockquote"))
+    # 5. HTML <details>...</details> blocks
+    for m in re.finditer(r"<details\b[^>]*>.*?</details>", raw_text, flags=re.I | re.S):
+        blocks.append((m.start(), m.end(), "details_block"))
     return blocks
 
 
@@ -110,7 +138,7 @@ def audit_and_merge_course(course_id: str, raw_crs: dict, deep_crs: dict):
             p0_errors.append(f"[{course_id}:P{idx+1}] P0_CHILDISH_ANALOGY_OR_FLUFF in summary")
         if BARE_ENGLISH_LINE_START_RE.search(summary):
             p0_errors.append(
-                f"[{course_id}:P{idx+1}] P0_BARE_ENGLISH_LINE_START in summary (prefix English terms with 'الـ' or Arabic noun): {summary[:80]!r}"
+                f"[{course_id}:P{idx+1}] P0_BARE_ENGLISH_LINE_START in summary (UAX #9 P2: prefix English/backticked terms with an Arabic word): {summary[:80]!r}"
             )
 
         # Verify code_artifacts verbatim in passage
@@ -132,6 +160,7 @@ def audit_and_merge_course(course_id: str, raw_crs: dict, deep_crs: dict):
                 "char_length": len(p_raw),
                 "has_code_block": "```" in p_raw,
                 "has_table": bool(re.search(r"^\s*\|.*\|\s*$", p_raw, re.M)),
+                "has_display_math": "$$" in p_raw,
                 "summary": summary,
                 "topics": topics,
                 "technical_concepts": tech_concepts,
@@ -170,7 +199,12 @@ def audit_and_merge_course(course_id: str, raw_crs: dict, deep_crs: dict):
             p0_errors.append(
                 f"[{course_id}:gem#{g_idx+1}] P0_MISSING_CONTRAST_PATTERNS: both wrong_pattern and canonical_pattern required"
             )
-        for fld_name, fld_val in [("explanation", expl), ("problem_root_cause", root_cause), ("canonical_pattern", canon_pat)]:
+        for fld_name, fld_val in [
+            ("explanation", expl),
+            ("problem_root_cause", root_cause),
+            ("wrong_pattern", wrong_pat),
+            ("canonical_pattern", canon_pat),
+        ]:
             if BANNED_FLUFF_OR_ANALOGY_RE.search(fld_val):
                 p0_errors.append(f"[{course_id}:gem#{g_idx+1}] P0_CHILDISH_ANALOGY_OR_FLUFF in {fld_name}")
             if BARE_ENGLISH_LINE_START_RE.search(fld_val):
@@ -212,13 +246,13 @@ def audit_and_merge_course(course_id: str, raw_crs: dict, deep_crs: dict):
 
     merged_doc = {
         "course_id": course_id,
-        "track": raw_crs["track"],
+        "track": raw_crs.get("track", "engineering"),
         "title": raw_crs["title"],
-        "instructor": raw_crs["instructor"],
-        "language": raw_crs["language"],
+        "instructor": raw_crs.get("instructor", ""),
+        "language": raw_crs.get("language", "ar-en"),
         "science": raw_crs["science"],
-        "archetype": raw_crs["archetype"],
-        "gate_version": "v5.0_technical_course_cognitive_dna",
+        "archetype": raw_crs.get("archetype", "technical_course"),
+        "gate_version": "v5.1_technical_course_cognitive_dna",
         "reconstruction_verified": "".join(reconstructed) == raw_text,
         "atomic_blocks_protected": len(atomic_blocks),
         "deep_toc_passages": merged_passages,
@@ -239,8 +273,20 @@ def audit_and_merge_course(course_id: str, raw_crs: dict, deep_crs: dict):
 
 
 def main():
+    global USDB_DIR
+    args = sys.argv[1:]
+    pos_args = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--work-dir" and i + 1 < len(args):
+            USDB_DIR = Path(args[i + 1]).resolve()
+            i += 2
+        else:
+            pos_args.append(args[i])
+            i += 1
+
     raw_all = json.loads((USDB_DIR / "raw_courses.json").read_text(encoding="utf-8"))
-    targets = sys.argv[1:] if len(sys.argv) > 1 else list(raw_all.keys())
+    targets = pos_args if pos_args else list(raw_all.keys())
     merged_all = {}
     reports_all = {}
     all_passed = True
@@ -275,3 +321,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

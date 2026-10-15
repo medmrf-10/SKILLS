@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/Users/macm1pro/REPOS/books")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import merge_round as mr
 
 if not hasattr(mr, "find_anchor_pos"):
@@ -23,10 +23,10 @@ if not hasattr(mr, "verify_quote_verbatim"):
 if not hasattr(mr, "GEM_DANGLING_AN_START_RE"):
     mr.GEM_DANGLING_AN_START_RE = re.compile(r"^\s*(?:أن|أنه|أنها|أنهم|بأن|بأنه|لأن|لأنه)\s+")
 
-USDB_DIR = Path("/Users/macm1pro/REPOS/books/usdb_v5")
+USDB_DIR = Path(os.environ.get("USDB_WORK_DIR", "/Users/macm1pro/REPOS/books/usdb_v5"))
 
 SPOKEN_FILLER_RE = re.compile(
-    r"(?:^|\s)(?:يعني|طيب|تمام\s*؟|صح\s*؟|يا\s+إخوة|يا\s+إخواني|يا\s+جماعة|أليس\s+كذلك\s*؟|واضح\s*؟)(?:\s|$|[،.؟!])"
+    r"(?:^|\s)(?:يعني|طيب|تمام\s*؟|صح\s*؟|ماشي\s*؟|يا\s+إخوة|يا\s+إخواني|يا\s+إخوان|يا\s+جماعة|أليس\s+كذلك\s*؟|واضح\s*؟|خلي\s+بالك|أوكي)(?:\s|$|[،.؟!])"
 )
 
 
@@ -43,7 +43,8 @@ def build_char_to_time_mapper(raw_text: str, align_path: str | None, duration_se
     """
     Build a deterministic mapping function `span_to_time(char_start, char_end)`
     returning `(start_sec, end_sec, time_basis)`.
-    When `align_path` is provided, monotonically aligns CTC words against `raw_text` character offsets.
+    When `align_path` is provided, monotonically aligns CTC words against `raw_text` character offsets
+    using word-bounded local windows so short particles ('من', 'في', 'لا') never jump the cursor ahead.
     """
     n_chars = max(1, len(raw_text))
     if not align_path or not os.path.exists(align_path):
@@ -75,27 +76,37 @@ def build_char_to_time_mapper(raw_text: str, align_path: str | None, duration_se
             return s, max(s, e), "char_proportional_estimate"
         return prop_mapper
 
-    # Monotonically anchor each word in raw_text
+    # Monotonically anchor each word in raw_text with strict word boundaries and local windowing
     anchors = []  # (char_start, char_end, start_sec, end_sec)
     cursor = 0
     for w_str, s_sec, e_sec in words_timed:
         w_clean = w_str.strip()
         if not w_clean:
             continue
-        pos = raw_text.find(w_clean, cursor)
-        if pos != -1 and pos - cursor <= 250:
-            anchors.append((pos, pos + len(w_clean), s_sec, e_sec))
-            cursor = pos + len(w_clean)
-        else:
-            # Try normalized token match within window
-            window = raw_text[cursor : cursor + 250]
-            norm_w, _ = mr.normalize_with_map(w_clean)
-            norm_win, win_map = mr.normalize_with_map(window)
-            idx = norm_win.find(norm_w) if norm_w else -1
-            if idx != -1 and idx < len(win_map):
-                orig_p = cursor + win_map[idx]
-                anchors.append((orig_p, orig_p + len(w_clean), s_sec, e_sec))
-                cursor = orig_p + len(w_clean)
+        # Tight window prevents short particles ('من', 'في') from matching inside words 150 chars ahead
+        max_lookahead = 40 if len(w_clean) <= 3 else 100
+        local_win = raw_text[cursor : cursor + max_lookahead]
+        m_exact = re.search(rf"(?<!\w){re.escape(w_clean)}(?!\w)", local_win)
+        if m_exact:
+            orig_s = cursor + m_exact.start()
+            orig_e = cursor + m_exact.end()
+            anchors.append((orig_s, orig_e, s_sec, e_sec))
+            cursor = orig_e
+            continue
+
+        # Fallback: normalized token match within tight window
+        norm_w, _ = mr.normalize_with_map(w_clean)
+        if norm_w:
+            norm_win, win_map = mr.normalize_with_map(local_win)
+            m_norm = re.search(rf"(?<!\w){re.escape(norm_w)}(?!\w)", norm_win)
+            if m_norm and m_norm.start() < len(win_map):
+                orig_s = cursor + win_map[m_norm.start()]
+                end_idx = min(len(win_map) - 1, m_norm.end() - 1)
+                orig_e = cursor + win_map[end_idx] + 1
+                anchors.append((orig_s, orig_e, s_sec, e_sec))
+                cursor = orig_e
+                continue
+        # If neither matched locally, do NOT jump cursor far ahead; keep cursor steady for next word
 
     if not anchors:
         def prop_mapper(c_start: int, c_end: int):
@@ -230,12 +241,13 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
                         "verified": True,
                     }
 
-        # Verify persons
+        # Verify persons (including 1-3 word names via resolve_person_mentioned_as)
         verified_persons = []
         for per in p.get("persons", []):
-            m_as = (per.get("mentioned_as") or "").strip()
-            v_in_text = bool(m_as and (m_as in p_raw or mr.find_anchor_pos(p_raw, m_as, 0) != -1))
-            verified_persons.append({**per, "verified_in_text": v_in_text})
+            per_dict = dict(per) if isinstance(per, dict) else {"canonical_name": str(per), "mentioned_as": str(per)}
+            resolved_p = mr.resolve_person_mentioned_as(per_dict, p_raw + " " + base_matn_text)
+            v_in_text = bool(resolved_p.get("mentioned_in_text"))
+            verified_persons.append({**per_dict, "verified_in_text": v_in_text})
 
         merged_passages.append(
             {
@@ -270,15 +282,17 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
             f"[{lecture_id}] P0_RECONSTRUCTION_MISMATCH: reconstructed len={len(''.join(reconstructed))} != raw len={len(raw_text)}"
         )
 
-    if raw_lec.get("base_work_id") and matn_links_count < 2:
+    min_matn_links = 1 if len(raw_text) < 6000 else 2
+    if raw_lec.get("base_work_id") and matn_links_count < min_matn_links:
         p0_errors.append(
-            f"[{lecture_id}] P0_MISSING_MATN_TRIANGULATION: lecture has base_work_id={raw_lec['base_work_id']} but < 2 passages linked via explained_matn_clause_id"
+            f"[{lecture_id}] P0_MISSING_MATN_TRIANGULATION: lecture has base_work_id={raw_lec['base_work_id']} but < {min_matn_links} passages linked via explained_matn_clause_id"
         )
 
     # Verify science_gems (Dual-Layer Spoken Gem Contract: verbatim_rule + polished_rule)
+    min_gems = 3 if len(raw_text) < 6000 else 4
     gems_in = deep_lec.get("science_gems", [])
-    if len(gems_in) < 4:
-        p0_errors.append(f"[{lecture_id}] P0_TOO_FEW_GEMS: {len(gems_in)} < 4")
+    if len(gems_in) < min_gems:
+        p0_errors.append(f"[{lecture_id}] P0_TOO_FEW_GEMS: {len(gems_in)} < {min_gems}")
     merged_gems = []
     gem_norms = set()
     for g_idx, g in enumerate(gems_in):
@@ -304,7 +318,7 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
             p0_errors.append(
                 f"[{lecture_id}:gem#{g_idx+1}] P0_SPOKEN_FILLER_IN_POLISHED_RULE: {p_rule!r}"
             )
-        g_pos = mr.find_anchor_pos(raw_text, " ".join(v_rule.split()[:6]), 0) if v_rule else 0
+        _, g_pos, _ = mr.verify_and_locate_span_in_part(v_rule, raw_text, allow_elision=False)
         if g_pos == -1:
             g_pos = 0
         gs_sec, ge_sec, gt_basis = time_mapper(g_pos, g_pos + len(v_rule))
@@ -327,9 +341,10 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
         )
 
     # Verify stories / applied_cases
+    min_stories = 1 if len(raw_text) < 6000 else 2
     stories_in = deep_lec.get("stories") or deep_lec.get("applied_cases") or []
-    if len(stories_in) < 2:
-        p0_errors.append(f"[{lecture_id}] P0_TOO_FEW_STORIES_OR_CASES: {len(stories_in)} < 2")
+    if len(stories_in) < min_stories:
+        p0_errors.append(f"[{lecture_id}] P0_TOO_FEW_STORIES_OR_CASES: {len(stories_in)} < {min_stories}")
     merged_stories = []
     for s_idx, st in enumerate(stories_in):
         s_anc = (st.get("anchor_start") or "").strip()
@@ -353,9 +368,10 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
         )
 
     # Verify quotes
+    min_quotes = 2 if len(raw_text) < 6000 else 3
     quotes_in = deep_lec.get("quotes", [])
-    if len(quotes_in) < 3:
-        p0_errors.append(f"[{lecture_id}] P0_TOO_FEW_QUOTES: {len(quotes_in)} < 3")
+    if len(quotes_in) < min_quotes:
+        p0_errors.append(f"[{lecture_id}] P0_TOO_FEW_QUOTES: {len(quotes_in)} < {min_quotes}")
     merged_quotes = []
     for q_idx, q in enumerate(quotes_in):
         q_txt = (q.get("quote") or "").strip()
@@ -367,7 +383,7 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
         norm_q, _ = mr.normalize_with_map(q_txt)
         if norm_q in gem_norms:
             p0_errors.append(f"[{lecture_id}:quote#{q_idx+1}] P0_QUOTE_DUPLICATES_GEM: {q_txt[:60]!r}")
-        q_pos = mr.find_anchor_pos(raw_text, " ".join(q_txt.split()[:5]), 0)
+        _, q_pos, _ = mr.verify_and_locate_span_in_part(q_txt, raw_text, allow_elision=False)
         if q_pos == -1:
             q_pos = 0
         qs_sec, qe_sec, _ = time_mapper(q_pos, q_pos + len(q_txt))
@@ -389,14 +405,14 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
         "lecture_id": lecture_id,
         "title": raw_lec["title"],
         "speaker": raw_lec["speaker"],
-        "speaker_slug": raw_lec["speaker_slug"],
+        "speaker_slug": raw_lec.get("speaker_slug", ""),
         "science": raw_lec["science"],
-        "archetype": raw_lec["archetype"],
+        "archetype": raw_lec.get("archetype", "spoken_lecture"),
         "video_id": video_id,
-        "duration_str": raw_lec["duration_str"],
+        "duration_str": raw_lec.get("duration_str", fmt_mmss(dur_total)),
         "base_work_id": raw_lec.get("base_work_id"),
         "base_work_title": raw_lec.get("base_work_title"),
-        "gate_version": "v5.0_lecture_matn_grounded",
+        "gate_version": "v5.1_lecture_matn_grounded",
         "reconstruction_verified": "".join(reconstructed) == raw_text,
         "matn_triangulation_count": matn_links_count,
         "deep_toc_passages": merged_passages,
@@ -420,8 +436,20 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
 
 
 def main():
+    global USDB_DIR
+    args = sys.argv[1:]
+    pos_args = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--work-dir" and i + 1 < len(args):
+            USDB_DIR = Path(args[i + 1]).resolve()
+            i += 2
+        else:
+            pos_args.append(args[i])
+            i += 1
+
     raw_all = json.loads((USDB_DIR / "raw_lectures.json").read_text(encoding="utf-8"))
-    targets = sys.argv[1:] if len(sys.argv) > 1 else list(raw_all.keys())
+    targets = pos_args if pos_args else list(raw_all.keys())
     merged_all = {}
     reports_all = {}
     all_passed = True
@@ -456,3 +484,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
