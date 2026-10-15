@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Diagnostic health audit script for the Turath Deep Indexing corpus.
+Diagnostic health audit script for the Turath Deep Indexing & USDB v5.0 corpus.
 Reads repo paths from environment variables ($TURATH_BOOKS_REPO, $SKILLS_DIR)
 with safe fallbacks to default macOS paths. Works seamlessly on macOS, VPS, or any environment.
 
@@ -10,7 +10,6 @@ Run with:
     python3 scripts/audit_corpus_health.py
 """
 
-import glob
 import json
 import os
 import sys
@@ -21,9 +20,9 @@ SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", "/Users/macm1pro/REPOS/SKILLS"))
 
 
 def main():
-    print("=" * 95)
-    print(f"TURATH DEEP INDEXING CORPUS HEALTH AUDIT ({BOOKS_DIR})")
-    print("=" * 95)
+    print("=" * 98)
+    print(f"USDB v5.0 & TURATH DEEP INDEXING CORPUS HEALTH AUDIT ({BOOKS_DIR})")
+    print("=" * 98)
 
     round_files = [("Round 1", BOOKS_DIR / "all_9_books_deep.json")]
     for r in range(2, 11):
@@ -39,7 +38,7 @@ def main():
         f"{'Round':8s} | {'Books':5s} | {'Passages':8s} | {'SubHead':7s} | {'Topics':6s} | "
         f"{'Persons':7s} | {'Places':6s} | {'Chron':5s} | {'Evid':5s} | {'Queries':7s} | {'Gems(T)':8s} | {'Quotes(S)':9s}"
     )
-    print("-" * 95)
+    print("-" * 98)
 
     for label, fpath in round_files:
         if not fpath.exists():
@@ -106,7 +105,7 @@ def main():
             f"{g_tot:3d}({g_tit:3d}) | {q_tot:3d}({q_spk:3d})"
         )
 
-    print("-" * 95)
+    print("-" * 98)
     print(f"Total Merged Books: {total_books} | Total Passages: {total_passages}")
 
     if missing_subheading_books:
@@ -126,27 +125,73 @@ def main():
         for item in suspicious_quotes:
             print("   -", item)
 
-    # Gate v4.2 Golden Benchmark Verification (2327, 2412, 6243)
-    if str(BOOKS_DIR) not in sys.path:
-        sys.path.insert(0, str(BOOKS_DIR))
-    try:
-        import merge_round as mr
-        print("\n" + "=" * 95)
-        print("GATE v4.2 (v4.1_strict_grounded) GOLDEN BENCHMARK BOOKS CHECK")
-        print("=" * 95)
-        benchmarks = [
-            (5, "tarajim", 2327, "الفقهاء والعباد للفسوي"),
-            (6, "tazkia", 2412, "رسالة المسترشدين للمحاسبي"),
-            (10, "tarajim", 6243, "أخبار النحويين البصريين للسيرافي"),
-        ]
-        for r_num, sc, bid, bname in benchmarks:
-            raw_r = json.loads((BOOKS_DIR / f"raw_round{r_num}_books.json").read_text(encoding="utf-8"))
-            deep_b = json.loads((BOOKS_DIR / f"r{r_num}_deep_{sc}.json").read_text(encoding="utf-8"))
-            _, rep = mr.audit_and_merge_round(r_num, raw_override={sc: raw_r[sc]}, deep_overrides={sc: deep_b})
-            status = "PASS (0 P0)" if rep["passed"] else f"FAIL ({rep['p0_error_count']} P0)"
-            print(f"  - Round {r_num:2d} | {sc:8s} | Book {bid} ({bname}): {status}")
-    except Exception as exc:
-        print(f"\n[!] Could not run Gate v4.2 benchmark check: {exc}")
+    # Gate v4.2 Verification Across Rounds 2..10
+    print("\n" + "=" * 98)
+    print("TRACK 2: GATE v4.2 (v4.1_strict_grounded) ROUNDS 2..10 REPORT STATUS (72 BOOKS)")
+    print("=" * 98)
+    for r_num in range(2, 11):
+        rep_path = BOOKS_DIR / f"gate_report_r{r_num}.json"
+        if rep_path.exists():
+            rep = json.loads(rep_path.read_text(encoding="utf-8"))
+            status = "PASS (0 P0)" if rep.get("passed") else f"FAIL ({rep.get('p0_error_count')} P0)"
+            print(f"  - Round {r_num:2d} | gate={rep.get('gate_version', '?'):20s} | status={status}")
+        else:
+            print(f"  - Round {r_num:2d} | MISSING gate_report_r{r_num}.json")
+
+    # Track 1: Spoken Video Lectures + Matn Triangulation
+    print("\n" + "=" * 98)
+    print("TRACK 1: SPOKEN VIDEO LECTURES + CTC WORD ALIGNMENT + MATN TRIANGULATION (ADAPTER B & C)")
+    print("=" * 98)
+    lec_rep_path = BOOKS_DIR / "usdb_v5" / "gate_report_lectures.json"
+    lec_merged_path = BOOKS_DIR / "usdb_v5" / "lectures_deep_merged.json"
+    if lec_rep_path.exists() and lec_merged_path.exists():
+        lrep = json.loads(lec_rep_path.read_text(encoding="utf-8"))
+        ldata = json.loads(lec_merged_path.read_text(encoding="utf-8"))
+        lmap = {item["lecture_id"]: item for item in ldata} if isinstance(ldata, list) else ldata
+        for lid, st in lrep.items():
+            lobj = lmap.get(lid, {})
+            passages = lobj.get("deep_toc_passages", [])
+            basis = passages[0].get("time_basis", "?") if passages else "?"
+            print(
+                f"  - [{lid:20s}] passed={st['passed']} p0={st['p0_error_count']} "
+                f"passages={st['passages_count']:2d} gems={st['gems_count']} "
+                f"matn_links={st['matn_triangulation_count']} basis={basis}"
+            )
+    else:
+        print("  [!] Missing lecture gate report or merged file.")
+
+    # Track 3: Technical Courses + User Cognitive DNA
+    print("\n" + "=" * 98)
+    print("TRACK 3: TECHNICAL & EDUCATIONAL COURSES + USER COGNITIVE DNA (ADAPTER D)")
+    print("=" * 98)
+    crs_rep_path = BOOKS_DIR / "usdb_v5" / "gate_report_courses.json"
+    if crs_rep_path.exists():
+        crep = json.loads(crs_rep_path.read_text(encoding="utf-8"))
+        for cid, st in crep.items():
+            print(
+                f"  - [{cid:24s}] passed={st['passed']} p0={st['p0_error_count']} "
+                f"passages={st['passages_count']:2d} gems={st['gems_count']} "
+                f"atomic_blocks_protected={st['atomic_blocks_protected']}"
+            )
+    else:
+        print("  [!] Missing course gate report.")
+
+    # Track 4: Cross-Corpus Knowledge Graph
+    print("\n" + "=" * 98)
+    print("TRACK 4: CROSS-CORPUS KNOWLEDGE GRAPH (BOOKS + LECTURES + MATN + COURSES + TAFSIR 40)")
+    print("=" * 98)
+    cc_path = BOOKS_DIR / "usdb_v5" / "cross_corpus_graph.json"
+    if cc_path.exists():
+        cc = json.loads(cc_path.read_text(encoding="utf-8"))
+        s = cc.get("stats", {})
+        print(
+            f"  - Classical Books: {s.get('books_indexed')} books ({s.get('book_passages')} passages)\n"
+            f"  - Spoken Lectures: {s.get('lectures_indexed')} lectures ({s.get('lecture_passages')} passages, {s.get('lecture_gems')} dual-layer gems, {s.get('matn_triangulated_passages')} Matn triangulations)\n"
+            f"  - Technical Courses: {s.get('courses_indexed')} courses ({s.get('course_passages')} passages, {s.get('course_gems')} root-cause gems, {s.get('course_atomic_blocks_protected')} atomic blocks)\n"
+            f"  - Cross-Corpus Bridges: {s.get('ayah_bridge_total_unique_verses')} Quranic verses linked to Tafsir 40 | {s.get('cross_media_persons_count')} cross-media persons"
+        )
+    else:
+        print("  [!] Missing cross_corpus_graph.json.")
 
 
 if __name__ == "__main__":
