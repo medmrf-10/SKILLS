@@ -409,9 +409,17 @@ def main():
         report['interpolated'], pins, forced, wall, report['peak_rss_mb']))
     if 'vs_v1' in report:
         v = report['vs_v1']
-        print('[%s] تحقق متقاطع مع v1 (بالفهرس): n=%d · تطابق نصي %.0f%% · وسيط=%.2fث ±0.5ث=%.0f%% ±1ث=%.0f%% | النافذة ٤ (20–25د): n=%d وسيط=%sث p90=%sث >1ث=%s%% >2ث=%s%%' % (
-            a.tag, v['n'], v['text_match_pct'], v['median'], v['within_0_1'], v['within_0_2'], v['within_0_5'], v['within_1'], v['window_20_25_n'],
-            v['window_20_25_median'], v['window_20_25_p90'], v['window_20_25_gt1'], v['window_20_25_gt2']))
+        # قاعدة دائمة (2026-10-15): الطباعة التشخيصية **لا تُبطل قياسًا مكتملًا**.
+        #   نص تنسيق بمحدِّدات ناقصة (11 محددًا مقابل 13 وسيطًا) قتل الوحدة بعد كتابة كل المخرجات
+        #   فسُجّلت `exit-code` ورفضها المدقّق — تشخيص يكفي أن يفشل وحده، لا أن يُسقط العمل.
+        try:
+            print('[%s] تحقق متقاطع مع v1 (بالفهرس): n=%d · تطابق نصي %.0f%% · وسيط=%.2fث · p90=%.2fث · أقصى=%.2fث · داخل ٠٫٥ث=%.0f%% · داخل ١ث=%.0f%% | النافذة ٤ (20–25د): n=%d وسيط=%sث p90=%sث >1ث=%s%% >2ث=%s%%' % (
+                a.tag, v['n'], v['text_match_pct'], v['median'], v['p90'], v['max'], v['within_0_5'], v['within_1'],
+                v['window_20_25_n'], v['window_20_25_median'], v['window_20_25_p90'],
+                v['window_20_25_gt1'], v['window_20_25_gt2']))
+        except Exception as e:
+            print('[%s] ⚠ تعذّرت طباعة التحقق المتقاطع (%s: %s) — المخرجات مكتوبة وسليمة' % (
+                a.tag, type(e).__name__, str(e)[:120]))
 
 
 if __name__ == '__main__':
