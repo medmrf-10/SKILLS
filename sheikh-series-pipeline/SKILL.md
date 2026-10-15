@@ -1,7 +1,7 @@
 ---
 name: sheikh-series-pipeline
 description: "Use when Mohamed hands a sheikh series: transcribe+align."
-version: 1.1.0
+version: 1.2.0
 author: Mohamed Boumaraf, Hermes Agent
 license: MIT
 platforms: [linux, macos]
@@ -59,6 +59,12 @@ metadata:
 
 تشخيص الجذور الكامل (العثماني/الألف الخنجرية، قصور `difflib`، عقوبة الفجوة الخطية، هلوسة turbo-q4،
 كلفة `find_alignment`) وكل الأرقام والنماذج في المرجع ٠٩ — لا تُعد اجتهاداً من عندك.
+
+**حالة التنفيذ (٢٠٢٦-١٠-١٥): المرحلتان نُفِّذتا وأرقامهما في المرجع ٠٩.** الخلاصة: التغطية ١٠٠٪ من كلمات المرجع
+(لا مراسي ولا تعويض)، وسيط الاتفاق مع v1 ≈ +٠٫١٥ث، والزمن على الماك **RTF ٠٫٠٥٤** (٨٩٫٥ث لدرس ٢٦٫٧د).
+**الربح الأكبر في المرحلة ١ جاء من الخوارزمية (Gotoh+rapidfuzz: ٤٥٪ ← ٨٣٪)، لا من التطبيع الظلّي (أثره صفر مُقاس).**
+**لا تُشغّل CTC على الـVPS بملف كامل:** ٥٫٥GB ⇒ OOM عالمي يقتل البوابة (حدث مرّتين). النوافذ ≤٣٠٠ث إلزامية.
+الأدوات الجاهزة في `scripts/`: `ctc_win_windows.py` · `cmp_v2_quality.py` · `shadow_norm.py`.
 
 ## مسارات لا تُخطئ فيها
 
