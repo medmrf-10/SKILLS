@@ -120,6 +120,29 @@ def main():
         for item in suspicious_quotes:
             print("   -", item)
 
+    # Gate v4.1 Golden Benchmark Verification (2327, 2412, 6243)
+    import sys
+    if str(BOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(BOOKS_DIR))
+    try:
+        import merge_round as mr
+        print("\n" + "=" * 95)
+        print("GATE v4.1 (v4.1_strict_grounded) GOLDEN BENCHMARK BOOKS CHECK")
+        print("=" * 95)
+        benchmarks = [
+            (5, "tarajim", 2327, "الفقهاء والعباد للفسوي"),
+            (6, "tazkia", 2412, "رسالة المسترشدين للمحاسبي"),
+            (10, "tarajim", 6243, "أخبار النحويين البصريين للسيرافي"),
+        ]
+        for r_num, sc, bid, bname in benchmarks:
+            raw_r = json.loads((BOOKS_DIR / f"raw_round{r_num}_books.json").read_text(encoding="utf-8"))
+            deep_b = json.loads((BOOKS_DIR / f"r{r_num}_deep_{sc}.json").read_text(encoding="utf-8"))
+            _, rep = mr.audit_and_merge_round(r_num, raw_override={sc: raw_r[sc]}, deep_overrides={sc: deep_b})
+            status = "PASS (0 P0)" if rep["passed"] else f"FAIL ({rep['p0_error_count']} P0)"
+            print(f"  - Round {r_num:2d} | {sc:8s} | Book {bid} ({bname}): {status}")
+    except Exception as exc:
+        print(f"\n[!] Could not run Gate v4.1 benchmark check: {exc}")
+
 
 if __name__ == "__main__":
     main()
