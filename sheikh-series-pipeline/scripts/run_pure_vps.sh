@@ -40,7 +40,7 @@ echo "[$TAG] المرحلة ١: مصفوفة الانبعاثات (بلا Whispe
 #   ⇒ الافتراضي هنا **torch** (نافذة ٢٠ث: ذروة cgroup 919MB · RTF 1.17–1.33). ONNX يبقى متاحًا بـ EM_ENGINE=onnx خارج السقف.
 #   الافتراضي الآمن: نافذة ٢٠ث + عامِلان (جلسة ONNX لكل عامل) ≈1.3–1.5GB.
 "$PY" -u "$SKILL_DIR/scripts/extract_emissions.py" --audio "$AUDIO" --txt "$TXT" --out "$PRE" \
-    --engine "${EM_ENGINE:-torch}" --window "${EM_WINDOW:-20}" --onnx-workers "${ONNX_WORKERS:-2}" \
+    --engine "${EM_ENGINE:-torch}" --window "${EM_WINDOW:-20}" --onnx-workers "${ONNX_WORKERS:-2}" \ --seg-sec "${EM_SEG:-100}" \
     --onnx-threads "${ONNX_THREADS:-2}" --threads "${THREADS:-4}" --par-halves "${PAR_HALVES:-1}" --par-procs "${PAR_PROCS:-1}" \
     --silence-compact "${SILENCE_COMPACT:-0}" --silence-rel "${SILENCE_REL:-5.0}" --layers "${LAYERS:-0}"
 T1=$(date +%s)

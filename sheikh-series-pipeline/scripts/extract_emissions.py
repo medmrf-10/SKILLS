@@ -192,6 +192,63 @@ def emissions_torch_parallel(model, wave, window, context, halves, sr=SR):
     return torch.from_numpy(em), res[0][1]
 
 
+
+def emissions_torch_segmented(model, wav_in, window, context, seg_sec, threads=2, rt=320):
+    """يولّد الانبعاثات **مقطعًا مقطعًا** (seg_sec ثانية + هامش سياق) ويهدم ما استُهلك.
+    السبب المقيس 2026-10-15: ذروة الذاكرة تنمو خطيًا مع طول الملف (982MB@120ث ⇒ 1929MB@300ث)
+    فتصل سقف cgroup 2000M على الدرس الكامل ⇒ ضغط ذاكرة يهدر المعالج. التقطيع يُثبّت الذروة منخفضة.
+    """
+    import ctypes
+    if not seg_sec or seg_sec <= 0:
+        with torch.inference_mode():
+            return generate_emissions(model, wav_in, window_length=window,
+                                      context_length=context, batch_size=1)
+    try:
+        torch.set_num_threads(int(threads))
+    except Exception:
+        pass
+    total = int(wav_in.numel())
+    seg = int(seg_sec * SR)
+    ctx = int(context * SR)
+    pieces, pos = [], 0
+    libc = None
+    try:
+        libc = ctypes.CDLL('libc.so.6')
+    except Exception:
+        libc = None
+    while pos < total:
+        end = min(pos + seg, total)
+        s = max(0, pos - ctx)
+        e = min(total, end + ctx)
+        chunk = wav_in[s:e].contiguous()
+        with torch.inference_mode():
+            em, stride = generate_emissions(model, chunk, window_length=window,
+                                            context_length=context, batch_size=1)
+        f0 = int(round((pos - s) / rt))
+        f1 = f0 + int(round((end - pos) / rt))
+        pieces.append(em[f0:f1].clone())
+        del em
+        pos = end
+        gc.collect()
+        if libc is not None:
+            try:
+                libc.malloc_trim(0)
+            except Exception:
+                pass
+    out = torch.cat(pieces, dim=0)
+    n_expect = int(round(total / rt))
+    if out.size(0) != n_expect:        # ضبط صريح: إطار واحد زائد يُقتطع من الذيل
+        if out.size(0) > n_expect:
+            out = out[:n_expect]
+        else:
+            pad = torch.full((n_expect - out.size(0), out.size(1)), -10.0)
+            if out.size(1) > 31:
+                pad[:, -1] = 0.0
+            out = torch.cat([out, pad], dim=0)
+    print('[تقطيع] %d إطارًا (متوقّع %d) · مقاطع=%d · طول المقطع=%.0fث'
+          % (out.size(0), n_expect, len(pieces), seg_sec), flush=True)
+    return out, stride
+
 def emissions_torch_procs(model, wave, window, context, procs, sr=SR, threads=2):
     """المسار أ (٤/٤): عمليات مستقلة (fork) تتقاسم أوزان النموذج عبر COW.
 
@@ -256,6 +313,8 @@ def main():
     ap.add_argument('--window', type=float, default=30.0, help='طول نافذة الانبعاثات بالثواني')
     ap.add_argument('--context', type=float, default=2.0, help='سياق التداخل بين النوافذ')
     ap.add_argument('--threads', type=int, default=4, help='خيوط torch (تُوزَّع على المقاطع في --par-halves)')
+    ap.add_argument('--seg-sec', type=float, default=180.0,
+                    help='تقطيع الصوت إلى مقاطع بهذا الطول (ث) لتثبيت الذروة — 0 = بلا تقطيع')
     ap.add_argument('--layers', type=int, default=0,
                     help='(٤/٤ مسار ب) اقتطاع طبقات المحرّك إلى N طبقة (0 = الكل 24) — يقلّل الزمن والذاكرة')
     ap.add_argument('--par-procs', type=int, default=1,
@@ -267,6 +326,8 @@ def main():
     ap.add_argument('--onnx-model', default=ONNX_FILE)
     ap.add_argument('--onnx-workers', type=int, default=4, help='نوافذ متوازية (خيط لكل نافذة)')
     ap.add_argument('--onnx-threads', type=int, default=1, help='خيوط ONNX داخل النافذة')
+    ap.add_argument('--compact-silence', dest='silence_compact', type=int, default=0,
+                    help='اسم الخطة (٣/٤) — مرادف لـ--silence-compact')
     ap.add_argument('--silence-compact', type=int, default=0,
                     help='طيّ الصمت قبل النموذج ثم إعادة النفخ في المصفوفة (نفس عدد الإطارات والتوقيت)')
     ap.add_argument('--silence-min', type=float, default=0.5, help='أدنى مدة صمت قابلة للطيّ (ث)')
@@ -340,7 +401,10 @@ def main():
         t_load = time.time() - t0
         t0 = time.time()
         wav_in = wave if idx_map is None else torch.from_numpy(np.asarray(data).copy())
-        if a.par_procs and a.par_procs > 1:
+        if getattr(a, 'seg_sec', 0) and a.seg_sec > 0:
+            em, stride = emissions_torch_segmented(model, wav_in, a.window, a.context,
+                                                   a.seg_sec, threads=int(a.threads))
+        elif a.par_procs and a.par_procs > 1:
             em, stride = emissions_torch_procs(model, wav_in, a.window, a.context, a.par_procs,
                                                threads=int(a.threads))
         elif a.par_halves and a.par_halves > 1:
