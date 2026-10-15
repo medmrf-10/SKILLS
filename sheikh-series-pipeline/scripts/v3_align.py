@@ -112,9 +112,14 @@ def align_window(model, tokenizer, wave, t0, t1, words, i0, i1, batch, anchors, 
 
     try:
         got = run(i0, i1, star)
-    except Exception:
-        mid, half = (i0 + i1) // 2, max(25, (i1 - i0) // 4)
-        got = run(max(i0, mid - half), min(i1, mid + half), star)
+    except Exception as e1:
+        try:
+            mid, half = (i0 + i1) // 2, max(25, (i1 - i0) // 4)
+            got = run(max(i0, mid - half), min(i1, mid + half), star)
+        except Exception as e2:
+            print('   [!] فشلت نافذة %.0f-%.0fث (%s | %s) — تُترك للتحقق' % (
+                t0, t1, type(e1).__name__, type(e2).__name__), flush=True)
+            return {}, []
     devs = [got[a['i']][0] - a['t'] for a in anchors if i0 <= a['i'] < i1 and a['i'] in got]
     return got, devs
 
@@ -155,8 +160,10 @@ def main():
     ap.add_argument('--tol', type=float, default=1.5)
     ap.add_argument('--min-sim', type=float, default=0.80)
     ap.add_argument('--batch', type=int, default=1)
-    ap.add_argument('--calib-from', default='', help='ملفات CTC سابقة تُستخرج منها إشارة انزياح ساعة المراسي')
+    ap.add_argument('--calib-from', default='', help='ملفات CTC سابقة أو v1 تُستخرج منها إشارة انزياح ساعة المراسي')
     ap.add_argument('--calib-bucket', type=float, default=300.0)
+    ap.add_argument('--calib-seq', action='store_true',
+                    help='معايرة تتابعية أثناء التقطيع (لدرسٍ بلا تشغيل CTC سابق)')
     a = ap.parse_args()
 
     T0 = time.time()
@@ -176,7 +183,7 @@ def main():
 
     # ── (٢) تمرير المعايرة: نوافذ عريضة في ساعة ASR ⇒ وسيط الانحراف لكل نافذة
     asr_end = max(x['t'] for x in anchors)
-    coarse_w = [] if a.calib_from else plan_windows(anchors, min(dur, asr_end + 1.0), a.coarse, min_span=60.0)
+    coarse_w = [] if (a.calib_from or a.calib_seq) else plan_windows(anchors, min(dur, asr_end + 1.0), a.coarse, min_span=60.0)
     cal = []
     if a.calib_from:   # معايرة بلا حساب: وسيط (CTC سابق − مرساة) لكل شريحة ⇒ انزياح ساعة المراسي
         buckets = {}
@@ -201,16 +208,56 @@ def main():
     print('[%s] تصحيح ساعة المراسي: %s' % (
         a.tag, [(round(t, 0), round(o, 2)) for t, o in sorted(cal)]), flush=True)
 
-    # ── (٣) التقطيع النهائي عند مراسي مصحَّحة + محاذاة
-    wins = plan_windows(anchors2, dur, a.target)
-    print('[%s] نوافذ نهائية: %d (مدى %.0f–%.0fث)' % (
-        a.tag, len(wins), min(w['span'] for w in wins), max(w['span'] for w in wins)), flush=True)
-    t1 = time.time()
-    for w in wins:
-        w['got'], w['dev'] = align_window(model, tokenizer, wave, w['t0'], w['t1'], words,
-                                          w['i0'], min(w['i1'], len(words)), a.batch, anchors2)
-        w['stats_first'] = dev_stats(w['dev'])
-    print('[%s] المحاذاة النهائية: %.1fث' % (a.tag, time.time() - t1), flush=True)
+    # ── (٣) التقطيع النهائي: مراسي مصحَّحة (ملف معايرة)، أو **معايرة تتابعية أثناء التقطيع**
+    if a.calib_seq and not a.calib_from:
+        # المعايرة التتابعية: تُقاس بعد كل نافذة (CTC − مرساة) وتُزاح بها حدود النافذة التالية
+        wins = plan_windows(anchors, dur, a.target)
+        print('[%s] نوافذ (معايرة تتابعية): %d (مدى %.0f–%.0fث)' % (
+            a.tag, len(wins), min(w['span'] for w in wins), max(w['span'] for w in wins)), flush=True)
+        offs, t1 = [], time.time()
+        for w in wins:
+            off = piecewise_offset(offs)(w['t0']) if offs else 0.0
+            w['off'] = round(off, 2)
+            w['got'], w['dev'] = align_window(model, tokenizer, wave, w['t0'] + off, w['t1'] + off,
+                                              words, w['i0'], min(w['i1'], len(words)), a.batch, anchors)
+            if w['dev']:
+                offs.append((w['t0'], st.median(w['dev'])))
+                print('[%s]   %.0f–%.0fث (إزاحة %+.2fث): مراسي %d وسيط Δ %+.2fث' % (
+                    a.tag, w['t0'], w['t1'], off, len(w['dev']), st.median(w['dev'])), flush=True)
+        cfn = piecewise_offset(offs)
+        cal = offs
+        anchors2 = [dict(x, t_raw=x['t'], t=x['t'] + cfn(x['t'])) for x in anchors]
+        for w in wins:     # إعادة حساب الانحرافات مقابل المراسي المصحَّحة
+            w['dev'] = [w['got'][x['i']][0] - x['t'] for x in anchors2
+                        if w['i0'] <= x['i'] < min(w['i1'], len(words)) and x['i'] in w['got']]
+            w['stats_first'] = dev_stats(w['dev'])
+        print('[%s] المحاذاة (تتابعية): %.1fث | تصحيح: %s' % (
+            a.tag, time.time() - t1, [(round(t, 0), round(o, 2)) for t, o in offs]), flush=True)
+    else:
+        wins = plan_windows(anchors2, dur, a.target)
+        print('[%s] نوافذ نهائية: %d (مدى %.0f–%.0fث)' % (
+            a.tag, len(wins), min(w['span'] for w in wins), max(w['span'] for w in wins)), flush=True)
+        t1 = time.time()
+        for w in wins:
+            w['got'], w['dev'] = align_window(model, tokenizer, wave, w['t0'], w['t1'], words,
+                                              w['i0'], min(w['i1'], len(words)), a.batch, anchors2)
+            w['stats_first'] = dev_stats(w['dev'])
+        print('[%s] المحاذاة النهائية: %.1fث' % (a.tag, time.time() - t1), flush=True)
+
+    # كتابة جزئية فورًا حتى لا تضيع تمريرة كاملة إن سقطت الإعادة المتقاطعة
+    def dump(path, retr=0):
+        tm = {}
+        for w in wins:
+            tm.update(w['got'])
+        ax = [[words[gi], tm[gi][0], tm[gi][1], 'a' if gi in {y['i'] for y in anchors2} else 'c',
+               tm[gi][2]] for gi in sorted(tm)]
+        json.dump({'tag': a.tag, 'partial': True, 'retried': retr,
+                   'anchors_v2': len(anchors), 'calibration': cal, 'windows': len(wins),
+                   'stats_vs_v2': dev_stats([tm[x['i']][0] - x['t'] for x in anchors2 if x['i'] in tm]),
+                   'x': ax, 'windows_log': [{k: v for k, v in w.items() if k != 'got'} for w in wins]},
+                  open(path, 'w', encoding='utf-8'), ensure_ascii=False)
+    os.makedirs(a.outdir, exist_ok=True)
+    dump(os.path.join(a.outdir, 'v3_%s.partial.json' % a.tag))
 
     # ── (٤) إعادة محاذاة النوافذ المنحرفة بنوافذ ٢٠–٣٠ث بين المراسي، مع <star>
     retried = 0
@@ -222,24 +269,28 @@ def main():
         if not (w['stats_first'].get('max_abs', 0) > a.tol or w['stats_first'].get('median_abs', 0) > 0.7):
             continue
         inner = [x for x in anchors2 if w['i0'] <= x['i'] < min(w['i1'], len(words))
-                 and w['t0'] <= x['t'] <= w['t1']]
+                 and w['t0'] - 5 <= x['t'] <= w['t1'] + 5]
+        base0, base1 = w['t0'] + w.get('off', 0.0), w['t1'] + w.get('off', 0.0)   # ساعة الصوت
         best = None
-        for star in ('segment', 'word'):
-            new, new_dev = {}, []
-            s = int(w['t0'])
-            while s < int(w['t1']):
-                t_s0, t_s1 = s, min(w['t1'], s + a.resplit + 5)
-                ins = [x for x in inner if t_s0 - 0.5 <= x['t'] <= t_s1]
-                if ins:
-                    got, devs = align_window(model, tokenizer, wave, t_s0, t_s1, words,
-                                             max(w['i0'], ins[0]['i'] - 2), ins[-1]['i'] + 3,
-                                             a.batch, anchors2, star)
-                    new.update(got)
-                    new_dev += devs
-                s += int(a.resplit)
-            sn = dev_stats(new_dev)
-            if new and (best is None or sn.get('max_abs', 99) < best[1].get('max_abs', 99)):
-                best = (new, sn, star)
+        for star in ('segment', 'edges'):        # القيم المسموحة في المُحاذي: segment | edges
+            try:
+                new, new_dev = {}, []
+                s = int(base0)
+                while s < int(base1):
+                    t_s0, t_s1 = s, min(base1, s + a.resplit + 5)
+                    ins = [x for x in inner if t_s0 - 0.5 <= x['t'] <= t_s1]
+                    if ins:
+                        got, devs = align_window(model, tokenizer, wave, t_s0, t_s1, words,
+                                                 max(w['i0'], ins[0]['i'] - 2), ins[-1]['i'] + 3,
+                                                 a.batch, anchors2, star)
+                        new.update(got)
+                        new_dev += devs
+                    s += int(a.resplit)
+                sn = dev_stats(new_dev)
+                if new and (best is None or sn.get('max_abs', 99) < best[1].get('max_abs', 99)):
+                    best = (new, sn, star)
+            except Exception as e:
+                print('[%s]   [!] إعادة المحاذاة (%s) فشلت: %s' % (a.tag, star, type(e).__name__), flush=True)
         if best and best[1].get('max_abs', 99) < w['stats_first'].get('max_abs', 99):
             w['got'], w['stats_final'], w['retried'] = best[0], best[1], True
             retried += 1

@@ -8,21 +8,37 @@ Verifies:
 3. Non-numeric main `display_no` values are restricted to `{"مقدمة", "برومو", "فهرس", "ختام"}`.
 4. In `long-form` series (median duration >= 900s, non-clip series), zero main lessons have `0 < duration < 120s`, and zero parent lessons `< 300s` have child lessons `>= 300s`.
 5. `data/curated.db` series and lesson counts match `data/curated_sheikhs/<sheikh>.json` 100%.
+Usage:
+    python3 global_audit.py [--min-duration 300] [--min-series-median 900] [--min-duration-contemplative 120] [sheikh_id ...]
 """
 
+import argparse
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
 import sys
 
 ROOT = (
-    Path.cwd()
-    if (Path.cwd() / "data/curated_sheikhs").exists()
-    else Path(__file__).resolve().parents[4]
+    Path(os.environ["CURATED_ROOT"])
+    if "CURATED_ROOT" in os.environ
+    else (
+        Path.cwd()
+        if (Path.cwd() / "data/curated_sheikhs").exists()
+        else Path(__file__).resolve().parents[4]
+    )
 )
-CURATED_DIR = ROOT / "data/curated_sheikhs"
-DB_PATH = ROOT / "data/curated.db"
+CURATED_DIR = (
+    Path(os.environ["CURATED_DIR"])
+    if "CURATED_DIR" in os.environ
+    else ROOT / "data/curated_sheikhs"
+)
+DB_PATH = (
+    Path(os.environ["CURATED_DB"])
+    if "CURATED_DB" in os.environ
+    else ROOT / "data/curated.db"
+)
 
 SHEIKHS = [
     "omari",
@@ -45,7 +61,40 @@ SHEIKHS = [
 ]
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Global Structural & Database Audit for Curated Sheikhs."
+    )
+    parser.add_argument(
+        "targets",
+        nargs="*",
+        help="Sheikh IDs to audit (default: all 17 curated sheikhs)",
+    )
+    parser.add_argument(
+        "--min-duration",
+        type=int,
+        default=300,
+        help="Minimum duration (in seconds) for parent/main lessons (default: 300)",
+    )
+    parser.add_argument(
+        "--min-series-median",
+        type=int,
+        default=900,
+        help="Median duration threshold (in seconds) for long-form series (default: 900)",
+    )
+    parser.add_argument(
+        "--min-duration-contemplative",
+        type=int,
+        default=120,
+        help="Minimum duration (in seconds) for contemplative lessons (default: 120)",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+    targets = args.targets if args.targets else SHEIKHS
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
@@ -53,7 +102,7 @@ def main():
     total_lessons = 0
     all_errors = []
 
-    for sh in SHEIKHS:
+    for sh in targets:
         p = CURATED_DIR / f"{sh}.json"
         data = json.load(open(p, encoding="utf-8"))
         series_list = data.get("series", [])
@@ -91,9 +140,9 @@ def main():
                     )
                     if (
                         isinstance(last_parent_dur, (int, float))
-                        and 0 < last_parent_dur < 300
+                        and 0 < last_parent_dur < args.min_duration
                         and isinstance(dur, (int, float))
-                        and dur >= 300
+                        and dur >= args.min_duration
                         and not is_explicit_part2
                     ):
                         sh_errs.append(
@@ -137,7 +186,7 @@ def main():
         all_errors.extend(sh_errs)
 
     print(
-        f"\nTOTAL: {len(SHEIKHS)} Sheikhs | {total_series} series | {total_lessons} lessons | {len(all_errors)} errors"
+        f"\nTOTAL: {len(targets)} Sheikhs | {total_series} series | {total_lessons} lessons | {len(all_errors)} errors"
     )
     sys.exit(1 if all_errors else 0)
 

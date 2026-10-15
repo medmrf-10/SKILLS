@@ -11,21 +11,31 @@ Detects:
 6. Orphan children or invalid parent_yt_id links.
 
 Usage:
-    python3 deep_scanner_all.py [--verbose] [sheikh_id ...]
+    python3 deep_scanner_all.py [--verbose] [--min-duration 300] [--min-series-median 900] [--min-duration-contemplative 120] [sheikh_id ...]
 """
 
+import argparse
 import json
+import os
 from pathlib import Path
 import re
 import statistics
 import sys
 
 ROOT = (
-    Path.cwd()
-    if (Path.cwd() / "data/curated_sheikhs").exists()
-    else Path(__file__).resolve().parents[4]
+    Path(os.environ["CURATED_ROOT"])
+    if "CURATED_ROOT" in os.environ
+    else (
+        Path.cwd()
+        if (Path.cwd() / "data/curated_sheikhs").exists()
+        else Path(__file__).resolve().parents[4]
+    )
 )
-CURATED_DIR = ROOT / "data/curated_sheikhs"
+CURATED_DIR = (
+    Path(os.environ["CURATED_DIR"])
+    if "CURATED_DIR" in os.environ
+    else ROOT / "data/curated_sheikhs"
+)
 
 AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
@@ -47,7 +57,13 @@ def extract_explicit_num(title: str):
     return None
 
 
-def scan_sheikh(sh: str, verbose: bool = False):
+def scan_sheikh(
+    sh: str,
+    verbose: bool = False,
+    min_duration: int = 300,
+    min_series_median: int = 900,
+    min_duration_contemplative: int = 120,
+):
     cur_path = CURATED_DIR / f"{sh}.json"
     raw_path = CURATED_DIR / f"{sh}_raw.json"
     cur = json.load(open(cur_path, encoding="utf-8"))
@@ -139,9 +155,9 @@ def scan_sheikh(sh: str, verbose: bool = False):
                 )
                 if (
                     isinstance(last_parent_dur, (int, float))
-                    and 0 < last_parent_dur < 300
+                    and 0 < last_parent_dur < min_duration
                     and isinstance(dur, (int, float))
-                    and dur >= 300
+                    and dur >= min_duration
                     and not is_explicit_part2
                 ):
                     flaws.append(
@@ -152,11 +168,17 @@ def scan_sheikh(sh: str, verbose: bool = False):
                 last_parent_dur = dur
 
             if not is_c and disp not in {"مقدمة", "برومو", "فهرس", "ختام"}:
+                is_contemplative = any(
+                    cw in sname for cw in ["تأمل", "ختم القرآن"]
+                )
+                effective_min_dur = (
+                    min_duration_contemplative if is_contemplative else min_duration
+                )
                 if (
                     not is_general
-                    and med_dur >= 900
+                    and med_dur >= min_series_median
                     and isinstance(dur, (int, float))
-                    and 0 < dur < 300
+                    and 0 < dur < effective_min_dur
                 ):
                     flaws.append(
                         f"  [SHORT_IN_LONG] idx={idx}/{len(lessons)} disp={disp} dur={dur}s unclass={is_unclass} | {yt} | {t}"
@@ -243,9 +265,41 @@ def scan_sheikh(sh: str, verbose: bool = False):
 
 
 if __name__ == "__main__":
-    targets = sys.argv[1:]
-    verbose = "--verbose" in targets
-    targets = [t for t in targets if t != "--verbose"]
+    parser = argparse.ArgumentParser(
+        description="Deep 6-Point Quality Scanner for Curated Sheikhs."
+    )
+    parser.add_argument(
+        "targets",
+        nargs="*",
+        help="Sheikh IDs to scan (default: all 17 curated sheikhs)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show verbose output (up to 50 flags per series)",
+    )
+    parser.add_argument(
+        "--min-duration",
+        type=int,
+        default=300,
+        help="Minimum duration (in seconds) for main lessons in standard long series (default: 300)",
+    )
+    parser.add_argument(
+        "--min-series-median",
+        type=int,
+        default=900,
+        help="Median duration threshold (in seconds) defining a long-form series (default: 900)",
+    )
+    parser.add_argument(
+        "--min-duration-contemplative",
+        type=int,
+        default=120,
+        help="Minimum duration (in seconds) for contemplative / reflection series (default: 120)",
+    )
+    args = parser.parse_args()
+
+    targets = args.targets
     if not targets:
         targets = [
             "omari",
@@ -267,4 +321,10 @@ if __name__ == "__main__":
             "ayman",
         ]
     for sh in targets:
-        scan_sheikh(sh, verbose=verbose)
+        scan_sheikh(
+            sh,
+            verbose=args.verbose,
+            min_duration=args.min_duration,
+            min_series_median=args.min_series_median,
+            min_duration_contemplative=args.min_duration_contemplative,
+        )

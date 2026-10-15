@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-Diagnostic health audit script for the 81-book Turath Deep Indexing corpus
-in /Users/macm1pro/REPOS/books.
+Diagnostic health audit script for the Turath Deep Indexing corpus.
+Reads repo paths from environment variables ($TURATH_BOOKS_REPO, $SKILLS_DIR)
+with safe fallbacks to default macOS paths. Works seamlessly on macOS, VPS, or any environment.
 
 Run with:
-    python3 /Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/audit_corpus_health.py
+    python3 "$SKILLS_DIR/turath-deep-indexing/scripts/audit_corpus_health.py"
+    # or simply:
+    python3 scripts/audit_corpus_health.py
 """
 
 import glob
 import json
+import os
+import sys
 from pathlib import Path
 
-BOOKS_DIR = Path("/Users/macm1pro/REPOS/books")
+BOOKS_DIR = Path(os.environ.get("TURATH_BOOKS_REPO", "/Users/macm1pro/REPOS/books"))
+SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", "/Users/macm1pro/REPOS/SKILLS"))
 
 
 def main():
     print("=" * 95)
-    print("TURATH DEEP INDEXING CORPUS HEALTH AUDIT (/Users/macm1pro/REPOS/books)")
+    print(f"TURATH DEEP INDEXING CORPUS HEALTH AUDIT ({BOOKS_DIR})")
     print("=" * 95)
 
     round_files = [("Round 1", BOOKS_DIR / "all_9_books_deep.json")]
@@ -120,14 +126,13 @@ def main():
         for item in suspicious_quotes:
             print("   -", item)
 
-    # Gate v4.1 Golden Benchmark Verification (2327, 2412, 6243)
-    import sys
+    # Gate v4.2 Golden Benchmark Verification (2327, 2412, 6243)
     if str(BOOKS_DIR) not in sys.path:
         sys.path.insert(0, str(BOOKS_DIR))
     try:
         import merge_round as mr
         print("\n" + "=" * 95)
-        print("GATE v4.1 (v4.1_strict_grounded) GOLDEN BENCHMARK BOOKS CHECK")
+        print("GATE v4.2 (v4.1_strict_grounded) GOLDEN BENCHMARK BOOKS CHECK")
         print("=" * 95)
         benchmarks = [
             (5, "tarajim", 2327, "الفقهاء والعباد للفسوي"),
@@ -141,7 +146,7 @@ def main():
             status = "PASS (0 P0)" if rep["passed"] else f"FAIL ({rep['p0_error_count']} P0)"
             print(f"  - Round {r_num:2d} | {sc:8s} | Book {bid} ({bname}): {status}")
     except Exception as exc:
-        print(f"\n[!] Could not run Gate v4.1 benchmark check: {exc}")
+        print(f"\n[!] Could not run Gate v4.2 benchmark check: {exc}")
 
 
 if __name__ == "__main__":

@@ -17,16 +17,25 @@ Usage:
 """
 
 import json
+import os
 from pathlib import Path
 import re
 import sys
 
 ROOT = (
-    Path.cwd()
-    if (Path.cwd() / "data/curated_sheikhs").exists()
-    else Path(__file__).resolve().parents[4]
+    Path(os.environ["CURATED_ROOT"])
+    if "CURATED_ROOT" in os.environ
+    else (
+        Path.cwd()
+        if (Path.cwd() / "data/curated_sheikhs").exists()
+        else Path(__file__).resolve().parents[4]
+    )
 )
-CURATED_DIR = ROOT / "data/curated_sheikhs"
+CURATED_DIR = (
+    Path(os.environ["CURATED_DIR"])
+    if "CURATED_DIR" in os.environ
+    else ROOT / "data/curated_sheikhs"
+)
 
 AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
@@ -95,7 +104,7 @@ def norm(s: str) -> str:
     return str(s).translate(AR_DIGITS)
 
 
-def parse_hijri(title: str):
+def parse_hijri(title: str, season_hijri_map: dict = None):
     """Extract (year, month, day) in Hijri calendar from a video or playlist title."""
     t = norm(title)
 
@@ -121,7 +130,17 @@ def parse_hijri(title: str):
         d = int(dm.group(1)) if dm and 1 <= int(dm.group(1)) <= 30 else 15
         return (y, mo, d)
 
-    # 3. Dawrah number or Arabic ordinal
+    # 3. Dynamic season_hijri_map (from sheikh configuration or metadata)
+    if season_hijri_map:
+        for cat_name, mapping in season_hijri_map.items():
+            clean_cat = cat_name.replace("_", " ")
+            if clean_cat in t or cat_name in t:
+                for num_key, y in mapping.items():
+                    if re.search(rf"\b0*{re.escape(str(num_key))}\b", t):
+                        mo = 9 if ("ملتقى" in clean_cat or "رمضان" in clean_cat) else 11
+                        return (int(y), mo, 15)
+
+    # 4. Fallback Dawrah number or Arabic ordinal
     for w, y in DAWRAH_WORDS.items():
         if w in t and ("الدورة" in t or "دورة" in t):
             return (y, 11, 15)
@@ -133,7 +152,7 @@ def parse_hijri(title: str):
         if dn in (31, 32):
             return (1416 + dn, 11, 15)
 
-    # 4. Multaqa Al-Du'at ordinal in Ramadan
+    # 5. Fallback Multaqa Al-Du'at ordinal in Ramadan
     if "ملتقى الدعاة" in t:
         for w, y in MULTAQA_WORDS.items():
             if w in t:
@@ -154,18 +173,18 @@ def from_days(d):
     return (y, m, day)
 
 
-def build_interpolated_dates(raw_data: dict):
+def build_interpolated_dates(raw_data: dict, season_hijri_map: dict = None):
     """Return (explicit_dates, best_interp) dicts keyed by yt_id."""
     explicit_dates = {}
     for uv in raw_data.get("unique_videos", []):
-        dt = parse_hijri(uv["title"])
+        dt = parse_hijri(uv["title"], season_hijri_map=season_hijri_map)
         if dt:
             explicit_dates[uv["yt_id"]] = dt
 
     best_interp = {}
     for rs in raw_data.get("raw_series", []):
         vids = rs.get("videos", [])
-        pl_dt = parse_hijri(rs.get("title", ""))
+        pl_dt = parse_hijri(rs.get("title", ""), season_hijri_map=season_hijri_map)
         dated_pts = []
         for idx, v in enumerate(vids):
             dt = explicit_dates.get(v["yt_id"])
@@ -219,7 +238,10 @@ if __name__ == "__main__":
     raw = json.load(open(CURATED_DIR / f"{sh}_raw.json", encoding="utf-8"))
     cur = json.load(open(CURATED_DIR / f"{sh}.json", encoding="utf-8"))
 
-    explicit_dates, best_interp = build_interpolated_dates(raw)
+    season_map = cur.get("season_hijri_map")
+    explicit_dates, best_interp = build_interpolated_dates(
+        raw, season_hijri_map=season_map
+    )
     print(
         f"[{sh}] Explicit dates: {len(explicit_dates)} | Interpolated: {len(best_interp)}"
     )
