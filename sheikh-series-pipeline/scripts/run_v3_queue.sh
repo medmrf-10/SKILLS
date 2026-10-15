@@ -15,9 +15,12 @@ echo "=== طابور v3: $* | متوازي=$PARALLEL | سقف=${MEM}M | $STAMP" 
 
 run_one() {
   local tag=$1
-  echo "[$(date +%H:%M:%S)] ▶ $tag" | tee -a "$QLOG"
+  # ضبط الخيوط كي لا تتزاحم المهام المتوازية على ٤ أنوية (٤ خيوط إجمالًا)
+  local thr=$(( 4 / PARALLEL )); [ "$thr" -lt 1 ] && thr=1
+  echo "[$(date +%H:%M:%S)] ▶ $tag (خيوط=$thr)" | tee -a "$QLOG"
   systemd-run --scope -p MemoryMax=${MEM}M --unit=v3$tag --collect \
-    env SKILL_DIR="$SKILL_DIR" bash "$SKILL_DIR/scripts/run_v3_vps.sh" "$tag" >> "$WORK/logs/v3s_$tag.log" 2>&1
+    env SKILL_DIR="$SKILL_DIR" OMP_NUM_THREADS=$thr ASR_THREADS=$thr \
+    bash "$SKILL_DIR/scripts/run_v3_vps.sh" "$tag" >> "$WORK/logs/v3s_$tag.log" 2>&1
   echo "[$(date +%H:%M:%S)] ■ $tag (exit $?)" | tee -a "$QLOG"
 }
 export -f run_one 2>/dev/null || true
