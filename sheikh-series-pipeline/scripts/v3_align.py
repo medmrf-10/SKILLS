@@ -160,6 +160,8 @@ def main():
     ap.add_argument('--tol', type=float, default=1.5)
     ap.add_argument('--min-sim', type=float, default=0.80)
     ap.add_argument('--batch', type=int, default=1)
+    ap.add_argument('--retry-max', type=int, default=6,
+                    help='أقصى عدد نوافذ تُعاد محاذاتها (0 = تعطيل الإعادة) — ضبط ميزانية الزمن')
     ap.add_argument('--calib-from', default='', help='ملفات CTC سابقة أو v1 تُستخرج منها إشارة انزياح ساعة المراسي')
     ap.add_argument('--calib-bucket', type=float, default=300.0)
     ap.add_argument('--calib-seq', action='store_true',
@@ -268,6 +270,10 @@ def main():
             continue
         if not (w['stats_first'].get('max_abs', 0) > a.tol or w['stats_first'].get('median_abs', 0) > 0.7):
             continue
+        if a.retry_max is not None and retried >= a.retry_max:
+            print('[%s] نافذة %.0f–%.0fث: بلوغ ميزانية الإعادة (%d) — تُترك كما هي' % (
+                a.tag, w['t0'], w['t1'], a.retry_max), flush=True)
+            continue
         inner = [x for x in anchors2 if w['i0'] <= x['i'] < min(w['i1'], len(words))
                  and w['t0'] - 5 <= x['t'] <= w['t1'] + 5]
         base0, base1 = w['t0'] + w.get('off', 0.0), w['t1'] + w.get('off', 0.0)   # ساعة الصوت
@@ -328,7 +334,7 @@ def main():
     # ── تقرير منطقة ٢٠–٢٥ دقيقة
     if a.v1:
         xv = json.load(open(a.v1, encoding='utf-8'))['x']
-        pairs = [(x_['i'], time_map[x_['i']], x_['t_raw'], xv[x_['i']][1]) for x_ in anchors2
+        pairs = [(x_['i'], time_map[x_['i']][0], x_['t_raw'], xv[x_['i']][1]) for x_ in anchors2
                  if x_['i'] in time_map and x_['i'] < len(xv) and 1200 <= xv[x_['i']][1] <= 1500]
         dv1 = [p[1] - p[3] for p in pairs]
         raw = [p[2] - p[3] for p in pairs]
