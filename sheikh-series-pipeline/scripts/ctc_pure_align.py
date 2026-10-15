@@ -73,7 +73,7 @@ def shadow_words_1to1(words, use_dict=True, unify=True):
     return out
 
 
-def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None):
+def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, star_pen=0.0, star_col=None):
     """يحاذي em[f0:f1] على الكلمات words[i0:i1] ⇒ {فهرس عام: (بداية, نهاية, ثقة)} بأزمنة مطلقة.
 
     nwords = الكلمات الظلّية المطبَّعة (١:١ مع words) — تُمرَّر للفيتربي، والمخرجات تبقى بـwords الأصلية.
@@ -82,6 +82,8 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None):
     text = ' '.join(src[i0:i1])
     tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
     sub = torch.from_numpy(np.array(em[f0:f1], dtype=np.float32, copy=True))
+    if star_pen and star_col is not None and 0 <= star_col < sub.shape[1]:
+        sub[:, star_col] = sub[:, star_col] + float(star_pen)   # عقوبة على عمود <star> المضاف
     segments, scores, blank = get_alignments(sub, tokens, tok)
     spans = get_spans(tokens, segments, blank)
     out = postprocess_results(text_starred, spans, stride_ms, scores)
@@ -127,6 +129,66 @@ def interpolate(times, words, min_score):
     return times, flags
 
 
+
+def _norm_len(w):
+    """طول الكلمة بعد نزع الترقيم (يقارب ما يراه المحاذي فعلًا)."""
+    import re as _re
+    return len(_re.sub(r'[^\w\u0600-\u06FF]', '', str(w)))
+
+
+def solid_cut(new, nwords, rate, a):
+    """أعلى فهرس «كلمة صلبة» بين المرشّحين (طول ≥ solid-min-len · ثقة ≥ solid-min-score · اتساق معدل محلي).
+
+    الغرض الهندسي: بدل التسليم الأعمى عند آخر كلمة تحت الأفق (وقد تكون كلمة منجرفة داخل استطراد
+    فتورّث إزاحتها للشريحة التالية)، نرجع للخلف حتى آخر كلمة تحقّق الشروط الثلاثة ونقطع التثبيت عندها.
+    يرجع None إن لم توجد كلمة صلبة (فيُبقى السلوك السابق لضمان التقدّم).
+    """
+    if not new:
+        return None
+    idx = sorted(new)
+    i_first = idx[0]
+    t_first = new[i_first][0]
+    for relax in (0, 1, 2):
+        for i in reversed(idx):
+            s, e, sc = new[i]
+            if relax < 1 and _norm_len(nwords[i]) < a.solid_min_len:
+                continue
+            if relax < 2 and (sc is None or sc < a.solid_min_score):
+                continue
+            if i > i_first:
+                span = max(1e-6, e - t_first)
+                local = (i - i_first + 1) / span
+                if rate > 0 and (local < 0.35 * rate or local > 2.5 * rate):
+                    continue
+            return i
+    return None
+
+
+def island_demote(times, nwords, rate, a):
+    """حارس الجزر: كلمة قصيرة (≤3 أحرف) أو ضعيفة الثقة تشكّل جزيرة زمنية معزولة بين مرساتين صلبتين
+    (معدل محلي خارج 0.3–3.0 × معدل الكلام) ⇒ تُعاد علامتها إلى i لتُستوفى خطيًا.
+    """
+    solid = sorted(i for i, v in times.items()
+                   if _norm_len(nwords[i]) >= a.solid_min_len and (v[2] is None or v[2] >= a.solid_min_score))
+    dem = []
+    for i, (s, e, sc) in list(times.items()):
+        short = _norm_len(nwords[i]) <= 3
+        weak = sc is not None and sc < -0.8
+        if not (short or weak):
+            continue
+        prev = max([k for k in solid if k < i], default=None)
+        nxt = min([k for k in solid if k > i], default=None)
+        if prev is None or nxt is None:
+            continue
+        gap = times[nxt][0] - times[prev][1]
+        if gap <= 0:
+            continue
+        local = (nxt - prev + 1) / gap
+        if rate > 0 and (local < 0.3 * rate or local > 3.0 * rate):
+            dem.append(i)
+    return dem
+
+
 def main():
     ap = argparse.ArgumentParser(description='محاذاة CTC نقيّة من مصفوفة انبعاثات (بلا Whisper)')
     ap.add_argument('--em', required=True, help='ملف الانبعاثات .em.npy')
@@ -142,6 +204,14 @@ def main():
     ap.add_argument('--pause-min-frames', type=int, default=15, help='أدنى طول صمت (إطارًا) = 0.3ث')
     ap.add_argument('--pause-tol', type=float, default=10.0, help='مدى البحث عن أقرب صمت (ث)')
     ap.add_argument('--min-score', type=float, default=-2.0, help='حدّ الثقة للاستيفاء الخطي')
+    ap.add_argument('--star-pen', type=float, default=-0.9,
+                    help='عقوبة لوغاريتمية تُضاف لعمود <star> المضاف قبل الفيتربي (-0.9 = الافتراضي المُقاس)')
+    ap.add_argument('--solid-handoff', type=int, default=1,
+                    help='تسليم محكوم بمرساة صلبة: يقطع التثبيت عند آخر كلمة صلبة لا عند أي كلمة')
+    ap.add_argument('--solid-min-len', type=int, default=4, help='أدنى طول كلمة صلبة (بعد التطبيع)')
+    ap.add_argument('--solid-min-score', type=float, default=-1.0, help='أدنى ثقة لكلمة صلبة')
+    ap.add_argument('--island-guard', type=int, default=0,
+                    help='حارس الجزر (مُقاس 2026-10-15: يخفض دقة 001 بـ3.9 نقطة ⇒ مطفأ افتراضيًا؛ شغّله للتحقق)')
     ap.add_argument('--v1', default='', help='ملف محاذاة مرجعي للتحقق المتقاطع (اختياري)')
     ap.add_argument('--shadow-unify', type=int, default=0,
                     help='توحيد الحروف (ة→ه · ى→ي) — مفيد لمطابقة ASR وضارّ لمحاذي CTC الصوتي')
@@ -183,6 +253,8 @@ def main():
     fc, wc = 0, 0
     B = None                     # إطارات فواصل الصمت الطبيعية (من مصفوفة الانبعاثات، بلا أي ASR)
     blank_id = int(tj.get('blank') if tj.get('blank') is not None else vocab.get('<blank>', 0))
+    Cv = int(tj.get('vocab_size') or len(vocab))
+    star_col = Cv if C > Cv else None          # عمود <star> المضاف (آخر عمود) إن وُجد
     if a.pause_cut:
         Cv = int(tj.get('vocab_size') or len(vocab))          # عدد أصناف النموذج بلا عمود <star> المضاف
         amv = np.asarray(em[:, :Cv]).argmax(1) if C > Cv else np.asarray(em).argmax(1)
@@ -208,7 +280,7 @@ def main():
         margin = a.margin
         while True:                                     # تحصين: عند فشل التثبيت تُقلَّص الشريحة
             try:
-                got = align_slice(em, tok, words, wc, wi1, fc, fi1, stride_ms, a.star, nwords)
+                got = align_slice(em, tok, words, wc, wi1, fc, fi1, stride_ms, a.star, nwords, a.star_pen, star_col)
             except Exception as e:
                 got = {}
                 print('[%s]   [!] فشل شريحة %.0f–%.0fث (%s: %s)' % (a.tag, tc, fi1 / fps, type(e).__name__, str(e)[:80]), flush=True)
@@ -227,6 +299,13 @@ def main():
             fc += step_f
             wc += step_w
             continue
+        if a.solid_handoff:
+            cut_i = solid_cut(new, nwords if nwords is not None else words, rate, a)
+            if cut_i is not None and cut_i < max(new):
+                dropped = sum(1 for i in new if i > cut_i)
+                new = {i: v for i, v in new.items() if i <= cut_i}
+                if dropped:
+                    print('[%s]   ↳ تسليم صلب عند الكلمة %d (أُعيد %d كلمة للشريحة التالية)' % (a.tag, cut_i, dropped), flush=True)
         times.update(new)
         pins += len(new)
         last_end = max(v[1] for v in new.values())
@@ -245,7 +324,7 @@ def main():
     if wc < N:
         got = {}
         try:
-            got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star, nwords)
+            got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star, nwords, a.star_pen, star_col)
         except Exception as e:
             print('[%s]   [!] فشل شريحة الذيل: %s' % (a.tag, type(e).__name__), flush=True)
         for i, v in got.items():
@@ -253,6 +332,13 @@ def main():
         print('[%s] ذيل: أُضيف %d كلمة من أصل %d متبقية' % (a.tag, len(got), N - wc), flush=True)
 
     wall = time.time() - t_start
+    if a.island_guard and times:
+        dem = island_demote(times, nwords if nwords is not None else words, rate, a)
+        for i in dem:
+            s, e, sc = times[i]
+            times[i] = (s, e, -999.0)              # ⇒ يوسم i ويُستوفى خطيًا بين المراسي الصلبة
+        if dem:
+            print('[%s] حارس الجزر: %d كلمة قصيرة/معزولة ⇒ استيفاء خطي' % (a.tag, len(dem)), flush=True)
     times, flags = interpolate(times, words, a.min_score)
     x = []
     for i, w in enumerate(words):
@@ -268,6 +354,8 @@ def main():
                   align_coverage=round(aligned / N * 100, 2), pinned=pins, forced=forced,
                   dur=round(dur, 1), frames=int(T), fps=round(fps, 3), slice=a.slice, pin=a.pin,
                   margin=a.margin, star=a.star, min_score=a.min_score, shadow_norm=bool(a.shadow_norm),
+                  star_pen=a.star_pen, solid_handoff=bool(a.solid_handoff), solid_min_len=a.solid_min_len,
+                  solid_min_score=a.solid_min_score, island_guard=bool(a.island_guard), pause_cut=bool(a.pause_cut),
                   align_wall_s=round(wall, 1), peak_rss_mb=round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1),
                   em_meta=meta)
 

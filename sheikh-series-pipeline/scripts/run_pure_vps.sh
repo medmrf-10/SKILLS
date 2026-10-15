@@ -41,12 +41,14 @@ echo "[$TAG] المرحلة ١: مصفوفة الانبعاثات (بلا Whispe
 #   الافتراضي الآمن: نافذة ٢٠ث + عامِلان (جلسة ONNX لكل عامل) ≈1.3–1.5GB.
 "$PY" -u "$SKILL_DIR/scripts/extract_emissions.py" --audio "$AUDIO" --txt "$TXT" --out "$PRE" \
     --engine "${EM_ENGINE:-torch}" --window "${EM_WINDOW:-20}" --onnx-workers "${ONNX_WORKERS:-2}" \
-    --onnx-threads "${ONNX_THREADS:-2}" --threads "${THREADS:-4}"
+    --onnx-threads "${ONNX_THREADS:-2}" --threads "${THREADS:-4}" --par-halves "${PAR_HALVES:-1}" \
+    --silence-compact "${SILENCE_COMPACT:-0}" --silence-rel "${SILENCE_REL:-5.0}" --layers "${LAYERS:-0}"
 T1=$(date +%s)
 echo "[$TAG] المرحلة ٢: محاذاة الشريحة المتحركة على المصفوفة (بلا نموذج)"
 "$PY" -u "$SKILL_DIR/scripts/ctc_pure_align.py" --em "$PRE.em.npy" --tokens "$PRE.tokens.json" \
     --out "$OUT/$TAG.align.json" --tag "$TAG" --slice "${SLICE:-120}" --pin "${PIN:-65}" \
-    --margin "${MARGIN:-30}" --star "${STAR:-segment}" ${V1:+--v1 "$V1"}
+    --margin "${MARGIN:-30}" --star "${STAR:-segment}" ${V1:+--v1 "$V1"} \
+    --star-pen "${STAR_PEN:--0.9}" --solid-handoff "${SOLID_HANDOFF:-1}" --island-guard "${ISLAND_GUARD:-0}"
 T2=$(date +%s)
 CG=$(awk -F: '/^0::/{print $3}' /proc/self/cgroup 2>/dev/null | head -1)
 PEAK=$(cat "/sys/fs/cgroup${CG}/memory.peak" 2>/dev/null | awk '{printf "%.0f",$1/1048576}')
