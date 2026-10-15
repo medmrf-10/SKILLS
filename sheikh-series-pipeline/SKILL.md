@@ -39,7 +39,8 @@ metadata:
 | ٠ الاستقبال والترتيب | VPS | `new_series.py` + مخطط `SERIES_CONFIG` | `01-intake-and-registry.md` |
 | ١ التفريغ التبادلي | VPS | `transcribe_series.py` (`$TRANSCRIBE_MODEL`) | `02-transcription-pluggable.md` |
 | ٢ بوابة الجودة والتنظيف | VPS | `check_transcripts.py` · `sanitize_preamble.py` | `02-…` §بوابة الجودة |
-| ٣ المحاذاة الأساسية v3 | على الـVPS وحده (معزول) | `v2_anchor.py` → المعايرة التتابعية → `v3_align.py` | `03-alignment-primary-v3.md` |
+| ٣ المحاذاة الأساسية (النقي v4) | على الـVPS وحده (معزول · `MemoryMax=2000M`) | `extract_emissions.py` (انبعاثات مرة واحدة) → `ctc_pure_align.py` (فيتربي بنافذة أفق متحركة + تقطيع عند فواصل الصمت) | `03-alignment-pure-ctc.md` |
+| ٣-ت (تاريخي) v3 بالمراسي | معزول | `v2_anchor.py` → المعايرة التتابعية → `v3_align.py` | `03-alignment-primary-v3.md` |
 | ٤ النشر والطبقات | VPS | `attach_align.py` · `copy_layers.py` · أوراق الروابط | `04-publish-and-layers.md` |
 
 > البنية الكاملة للعتاد، أنماط التشغيل، والحرّاس في `05-hardware-and-execution-profiles.md` و `07-ops-and-guards.md`.
@@ -49,7 +50,7 @@ metadata:
 ## مسارات وبيئة العمل القياسية
 
 - **الخادم (VPS):** بيئة العمل الوحيدة والمركزية `${SERIES_WORKSPACE}/{hawshat,ytb,irth,des,ytb-build,mirath-tools}`.
-- **كاش المراسي وASR:** `$ALIGN_CACHE_DIR` (الافتراضي: `~/.cache/hawshat/wwords`) — الكاش يُولَّد محليًا بـ`scripts/gen_asr_cache.py` عند غيابه.
+- **كاش المراسي وASR (للمسار التاريخي v3 وحده):** `$ALIGN_CACHE_DIR` (الافتراضي: `~/.cache/hawshat/wwords`) — يُولَّد محليًا بـ`scripts/gen_asr_cache.py`. **المسار الأساسي النقي v4 لا يستعمل أي ASR ولا كاش كلمات.**
 - **مانيفست القوائم الشامل:** `${SERIES_WORKSPACE}/hawshat/playlists/data/mut_manifest.json`.
 - **مسار الدرس في مخزن العمل:** `ytb/<sheikh>/<row>/<NNN>_<VID>.txt` وجانبه `.meta.json` و `.align.json`.
 
@@ -127,7 +128,7 @@ metadata:
 > ما يلي (بنية v3 بالمراسي والمعايرة) صار **مسارًا تاريخيًا للتحقق المتقاطع** لا للإنتاج.
 
 
-> **تنبيه الاتساق:** الافتراضي الآن هو **النقي v4** (أعلاه). وما يلي تفصيل بنية **v3** التي صارت **مسارًا تاريخيًا للتحقق المتقاطع** بعد أمر المالك (٢٠٢٦-١٠-١٥). كان المسار القياسي قبل ذلك يعمل **على الـVPS وحده** ببنية **v3** (`scripts/v3_align.py` المدعومة بـ `v2_anchor.py` و `shadow_norm.py`)، محققة تغطية بنسبة **١٠٠٪** من كلمات النص المرجعي:
+> **الاتساق:** الافتراضي هو **النقي v4** (أعلاه) — وما يلي تفصيل بنية **v3** التاريخية للتحقق المتقاطع فقط (أمر المالك، ٢٠٢٦-١٠-١٥). كان المسار القياسي قبل ذلك يعمل **على الـVPS وحده** ببنية **v3** (`scripts/v3_align.py` المدعومة بـ `v2_anchor.py` و `shadow_norm.py`)، محققة تغطية بنسبة **١٠٠٪** من كلمات النص المرجعي:
 
 ```
   نص مفرغ + كاش ASR ──> مراسي v2 (Gotoh + rapidfuzz)
@@ -142,7 +143,7 @@ metadata:
                          تحقق متقاطع وإعادة محاذاة (<star>)
 ```
 
-### خطوات المسار الأساسي (v3):
+### خطوات المسار التاريخي (v3 · للتحقق المتقاطع):
 1. **توليد الكاش محلياً عند الحاجة:**
    الكاش يُولَّد محليًا بـ`scripts/gen_asr_cache.py` عند غيابه (بنموذج `$ASR_MODEL` وحساب `$ASR_COMPUTE_TYPE` على الـVPS بلا أي مضيف خارجي أو SSH).
 2. **بناء مراسي v2 بالهوية (`v2_anchor.py`):**
@@ -211,7 +212,9 @@ python3 ${SERIES_WORKSPACE}/SKILLS/sheikh-series-pipeline/scripts/v3_align.py \
 - **السقف العملي:** **٢ مهام متوازية** كحد أقصى على هذا الخادم.
 - **إلزامية العزل القاطع داخل cgroup:**
   ```bash
-  systemd-run --scope -p MemoryMax=${MEMORY_GUARD_MB:-2000M} --unit=v3<tag> --collect <script>
+  systemd-run --scope -p MemoryMax=${MEMORY_GUARD_MB:-2000M} --unit=pure<tag> <script>
+  # ⚠ داخل سقف 2000M المحرّك الوحيد الذي يسكن هو torch fp32 بنافذة ٢٠ث (قياسات 2026-10-15):
+  #   fp32 نافذة٢٠ = RTF 1.17–1.33 · ذروة 1.48GB ✓ | نافذة٣٠ = 2.52GB ✗ | int8 = 4.01GB ✗ | ONNX UINT8 = OOM ✗
   ```
   (القيمة العملية المعتمدة: `$MEMORY_GUARD_MB=2000M`) لمنع حدوث OOM ولحماية الخادم وبوابته من الانهيار التام.
 - **حارس المساحة الحرة:** التحقق الصارم من توفر قرص حر `disk_free >= $FREE_SPACE_MIN_MB` (افتراضياً ٦,٠٠٠MB)، وتنظيف ملفات الصوت المنتهية دورياً.
