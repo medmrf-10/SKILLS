@@ -1,10 +1,10 @@
 #!/bin/bash
 # run_pure_vps.sh <tag> — المسار النقي (v4) على الـVPS: صوت خام + نص مرجعي ⇒ align.json
-#   المرحلة ١ (صوتية): مصفوفة انبعاثات واحدة (نوافذ ٣٠ث + سياق ٢ث · batch 1) ثم **تفريغ النموذج**.
+#   المرحلة ١ (صوتية): مصفوفة انبعاثات واحدة (نوافذ ٢٠ث + سياق ٢ث · batch 1) ثم **تفريغ النموذج**.
 #   المرحلة ٢ (محاذاة): شريحة متحركة على المصفوفة — بلا نموذج، بلا Whisper، بلا مراسي، بلا معايرة.
 # لا يستعمل أي كاش كلمات سابق (لا ASR ولا محاذاة v1) — إلا للمقارنة إن مُرِّر V1 صراحةً.
 # يُستدعى داخل: systemd-run --scope -p MemoryMax=${MEMORY_GUARD_MB:-2000M} --unit=pure<tag> --collect
-# متغيرات: SERIES_WORKSPACE · PURE_WORKDIR · SKILL_DIR · PURE_OUT · ALIGN_PY · THREADS · SLICE · PIN · MARGIN · STAR · V1 · FFMPEG
+# متغيرات: EM_ENGINE · EM_WINDOW · ONNX_WORKERS · ONNX_THREADS · SERIES_WORKSPACE · PURE_WORKDIR · SKILL_DIR · PURE_OUT · ALIGN_PY · THREADS · SLICE · PIN · MARGIN · STAR · V1 · FFMPEG
 set -euo pipefail
 TAG=${1:?الاستخدام: run_pure_vps.sh <tag>}
 ROOT=${SERIES_WORKSPACE:-/root/workspace}
@@ -35,7 +35,13 @@ fi
 PRE="$OUT/$TAG"
 T0=$(date +%s)
 echo "[$TAG] المرحلة ١: مصفوفة الانبعاثات (بلا Whisper · بلا كاش كلمات)"
-"$PY" -u "$SKILL_DIR/scripts/extract_emissions.py" --audio "$AUDIO" --txt "$TXT" --out "$PRE" --threads "${THREADS:-4}" --window "${EM_WINDOW:-30}"
+# ⚠ سقف الذاكرة (مُقاس 2026-10-15): ONNX UINT8 بـ4 عمال ≈2286MB و**بعامِلين أيضًا يُقتل بـOOM** داخل 2000M؛
+#   سببه أن ذاكرة جلسة ORT مجهولة (anonymous) فتُحتسب كاملة، بخلاف torch الذي يستدعي الأوزان بـmmap.
+#   ⇒ الافتراضي هنا **torch** (نافذة ٢٠ث: ذروة cgroup 919MB · RTF 1.17–1.33). ONNX يبقى متاحًا بـ EM_ENGINE=onnx خارج السقف.
+#   الافتراضي الآمن: نافذة ٢٠ث + عامِلان (جلسة ONNX لكل عامل) ≈1.3–1.5GB.
+"$PY" -u "$SKILL_DIR/scripts/extract_emissions.py" --audio "$AUDIO" --txt "$TXT" --out "$PRE" \
+    --engine "${EM_ENGINE:-torch}" --window "${EM_WINDOW:-20}" --onnx-workers "${ONNX_WORKERS:-2}" \
+    --onnx-threads "${ONNX_THREADS:-2}" --threads "${THREADS:-4}"
 T1=$(date +%s)
 echo "[$TAG] المرحلة ٢: محاذاة الشريحة المتحركة على المصفوفة (بلا نموذج)"
 "$PY" -u "$SKILL_DIR/scripts/ctc_pure_align.py" --em "$PRE.em.npy" --tokens "$PRE.tokens.json" \

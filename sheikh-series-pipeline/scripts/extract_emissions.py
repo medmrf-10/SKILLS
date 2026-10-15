@@ -117,13 +117,12 @@ def main():
     if engine == 'auto':
         engine = 'onnx' if os.path.exists(a.onnx_model) else 'torch'
     if engine == 'onnx':
-        tokenizer = load_alignment_model('cpu', model_path=a.model, dtype=torch.float32)[1]  # المفردات فقط
+        from transformers import AutoTokenizer          # المفردات وحدها (بلا أوزان — 1.2GB أقل)
+        tokenizer = AutoTokenizer.from_pretrained(a.model)
         t_load, t0 = 0.0, time.time()
         em = emissions_onnx(np.asarray(data), a.onnx_model, a.window, a.context, a.onnx_workers, a.onnx_threads)
         t_em = time.time() - t0
         stride = 1000.0 / 50.0
-        del tokenizer
-        gc.collect()
     else:
         t0 = time.time()
         model, tokenizer = load_alignment_model('cpu', model_path=a.model, dtype=torch.float32)

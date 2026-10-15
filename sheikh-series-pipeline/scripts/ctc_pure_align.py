@@ -23,6 +23,7 @@
 الاستعمال
   ctc_pure_align.py --em work/001.em.npy --tokens work/001.tokens.json --out v3out/001.align.json \
       [--slice 120] [--pin 65] [--margin 30] [--star segment] [--min-score -2.0] [--v1 old.align.json] [--tag 001]
+      [--pause-cut 1] [--shadow-norm 1]
 """
 import argparse
 import json
@@ -37,6 +38,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ctc_forced_aligner import get_alignments, get_spans, postprocess_results, preprocess_text  # noqa: E402
+from shadow_norm import shadow, v1_norm  # noqa: E402  — التطبيع الظلّي (عثماني/ألف خنجرية/تفقيط الأرقام)
 
 
 class TokShim:
@@ -51,9 +53,33 @@ class TokShim:
         return self._v
 
 
-def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star):
-    """يحاذي em[f0:f1] على الكلمات words[i0:i1] ⇒ {فهرس عام: (بداية, نهاية, ثقة)} بأزمنة مطلقة."""
-    text = ' '.join(words[i0:i1])
+def shadow_words_1to1(words, use_dict=True, unify=True):
+    """تطبيع ظلّي بكلمة ظلّية **واحدة متصلة غير فارغة** لكل كلمة أصلية (يمنع انزياح الفهارس).
+
+    الشرط الهندسي: preprocess_text يقطّع على المسافات ويربط المخرجات بـ gi = i0 + j، فأي كلمة
+    تُنتج أكثر من كلمة أو تُنتج فراغًا تزيح فهارس كل ما بعدها. لذلك: ندمج تفقيط الأرقام بلا مسافات،
+    ونعوّض علامات الترقيم الصافية بحرف صوتي بديل (ألف) بدل حذفها.
+    """
+    import re as _re
+    out = []
+    for w in words:
+        s = shadow(w, use_dict, unify).replace(' ', '')            # تفقيط الأرقام مدموجًا بلا فواصل
+        if not s and _re.search(r'[0-9\u0660-\u0669]', str(w)):   # أرقام مخلوطة بترقيم ⇒ فقّط كل مجرى رقمي
+            runs = _re.findall(r'[0-9\u0660-\u0669]+', str(w))
+            s = ''.join(shadow(r, use_dict, unify).replace(' ', '') for r in runs)
+        if not s:
+            s = v1_norm(w) or 'ا'                           # بديل صوتي مضمون غير فارغ
+        out.append(s)
+    return out
+
+
+def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None):
+    """يحاذي em[f0:f1] على الكلمات words[i0:i1] ⇒ {فهرس عام: (بداية, نهاية, ثقة)} بأزمنة مطلقة.
+
+    nwords = الكلمات الظلّية المطبَّعة (١:١ مع words) — تُمرَّر للفيتربي، والمخرجات تبقى بـwords الأصلية.
+    """
+    src = nwords if nwords is not None else words
+    text = ' '.join(src[i0:i1])
     tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
     sub = torch.from_numpy(np.array(em[f0:f1], dtype=np.float32, copy=True))
     segments, scores, blank = get_alignments(sub, tokens, tok)
@@ -117,6 +143,10 @@ def main():
     ap.add_argument('--pause-tol', type=float, default=10.0, help='مدى البحث عن أقرب صمت (ث)')
     ap.add_argument('--min-score', type=float, default=-2.0, help='حدّ الثقة للاستيفاء الخطي')
     ap.add_argument('--v1', default='', help='ملف محاذاة مرجعي للتحقق المتقاطع (اختياري)')
+    ap.add_argument('--shadow-unify', type=int, default=0,
+                    help='توحيد الحروف (ة→ه · ى→ي) — مفيد لمطابقة ASR وضارّ لمحاذي CTC الصوتي')
+    ap.add_argument('--shadow-norm', type=int, default=1,
+                    help='تطبيع ظلّي ١:١ (عثماني/ألف خنجرية U+0670/تفقيط أرقام) قبل preprocess_text')
     ap.add_argument('--report', default='', help='ملف report.json (افتراضي: بجوار --out)')
     a = ap.parse_args()
 
@@ -139,9 +169,28 @@ def main():
     if meta.get('n_words') not in (None, N):
         print('[%s] تنبيه: عدد كلمات النص (%d) ≠ المسجَّل في meta (%s)' % (a.tag, N, meta.get('n_words')), flush=True)
 
+    nwords = None
+    if a.shadow_norm:
+        nwords = shadow_words_1to1(words, unify=bool(a.shadow_unify))
+        assert len(nwords) == N, 'التطبيع الظلّي كسر التناظر ١:١ ✗'
+        changed = sum(1 for o, n in zip(words, nwords) if o != n)
+        fal = sum(1 for n in nwords if n == 'ا' and n not in words)
+        print('[%s] تطبيع ظلّي ١:١: تغيّرت %d/%d كلمة · بديل صوتي لعلامات %d كلمة · مثال: «%s» ⇒ «%s»' % (
+            a.tag, changed, N, fal, next((o for o, n in zip(words, nwords) if o != n), ''), next((n for o, n in zip(words, nwords) if o != n), '')), flush=True)
+
     t_start = time.time()
     times, pins, forced = {}, 0, 0
     fc, wc = 0, 0
+    B = None                     # إطارات فواصل الصمت الطبيعية (من مصفوفة الانبعاثات، بلا أي ASR)
+    blank_id = int(tj.get('blank') if tj.get('blank') is not None else vocab.get('<blank>', 0))
+    if a.pause_cut:
+        Cv = int(tj.get('vocab_size') or len(vocab))          # عدد أصناف النموذج بلا عمود <star> المضاف
+        amv = np.asarray(em[:, :Cv]).argmax(1) if C > Cv else np.asarray(em).argmax(1)
+        isb = (amv == blank_id).astype(np.int8)
+        d = np.diff(np.concatenate([[0], isb, [0]]))
+        st_b, en_b = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+        B = en_b[(en_b - st_b) >= a.pause_min_frames]
+        print('[%s] فواصل صمت طبيعية: %d (أدنى %d إطارًا · blank=%d)' % (a.tag, len(B), a.pause_min_frames, blank_id), flush=True)
     rate = N / dur if dur > 0 else 1.0                 # كلمات/ثانية تقديرية أولية
     print('[%s] انبعاثات %d إطارًا × %d صنفًا · %.0fث · %d كلمة · معدل ابتدائي %.2f كلمة/ث · star=%s' % (
         a.tag, T, C, dur, N, rate, a.star), flush=True)
@@ -159,7 +208,7 @@ def main():
         margin = a.margin
         while True:                                     # تحصين: عند فشل التثبيت تُقلَّص الشريحة
             try:
-                got = align_slice(em, tok, words, wc, wi1, fc, fi1, stride_ms, a.star)
+                got = align_slice(em, tok, words, wc, wi1, fc, fi1, stride_ms, a.star, nwords)
             except Exception as e:
                 got = {}
                 print('[%s]   [!] فشل شريحة %.0f–%.0fث (%s: %s)' % (a.tag, tc, fi1 / fps, type(e).__name__, str(e)[:80]), flush=True)
@@ -196,7 +245,7 @@ def main():
     if wc < N:
         got = {}
         try:
-            got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star)
+            got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star, nwords)
         except Exception as e:
             print('[%s]   [!] فشل شريحة الذيل: %s' % (a.tag, type(e).__name__), flush=True)
         for i, v in got.items():
@@ -218,7 +267,7 @@ def main():
                   covered=covered, coverage=round(covered / N * 100, 2),
                   align_coverage=round(aligned / N * 100, 2), pinned=pins, forced=forced,
                   dur=round(dur, 1), frames=int(T), fps=round(fps, 3), slice=a.slice, pin=a.pin,
-                  margin=a.margin, star=a.star, min_score=a.min_score,
+                  margin=a.margin, star=a.star, min_score=a.min_score, shadow_norm=bool(a.shadow_norm),
                   align_wall_s=round(wall, 1), peak_rss_mb=round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1),
                   em_meta=meta)
 
@@ -258,7 +307,7 @@ def main():
                                    window_20_25_gt2=round(sum(1 for d in reg if d > 2) / len(reg) * 100, 0) if reg else None)
     out = dict(cov=report['coverage'], start=0.0, dur=round(dur, 2), audio=meta.get('audio'),
                align_meta=dict(engine='ctc-pure', model=meta.get('model'), fps=round(fps, 3),
-                               slice=a.slice, pin=a.pin, margin=a.margin, star=a.star,
+                               slice=a.slice, pin=a.pin, margin=a.margin, star=a.star, shadow_norm=bool(a.shadow_norm),
                                aligned=aligned, interpolated=covered - aligned, wall_s=round(wall, 1)),
                x=x)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)) or '.', exist_ok=True)

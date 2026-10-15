@@ -7,7 +7,8 @@
   ٢) إزالة رموز الوقف والتجويد العثمانية (U+06E1، U+0655، U+06D6–U+06ED، التطويل).
   ٣) الواو والياء الصغيرتان (U+06E5/U+06E6) → و/ي صريحتان.
   ٤) حذف الحركات القصيرة والمدّة.
-  ٥) توحيد الألف والهمزات والتاء المربوطة والياء المتطرفة.
+  ٥) توحيد الألف والهمزات والتاء المربوطة والياء المتطرفة (unify=False يُعطّله لمحاذي CTC الصوتي:
+     ة→ه و ى→ي تغيّران النطق المستهدف، وuroman يتولّى الهمزات وأشكال الألف بنفسه).
   ٦) تفقيط الأرقام (Number Textualization) — في المجرى الظلّي فقط.
   ٧) إزالة الترقيم.
 
@@ -113,14 +114,15 @@ def load_dict(path=None):
     return _DICT
 
 
-def shadow(word, use_dict=True):
+def shadow(word, use_dict=True, unify=True):
     w = unicodedata.normalize('NFC', str(word))
     w = w.replace(DAGGER_ALEF, '\u0627')      # ١) الألف الخنجرية → ألف صريحة (قبل حذف الحركات)
     w = w.replace(SMALL_WAW, '\u0648').replace(SMALL_YA, '\u064A')
     w = OTTOMAN.sub('', w)                     # ٢) علامات الوقف/التجويد والتطويل
     w = TASHKEEL.sub('', w)                    # ٤) الحركات
-    for a, b in UNIFY:                         # ٥) توحيد الأشكال
-        w = w.replace(a, b)
+    if unify:                                  # ٥) توحيد الأشكال — مطلوب لمسار ASR، وضارّ لمحاذي CTC (يغيّر الصوتية)
+        for a, b in UNIFY:
+            w = w.replace(a, b)
     w = texturize_numbers(w)                   # ٦) تفقيط
     w = PUNCT.sub('', w)                       # ٧) الترقيم
     w = w.strip()

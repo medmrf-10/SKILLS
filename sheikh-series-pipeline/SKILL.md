@@ -1,13 +1,13 @@
 ---
 name: sheikh-series-pipeline
-description: "Use when processing an audio series: intake, pluggable transcription, v3 CTC alignment, and publish."
-version: 1.4.0
+description: "Use when processing an audio series: intake, pluggable transcription, pure CTC alignment (no ASR), and publish."
+version: 1.5.0
 author: Mohamed Boumaraf, Hermes Agent
 license: MIT
 platforms: [linux]
 metadata:
   hermes:
-    tags: [sheikhs, series, transcription, pluggable, gemini, alignment, v3, ctc, mms, vps, arabic, irth, hawshat]
+    tags: [sheikhs, series, transcription, pluggable, gemini, alignment, pure-ctc, onnx, ctc, mms, vps, arabic, irth, hawshat]
     related_skills: [agy-transcription, youtube-audio-download, agy-worker-orchestration, antigravity-cli, mirath-content-platform]
 ---
 
@@ -23,13 +23,13 @@ metadata:
 
 - استقبال سلسلة صوتية جديدة (قائمة تشغيل / صف مانيجست / سلسلة مكتشفة) وتفريغها ومحاذاتها بالكامل.
 - إكمال سلسلة ناقصة، أو إعادة تفريغ دروس بنموذج أحدث عبر طبقة التفريغ التبادلية.
-- محاذاة سلسلة قائمة ببنية v3 الصوتية القسرية لرفع دقة وتغطية الكلمات إلى ١٠٠٪.
+- محاذاة سلسلة قائمة بالمسار النقي (Pure CTC): انبعاثات مرة واحدة ثم فيتربي بنافذة أفق متحركة ⇒ تغطية ١٠٠٪ بلا Whisper ولا كاش كلمات (بنية v3 صارت مسارًا تاريخيًا للتحقق المتقاطع).
 - تشخيص وحل مشاكل الدروس العالقة: انزياح زمني، تفريغ ناقص، فشل تنزيل، أو تسريب مقدمات إنجليزية.
 - **ليس لهذه المهارة:** النقاش حول اختيارات المشايخ أو التصنيفات المحفوظة؛ تلك مكتملة وموثقة ولا يُعاد فتحها.
 
 ## القاعدة الذهبية في سطر
 
-**التفريغ = نموذج معتمد قابل للتبديل (الافتراضي: gemini-3.8-flash-high). المحاذاة = بنية v3 القسرية (مراسي v2 + تقطيع CTC بنوافذ mms-300m على الـVPS وحده).**
+**التفريغ = نموذج معتمد قابل للتبديل (الافتراضي: gemini-3.8-flash-high). المحاذاة = المسار النقي v4 (انبعاثات مرة واحدة + فيتربي بنافذة أفق متحركة + تقطيع عند فواصل الصمت)؛ وبنية v3 القسرية (مراسي v2 + تقطيع CTC بنوافذ mms-300m على الـVPS وحده).**
 وكل عملية طويلة تُطلق بـ `setsid nohup … </dev/null &` وإلا قُتلت بـ SIGTERM.
 
 ## الخريطة العامة (٥ مراحل)
