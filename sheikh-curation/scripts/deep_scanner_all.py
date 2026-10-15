@@ -134,11 +134,15 @@ def scan_sheikh(sh: str, verbose: bool = False):
                     flaws.append(
                         f"  [ORPHAN_CHILD] idx={idx}/{len(lessons)} parent_yt_id={p_yt} != {last_parent_yt} | {yt} | {t}"
                     )
+                is_explicit_part2 = bool(
+                    re.search(r"-\s*2\s*-|الجزء الثاني|\(2\)", t)
+                )
                 if (
                     isinstance(last_parent_dur, (int, float))
                     and 0 < last_parent_dur < 300
                     and isinstance(dur, (int, float))
                     and dur >= 300
+                    and not is_explicit_part2
                 ):
                     flaws.append(
                         f"  [INVERTED_PARENT_CHILD] idx={idx}/{len(lessons)} parent_dur={last_parent_dur}s < child_dur={dur}s | {yt} | {t}"
@@ -260,6 +264,7 @@ if __name__ == "__main__":
             "hashemi",
             "dedew",
             "hafiz",
+            "ayman",
         ]
     for sh in targets:
         scan_sheikh(sh, verbose=verbose)

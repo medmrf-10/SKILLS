@@ -41,6 +41,7 @@ SHEIKHS = [
     "hashemi",
     "dedew",
     "hafiz",
+    "ayman",
 ]
 
 
@@ -61,6 +62,9 @@ def main():
 
         for s_idx, s in enumerate(series_list, 1):
             sid = s.get("id")
+            st = s.get("state")
+            if st not in ("completed", "stopped", "ongoing"):
+                sh_errs.append(f"{sid}: invalid series state={st!r}")
             lessons = s.get("lessons", [])
             sh_lessons += len(lessons)
             last_parent_yt = None
