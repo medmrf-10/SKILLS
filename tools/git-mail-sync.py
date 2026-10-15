@@ -98,8 +98,9 @@ def build(repo, to, sha, trigger, cap):
     dirty = [d for d in dirty if d]
 
     summary = ' '.join(hi['summary'].split())[:120]
-    # الوسم الثابت يبقى ASCII غير مُرمَّز (لتعمل فلاتر Gmail) والملخص العربي فقط يُرمَّز RFC2047
-    subject = '[GIT-SYNC] skills | %s | ' % hi['short'] + Header(summary, 'utf-8').encode()
+    # الوسم الثابت يبقى ASCII غير مُرمَّز (لتعمل فلاتر Gmail)، والعربي يُرمَّز RFC2047 بلا أي طيّ أسطر
+    enc = ' '.join(Header(summary, 'utf-8').encode().split())
+    subject = '[GIT-SYNC] skills | %s | %s' % (hi['short'], enc)
     L = []
     L.append('جسر Git ← Gmail لمستودع المهارات — نص صريح في الجسم، بلا أي مرفقات.')
     L.append(SEP)
