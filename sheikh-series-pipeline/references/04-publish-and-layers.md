@@ -33,17 +33,16 @@
 - `publish_row.py` · `publish_cls.py` · `copy_to_ytb.py` · `copy_tree.py` — أدوات النشر والنسخ بين المخازن.
 - **لا تشغّل أداة نشر بلا أمر صريح، ولا تدفع شيئاً إلى GitHub بلا أمر صريح**، ولا تعدّل `SelectedLessons` ولا أي مخزن مصدر.
 
-## بوابة الجودة قبل النشر
+## بوابة الجودة المزدوجة قبل النشر
 
 ```bash
-python3 ${SERIES_WORKSPACE}/ytb-build/check_transcripts.py ${SERIES_WORKSPACE}/ytb      # exit 1 = عيب
-python3 ${SERIES_WORKSPACE}/ytb-build/sanitize_preamble.py --apply <root>          # قطع سرد إنجليزي + أرشفة
+python3 "$SKILL_DIR/scripts/sanitize_preamble.py" <series_dir>                       # تطهير الترويسات الوصفية والمقدمات اللاتينية + أرشفة
+python3 "$SKILL_DIR/scripts/check_transcripts.py" <series_dir> --llm                 # exit 1 = عيب (فحص حتمي + تدقيق دلالي بـ LLM)
 ```
 
-- الحاوية تكشف: `LATIN_PREAMBLE` (سرد وكيل إنجليزي في أول ٢٠٠ حرف)، `EMPTY` (لا حروف عربية)،
-  `SHORT` (<٤٠٠ حرف عربي)، `META_MISMATCH` (`chars` في meta ≠ الطول الحقيقي).
-- التنظيف **لا يحذف**: الأصل يُؤرشف في `<root>/_fix/english-preamble/` ويُحدَّث `chars/sha256/cleaned`.
-- حدث فعلاً تسرّب في ١٠٤ ملفات فُنظّفت وأُرشفت قبل النشر (التفاصيل في `08-measured-baselines.md`).
+- **الفحص الحتمي يكشف:** `METADATA_HEADER` (ترويسات الشيخ/السلسلة/الفيديو غير المنطوقة)، `LATIN_PREAMBLE` (سرد وكيل إنجليزي)، `LOW_WPM_TRUNCATED` (معدل كلمات < 45 ك/د مقارنة بمدة الصوت)، `ABRUPT_ENDING` (انقطاع وسط جملة)، `NUMBERING_MISMATCH` (تعارض رقم الملف مع رقم الدرس في العنوان)، `REPETITION_LOOP`، `EMPTY`/`SHORT`، و`META_MISMATCH`.
+- **الفحص الدلالي (`--llm`) يكشف:** التحريفات الصوتية للمصطلحات العقدية والفقهية والآيات (`LLM_ASR_CORRUPTION`)، والبتر الدلالي (`LLM_SEMANTIC_TRUNCATION`)، والتلخيص (`LLM_HALLUCINATION_OR_SUMMARY`).
+- التنظيف **لا يحذف**: الأصل يُؤرشف في `<series_dir>/_raw_preamble_backup/` ويُحدَّث `chars` في `.meta.json`.
 
 ## المساحة على المسرّع (شرط السلاسل الطويلة)
 
