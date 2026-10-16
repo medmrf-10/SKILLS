@@ -309,9 +309,14 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
     blank_id = int(tj.get('blank') if tj.get('blank') is not None else vocab.get('<blank>', 0))
     Cv = int(tj.get('vocab_size') or len(vocab))
     star_col = Cv if C > Cv else None          # عمود <star> المضاف (آخر عمود) إن وُجد
+    amv_full = np.asarray(em[:, :Cv]).argmax(1) if C > Cv else np.asarray(em).argmax(1)
+    ev_arr = ((amv_full != blank_id) & (amv_full != np.concatenate([[blank_id], amv_full[:-1]]))).astype(np.int32)
+    cum_ev = np.cumsum(ev_arr)
+    src_for_len = nwords if nwords is not None else words
+    w_chars = np.array([max(1, _norm_len(w)) for w in src_for_len], dtype=np.int32)
+    cum_wchars = np.cumsum(w_chars)
     if a.pause_cut:
-        amv = np.asarray(em[:, :Cv]).argmax(1) if C > Cv else np.asarray(em).argmax(1)
-        isb = (amv == blank_id).astype(np.int8)
+        isb = (amv_full == blank_id).astype(np.int8)
         d = np.diff(np.concatenate([[0], isb, [0]]))
         st_b, en_b = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
         B = en_b[(en_b - st_b) >= a.pause_min_frames]
@@ -322,27 +327,42 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
 
     while wc < N and fc < T:
         tc = fc / fps
-        n_est = max(a.min_words, int(round(rate * min(a.slice, max(5.0, dur - tc)))))
-        wi1 = min(N, wc + n_est + a.margin)
         fi1 = min(T, fc + int(a.slice * fps))
         if B is not None and fi1 < T:                    # ① اقترب من فاصل صمت طبيعي (بلا أي ASR)
             lo_b = fc + int(0.4 * a.slice * fps)
             cand = B[(B > lo_b) & (np.abs(B - fi1) <= int(a.pause_tol * fps))]
             if len(cand):
                 fi1 = int(cand[np.argmin(np.abs(cand - fi1))])
-        margin = a.margin
+        if fi1 >= T:
+            n_est = N - wc
+            wi1 = N
+            eff_margin = 0
+        else:
+            ev_before = int(cum_ev[fc - 1]) if fc > 0 else 0
+            ev_slice = max(1, int(cum_ev[min(T - 1, fi1 - 1)] - ev_before))
+            ev_rem = max(1, int(cum_ev[-1] - ev_before))
+            ch_before = int(cum_wchars[wc - 1]) if wc > 0 else 0
+            ch_rem = max(1, int(cum_wchars[-1] - ch_before))
+            target_ch = ch_before + ch_rem * (ev_slice / float(ev_rem))
+            wi_ev = int(np.searchsorted(cum_wchars, target_ch, side='left')) + 1
+            n_est = max(a.min_words, wi_ev - wc)
+            eff_margin = min(a.margin, max(4, int(round(0.06 * n_est))))
+            wi1 = min(N, wc + n_est + eff_margin)
+        slice_dur = max(1.0, (fi1 - fc) / fps)
+        slice_rate = n_est / slice_dur
+        margin = eff_margin
         while True:                                     # تحصين: عند فشل التثبيت تُقلَّص الشريحة
             try:
                 got = align_slice(em, tok, words, wc, wi1, fc, fi1, stride_ms, a.star, nwords, a.star_pen, star_col)
             except Exception as e:
                 got = {}
                 print('[%s]   [!] فشل شريحة %.0f–%.0fث (%s: %s)' % (tag, tc, fi1 / fps, type(e).__name__, str(e)[:80]), flush=True)
-            horizon = tc + a.pin
+            horizon = (fi1 / fps) if fi1 >= T else (tc + a.pin)
             new = {i: v for i, v in got.items() if v[1] <= horizon and v[1] > v[0] - 0.01}
             if new or margin <= 0:
                 break
             margin -= 10                                # قلّل الهامش ثم أعد المحاولة على الشريحة نفسها
-            wi1 = min(N, wc + n_est + margin)
+            wi1 = min(N, wc + n_est + max(0, margin))
         if not new:                                     # لا تثبيت: تقدّم اضطراري لضمان التقدّم
             forced += 1
             step_f = int(a.slice * fps / 2)
@@ -352,8 +372,8 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             fc += step_f
             wc += step_w
             continue
-        if a.solid_handoff:
-            cut_i = solid_cut(new, nwords if nwords is not None else words, rate, a)
+        if a.solid_handoff and fi1 < T:
+            cut_i = solid_cut(new, nwords if nwords is not None else words, slice_rate, a)
             if cut_i is not None and cut_i < max(new):
                 dropped = sum(1 for i in new if i > cut_i)
                 new = {i: v for i, v in new.items() if i <= cut_i}
@@ -408,7 +428,7 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
     last_e = max((r[2] for r in x if r[2] is not None), default=0.0)
     audio_span_pct = round((last_e / dur) * 100.0, 2) if dur > 0 else 0.0
 
-    # كشف كتل الكلمات المستوفاة المتصلة (≥6 كلمات منطوقة متتالية بلا محاذاة صوتية ⇒ مؤشر تكرار/حشو نصي عند حدود المقاطع)
+    # كشف كتل الكلمات المستوفاة المتصلة (≥10 كلمات منطوقة متتالية بلا محاذاة صوتية ⇒ مؤشر تكرار/حشو نصي عند حدود المقاطع)
     unaligned_clusters = []
     _cur_run = []
     for idx, r in enumerate(x):
@@ -417,14 +437,14 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
         if r[3] != 'a':
             _cur_run.append((idx, r[0], r[1]))
         else:
-            if len(_cur_run) >= 6:
+            if len(_cur_run) >= 10:
                 unaligned_clusters.append(dict(
                     start_idx=_cur_run[0][0], end_idx=_cur_run[-1][0], count=len(_cur_run),
                     t=round(_cur_run[0][2] or 0.0, 2),
                     sample=' '.join(w for _, w, _ in _cur_run[:12])
                 ))
             _cur_run = []
-    if len(_cur_run) >= 6:
+    if len(_cur_run) >= 10:
         unaligned_clusters.append(dict(
             start_idx=_cur_run[0][0], end_idx=_cur_run[-1][0], count=len(_cur_run),
             t=round(_cur_run[0][2] or 0.0, 2),

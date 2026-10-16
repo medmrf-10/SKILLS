@@ -30,12 +30,104 @@ OPENING_CUE_RE = re.compile(
 )
 
 
+PROMPT_ECHO_RE = re.compile(
+    r'(اقرأ الملف الصوتي @|تنبيه صارم:\s*ينتهي هذا المقطع|أخرج النص العربي فقط بلا أي تعليق|'
+    r'هذا هو المقطع\s*\(\d+\s*من\s*\d+\)\s*من المحاضرة|'
+    r'النص جاهز ومكتمل[^.\n]*\.|فلنتأكد من دقة\s*:|نستمع بدقة لكلمات الشيخ\s*:|'
+    r'لتسمع النص بدقة|دعنا نستمع بدقة|دعنا نتأكد من الكلمات|'
+    r'وينقطع الصوت تمام[اً]+ هنا[!.]?)'
+)
+
+
+def _norm_anchor(s):
+    s = re.sub(r'[\u064B-\u065F\u0670\u0640]', '', s)
+    s = re.sub(r'[أإآٱ]', 'ا', s)
+    s = re.sub(r'[^\u0600-\u06FF\s]', ' ', s)
+    return ' '.join(s.split())
+
+
+def _strip_single_block_thinking(block):
+    """إذا احتوى المقطع على مونولوج تفكير لاتيني أو تكرار لنص الموجه ينتهي بنص عربي صافٍ (≥300 حرف)، اقتطع المونولوج بالكامل."""
+    lat_matches = list(LATIN_RE.finditer(block))
+    echo_matches = list(PROMPT_ECHO_RE.finditer(block))
+    if not lat_matches and not echo_matches:
+        return block, False
+    last_end = 0
+    if lat_matches:
+        last_end = max(last_end, lat_matches[-1].end())
+    if echo_matches:
+        last_end = max(last_end, echo_matches[-1].end())
+    tail = block[last_end:]
+    # تخطي أي علامات ترقيم لاتينية أو مسافات متبقية بعد آخر كلمة إنجليزية
+    tail = re.sub(r'^[\s.:\'"`*\-—–()\[\]0-9/\\]+', '', tail)
+    if len(AR_RE.findall(tail)) >= 300:
+        return tail.lstrip(), True
+    return block, False
+
+
 def strip_preamble_and_header(text):
-    """إزالة الترويسات الوصفية والمقدمات غير المنطوقة من مطلع النص.
+    """إزالة الترويسات الوصفية والمقدمات غير المنطوقة ومونولوج التفكير المتسرب من مطلع النص أو مقاطعه.
 
     تُعيد: (cleaned_text, reasons_list)
     """
     reasons = []
+    # إذا وجد مونولوج تفكير لاتيني أو صدى لتعليمات الموجه في أي موضع من الملف:
+    if LATIN_RE.search(text) or PROMPT_ECHO_RE.search(text):
+        paras = re.split(r'\n\s*\n', text)
+        out_paras = []
+        in_leak = False
+        pos_cursor = 0
+        for p in paras:
+            idx_p = text.find(p, pos_cursor)
+            if idx_p != -1:
+                pos_cursor = idx_p + len(p)
+            near_after = text[pos_cursor: pos_cursor + 2800] if idx_p != -1 else ''
+            more_leak_ahead = bool(LATIN_RE.search(near_after) or PROMPT_ECHO_RE.search(near_after))
+            has_lat = bool(LATIN_RE.search(p) or PROMPT_ECHO_RE.search(p))
+            if has_lat:
+                in_leak = True
+                if 'LATIN_PREAMBLE' not in reasons:
+                    reasons.append('LATIN_PREAMBLE')
+                if not more_leak_ahead:
+                    last_m = list(LATIN_RE.finditer(p)) + list(PROMPT_ECHO_RE.finditer(p))
+                    if last_m:
+                        end_pos = max(m.end() for m in last_m)
+                        tail_p = re.sub(r'^[\s.:\'"`*\-—–()\[\]0-9/\\]+', '', p[end_pos:])
+                        if len(AR_RE.findall(tail_p)) >= 15 and not LATIN_RE.search(tail_p) and not PROMPT_ECHO_RE.search(tail_p):
+                            tail_clean = tail_p.strip()
+                            anchor_words = ' '.join(_norm_anchor(tail_clean).split()[:5])
+                            if len(anchor_words) >= 10 and out_paras:
+                                # إذا وُجدت مسودة سابقة لنفس المقطع تبدأ بنفس الجملة المفتتاحية ضمن آخر الفقرات، احذف المسودة المكررة
+                                char_back = 0
+                                cut_from = None
+                                for back_i in range(len(out_paras) - 1, -1, -1):
+                                    char_back += len(out_paras[back_i])
+                                    if char_back > 15000:
+                                        break
+                                    if anchor_words in _norm_anchor(out_paras[back_i]):
+                                        cut_from = back_i
+                                if cut_from is not None:
+                                    out_paras = out_paras[:cut_from]
+                            out_paras.append(tail_clean)
+                            in_leak = False
+                continue
+            if in_leak:
+                if more_leak_ahead:
+                    continue
+                in_leak = False
+            out_paras.append(p)
+        text = '\n\n'.join(out_paras)
+
+    # إزالة الوسوم الوصفية غير المنطوقة مثل [شارة إنشادية] أو ترويسات المتحدثين غير المنطوقة مثل **السائل الثالث:**
+    if re.search(r'\[شارة[^\]]*\]', text):
+        text = re.sub(r'\[شارة[^\]]*\]\s*', '', text)
+        if 'METADATA_HEADER' not in reasons:
+            reasons.append('METADATA_HEADER')
+    if re.search(r'\*\*\s*(?:السائل|السائلة|الشيخ|المقدم|المحاضر|سؤال|الجواب)[^*\n]{0,25}\*\*', text):
+        text = re.sub(r'\*\*\s*(?:السائل|السائلة|الشيخ|المقدم|المحاضر|سؤال|الجواب)[^*\n]{0,25}\*\*\s*', '', text)
+        if 'METADATA_HEADER' not in reasons:
+            reasons.append('METADATA_HEADER')
+
     lines = text.splitlines()
     idx = 0
 

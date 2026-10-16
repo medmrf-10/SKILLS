@@ -163,6 +163,7 @@ T0=$(date +%s)
 echo "[$TAG] الهدف=$TARGET | المرحلة ١: مصفوفة الانبعاثات (جهاز=${EM_DEVICE:-$DEFAULT_DEVICE} · نافذة=${EM_WINDOW:-$DEFAULT_WINDOW}ث · دفعة=${EM_BATCH:-$DEFAULT_BATCH} · طبقات=${LAYERS:-$DEFAULT_LAYERS})"
 EM_ARGS=(
   --audio "$AUDIO" --txt "$TXT" --out "$PRE"
+  --skip-existing
   --engine "${EM_ENGINE:-torch}"
   --device "${EM_DEVICE:-$DEFAULT_DEVICE}"
   --dtype "${EM_DTYPE:-fp32}"
@@ -192,7 +193,6 @@ AL_ARGS=(
   --star-pen "${STAR_PEN:--0.9}"
   --solid-handoff "${SOLID_HANDOFF:-1}"
   --island-guard "${ISLAND_GUARD:-0}"
-  --compact-silence "$PRE.silence.json"
 )
 [ -n "${V1:-}" ] && AL_ARGS+=(--v1 "$V1")
 "$PY" -u "$SKILL_DIR/scripts/ctc_pure_align.py" "${AL_ARGS[@]}"

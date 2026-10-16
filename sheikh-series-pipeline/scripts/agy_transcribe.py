@@ -62,6 +62,58 @@ FFPROBE_BIN = os.environ.get('FFPROBE') or find_bin('ffprobe', [
     '/root/.hermes/tools/ffmpeg-*/bin/ffprobe',
 ])
 
+YTDLP_BIN = os.environ.get('YTDLP_BIN') or find_bin('yt-dlp', [
+    '/opt/homebrew/bin/yt-dlp',
+    '/usr/local/bin/yt-dlp',
+    os.path.expanduser('~/.local/bin/yt-dlp'),
+    '/root/.local/bin/yt-dlp',
+    '/root/.hermes/tools/python-*/bin/yt-dlp',
+    '/root/venvs/*/bin/yt-dlp',
+])
+
+
+def download_lesson_audio(series_dir, n, vid, retries=3):
+    """تنزيل صوت الدرس من يوتيوب وتحويله إلى MP3 أحادي (16kHz · 64kbps) مناسب للتفريغ ومحاذاة MMS."""
+    base = '%03d_%s' % (int(n), vid)
+    out_mp3 = os.path.join(series_dir, base + '.mp3')
+    for ext in ('.mp3', '.m4a', '.wav'):
+        cand = os.path.join(series_dir, base + ext)
+        if os.path.exists(cand) and os.path.getsize(cand) > 10000:
+            return cand, 0.0
+    t0 = time.time()
+    url = 'https://www.youtube.com/watch?v=%s' % vid
+    last_err = ''
+    for att in range(1, retries + 1):
+        with tempfile.TemporaryDirectory(prefix='ytdl_%s_' % base) as tmpd:
+            tmp_tpl = os.path.join(tmpd, 'raw.%(ext)s')
+            fmt = 'bestaudio[ext=m4a]/bestaudio/best' if att == 1 else 'bestaudio/best'
+            cmd = [
+                YTDLP_BIN, '--no-playlist', '--retries', '5', '--fragment-retries', '5',
+                '-f', fmt, '-o', tmp_tpl, url
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            raw_files = glob.glob(os.path.join(tmpd, 'raw.*'))
+            if res.returncode != 0 or not raw_files:
+                last_err = ((res.stderr or '') + ' ' + (res.stdout or ''))[-300:].strip()
+                time.sleep(2 * att)
+                continue
+            raw_path = raw_files[0]
+            tmp_mp3 = out_mp3 + '.part.mp3'
+            ff_cmd = [
+                FFMPEG_BIN, '-y', '-loglevel', 'error', '-i', raw_path,
+                '-vn', '-ar', '16000', '-ac', '1', '-b:a', '64k', tmp_mp3
+            ]
+            subprocess.run(ff_cmd, check=True, timeout=300)
+            os.replace(tmp_mp3, out_mp3)
+            break
+    if not os.path.exists(out_mp3):
+        raise RuntimeError('فشل yt-dlp لـ %s: %s' % (base, last_err))
+    dt = round(time.time() - t0, 1)
+    mb = os.path.getsize(out_mp3) / (1024.0 * 1024.0)
+    print('[تنزيل صوت] ✓ %s.mp3 (%.1f MB في %.1fث)' % (base, mb, dt), flush=True)
+    return out_mp3, dt
+
+
 
 def get_audio_duration(audio_path):
     try:
@@ -98,7 +150,7 @@ def build_prompt(audio_filename, sheikh='', series='', title='', part_idx=None, 
             )
     return (
         f"اقرأ الملف الصوتي @{audio_filename} مباشرة عبر أداة view_file فقط "
-        "(يُمنع منعاً باتاً استخدام run_command أو بايثون أو whisper)."
+        "(يُمنع منعاً باتاً استخدام run_command أو read_url أو search_web أو بايثون أو whisper)."
         f"{chunk_note} "
         "هذا تسجيل صوتي لمحاضرة علمية عربية. اكتب التفريغ النصي الكامل والحرفي بالعربية "
         "مع علامات الترقيم وفواصل الفقرات من أول ثانية إلى آخر ثانية في الملف. "
@@ -135,6 +187,8 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
     """تشغيل agy داخل مجلد مؤقت معزول (مع حل المسار الحقيقي realpath على macOS) بدون --dangerously-skip-permissions لمنع تشغيل أوامر طرفية خارجية."""
     if stagger_s > 0:
         time.sleep(stagger_s)
+    cur_model = model or 'gemini-3.8-flash-high'
+    audio_fallbacks = ['gemini-3.8-flash-high', 'gemini-3-flash-preview', 'gemini-2.5-flash']
     for attempt in range(1, retries + 1):
         with tempfile.TemporaryDirectory(prefix='agy_tr_') as raw_tmpdir:
             tmpdir = os.path.realpath(raw_tmpdir)
@@ -151,8 +205,8 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                 AGY_BIN, '-p', prompt,
                 '--output-format', 'json',
             ]
-            if model:
-                cmd += ['--model', model]
+            if cur_model:
+                cmd += ['--model', cur_model]
             t0 = time.time()
             try:
                 res = subprocess.run(
@@ -166,9 +220,15 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                 if ar_chars >= 300 and words >= min_words:
                     return cleaned.strip(), round(time.time() - t0, 1)
                 sample = (cleaned[:180] if cleaned else ((res.stderr or '') + ' ' + (res.stdout or ''))[-240:]).replace('\n', ' ')
-                print('  [محاولة %d/%d] مخرجات قصيرة أو غير صالحة (rc=%s, words=%d/%d, ar=%d): %s' % (
-                    attempt, retries, res.returncode, words, min_words, ar_chars, sample
+                print('  [محاولة %d/%d · %s] مخرجات قصيرة أو غير صالحة (rc=%s, words=%d/%d, ar=%d): %s' % (
+                    attempt, retries, cur_model, res.returncode, words, min_words, ar_chars, sample
                 ), flush=True)
+                if 'unsupported mime type' in (raw_out + ' ' + (res.stderr or '')).lower():
+                    for fb in audio_fallbacks:
+                        if fb != cur_model:
+                            print('  [تبديل تلقائي للنموذج] النموذج %s لا يدعم الصوت مباشرًا ⇒ التحويل إلى %s' % (cur_model, fb), flush=True)
+                            cur_model = fb
+                            break
             except subprocess.TimeoutExpired:
                 print('  [محاولة %d/%d] انتهت مهلة agy (%dث)' % (attempt, retries, timeout_s), flush=True)
             except Exception as e:
@@ -243,7 +303,8 @@ def main():
     ap = argparse.ArgumentParser(description='تفريغ الدروس الصوتية عبر agy مع تقطيع تلقائي للمحاضرات الطويلة')
     ap.add_argument('series_dir', help='مجلد السلسلة الذي يحوي _meta.json والملفات الصوتية')
     ap.add_argument('--only', default='', help='أرقام دروس محددة مفصولة بفاصلة (مثل 001,004)')
-    ap.add_argument('--model', default=os.environ.get('TRANSCRIBE_MODEL', ''), help='نموذج Gemini في agy (الافتراضي: النموذج الافتراضي في agy)')
+    ap.add_argument('--model', default=os.environ.get('TRANSCRIBE_MODEL', 'gemini-3.8-flash-high'),
+                    help='نموذج Gemini الصوتي في agy (الافتراضي: gemini-3.8-flash-high)')
     ap.add_argument('--max-single-minutes', type=float, default=15.0,
                     help='أقصى مدة بالدقائق لتفريغ الدرس في استدعاء واحد قبل تقسيمه تلقائيًا (الافتراضي: 15)')
     ap.add_argument('--chunk-minutes', type=float, default=12.0,
@@ -277,6 +338,36 @@ def main():
                 only_set.add('%03d' % int(item))
             elif item:
                 only_set.add(item)
+
+    # تنزيل الملفات الصوتية الناقصة تلقائيًا من _meta.json
+    to_dl = []
+    for v in meta.get('videos', []):
+        if v.get('n') is None or not v.get('vid'):
+            continue
+        n_int = int(v['n'])
+        vid = v['vid']
+        num_prefix = '%03d' % n_int
+        base = '%03d_%s' % (n_int, vid)
+        if only_set and (num_prefix not in only_set and base not in only_set and vid not in only_set):
+            continue
+        has_audio = any(
+            os.path.exists(os.path.join(args.series_dir, base + ext))
+            and os.path.getsize(os.path.join(args.series_dir, base + ext)) > 10000
+            for ext in ('.mp3', '.m4a', '.wav')
+        )
+        if not has_audio:
+            to_dl.append((n_int, vid))
+
+    if to_dl:
+        dl_w = min(4, max(1, args.workers), len(to_dl))
+        print('[تنزيل] جارٍ تنزيل %d ملفًا صوتيًا ناقصًا (توازي=%d)...' % (len(to_dl), dl_w), flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=dl_w) as dl_pool:
+            futs = [dl_pool.submit(download_lesson_audio, args.series_dir, n_int, vid) for n_int, vid in to_dl]
+            for fut in concurrent.futures.as_completed(futs):
+                try:
+                    fut.result()
+                except Exception as e:
+                    print('[تحذير تنزيل] %s' % e, file=sys.stderr, flush=True)
 
     audio_files = sorted(
         f for ext in ('*.mp3', '*.m4a', '*.wav')
