@@ -329,6 +329,23 @@ def run_quality_gates(extracted: dict, layout_meta: dict) -> dict:
       4) بوابة توازن الأقواس وعلامات الآيات ﴿...﴾ و«...»
       5) بوابة تحديد الإحداثيات السطرية للكلمات المشتبه بها (uncertain_words) لتكبيرها بدقة 2800px
     """
+    raw_m = (extracted.get("matn") or "").strip()
+    if raw_m.startswith("{") and '"matn"' in raw_m:
+        for ln_cand in reversed(raw_m.splitlines()):
+            ln_cand = ln_cand.strip()
+            if ln_cand.startswith("{"):
+                try:
+                    inner = json.loads(ln_cand)
+                    if isinstance(inner, dict) and "matn" in inner:
+                        for k in ("matn", "footnotes", "running_header", "margin_notes", "printed_page", "uncertain_words"):
+                            if inner.get(k) and not extracted.get(k):
+                                extracted[k] = inner[k]
+                            elif k == "matn":
+                                extracted["matn"] = inner["matn"]
+                        break
+                except Exception:
+                    pass
+
     matn_norm, norm_stats_m = normalize_arabic_output(extracted.get("matn", ""))
     fn_norm, norm_stats_f = normalize_arabic_output(extracted.get("footnotes", ""))
     hdr_norm, _ = normalize_arabic_output(extracted.get("running_header", ""))
@@ -667,13 +684,25 @@ def call_agy_schema(
                 try:
                     structured = json.loads(resp_raw)
                 except Exception:
-                    s_idx = resp_raw.find("{")
-                    e_idx = resp_raw.rfind("}")
-                    if s_idx != -1 and e_idx > s_idx:
-                        try:
-                            structured = json.loads(resp_raw[s_idx:e_idx + 1])
-                        except Exception:
-                            pass
+                    for ln_cand in reversed(resp_raw.splitlines()):
+                        ln_cand = ln_cand.strip()
+                        if ln_cand.startswith("{"):
+                            try:
+                                obj_cand = json.loads(ln_cand)
+                                if isinstance(obj_cand, dict):
+                                    structured = obj_cand
+                                    break
+                            except Exception:
+                                pass
+                    if not isinstance(structured, dict) or not structured:
+                        s_idx = resp_raw.find("{")
+                        if s_idx != -1:
+                            try:
+                                obj_cand, _ = json.JSONDecoder().raw_decode(resp_raw[s_idx:])
+                                if isinstance(obj_cand, dict):
+                                    structured = obj_cand
+                            except Exception:
+                                pass
             if not isinstance(structured, dict) or not structured:
                 if isinstance(resp_raw, str) and len(resp_raw.strip()) > 30 and "matn" in schema_dict.get("properties", {}):
                     structured = parse_markdown_fallback(resp_raw)
@@ -1025,7 +1054,8 @@ def main():
     with open(book_json_path, "w", encoding="utf-8") as f:
         json.dump(summary_payload, f, ensure_ascii=False, indent=2)
 
-    with open(book_md_path, "w", encoding="utf-8") as f:
+    pages_md_path = os.path.join(args.out_dir, f"{book_slug}_pages.md")
+    with open(pages_md_path, "w", encoding="utf-8") as f:
         f.write(format_book_markdown(ordered_pages))
 
     gate_summary = {
@@ -1050,9 +1080,16 @@ def main():
     with open(gate_report_path, "w", encoding="utf-8") as f:
         json.dump(gate_summary, f, ensure_ascii=False, indent=2)
 
+    from build_book_db import build_all_for_dir  # noqa: E402
+    db_info = build_all_for_dir(args.out_dir)
+
     print(
         f"\n[اكتمل] {len(ordered_pages)} صفحة ({total_words} كلمة) في {total_wall}s "
-        f"({summary_payload['effective_s_per_page']}s/صفحة) -> {book_md_path}",
+        f"({summary_payload['effective_s_per_page']}s/صفحة)\n"
+        f"  -> SQLite DB : {db_info['db_path']} ({db_info['total_parts']} أقسام، {db_info['total_footnotes']} حاشية)\n"
+        f"  -> TOC JSON  : {db_info['toc_path']}\n"
+        f"  -> Master MD : {db_info['master_md_path']}\n"
+        f"  -> Pages MD  : {db_info['pages_md_path']}",
         flush=True,
     )
 

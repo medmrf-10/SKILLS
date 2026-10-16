@@ -65,7 +65,7 @@ def main():
         total_digits_fixed += digits_fixed + chars_fixed
         total_words += gr["total_words"]
 
-        if args.fix_normalize and (digits_fixed > 0 or chars_fixed > 0):
+        if args.fix_normalize:
             with open(pf, "w", encoding="utf-8") as f:
                 json.dump(pdata, f, ensure_ascii=False, indent=2)
 
@@ -76,11 +76,30 @@ def main():
         pages_data.append(pdata)
 
     if args.rebuild:
-        book_slug = os.path.basename(os.path.abspath(args.out_dir))
-        md_path = os.path.join(args.out_dir, f"{book_slug}.md")
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(format_book_markdown(pages_data))
-        print(f"[تحديث] أعيد بناء: {md_path}")
+        existing_jsons = [
+            f for f in glob.glob(os.path.join(args.out_dir, "*.json"))
+            if not f.endswith(("gate_report.json", "toc.json"))
+        ]
+        if existing_jsons:
+            book_json_path = existing_jsons[0]
+            try:
+                with open(book_json_path, "r", encoding="utf-8") as f:
+                    bdoc = json.load(f)
+                bdoc["pages"] = pages_data
+                bdoc["total_words"] = total_words
+                with open(book_json_path, "w", encoding="utf-8") as f:
+                    json.dump(bdoc, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        from build_book_db import build_all_for_dir  # noqa: E402
+        db_info = build_all_for_dir(args.out_dir)
+        print(
+            f"[تحديث] أعيد بناء قاعدة البيانات والفهرس والماركداون:\n"
+            f"  -> SQLite DB : {db_info['db_path']}\n"
+            f"  -> TOC JSON  : {db_info['toc_path']}\n"
+            f"  -> Master MD : {db_info['master_md_path']}\n"
+            f"  -> Pages MD  : {db_info['pages_md_path']}"
+        )
 
     status = "CLEAN" if total_warnings == 0 else f"WARNINGS ({total_warnings})"
     print(

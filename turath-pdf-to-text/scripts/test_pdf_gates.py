@@ -185,6 +185,130 @@ class TestTurathPdfToTextGates(unittest.TestCase):
         self.assertEqual(gr["warnings"], [])
 
 
+from build_book_db import (  # noqa: E402
+    build_structured_book,
+    parse_page_structure,
+    query_get_part,
+    query_get_toc,
+    query_search_book,
+    write_sqlite_db,
+)
+
+
+class TestTurathBookDatabaseAndStructure(unittest.TestCase):
+    def test_10_hybrid_toc_heading_detector_standalone_and_runin(self):
+        matn = (
+            "[موقف من مواقف الشيخ\n"
+            "في إبطال حيل أهل الطرق الدجالين](١)\n"
+            "وفي يوم السبت اجتمع جماعة عند نائب السلطنة بالقصر ،\n"
+            "وهم كفار بإجماع\n"
+            "المسلمين .\n"
+            "اللغة فيه\n"
+            "الخط لغة هو الكتب بالقلم قاله صاحب القاموس\n"
+            "إنشاءً في المجموع // وترجيحًا في الرَّوضة\n"
+            "القسم الأوَّل: المفتي المستقل، وشَرْطُهُ: أنْ يكونَ قيِّمًا بمعرفة أدلَّة الأحكام ."
+        )
+        lines, headings = parse_page_structure(matn, is_first_page=False)
+        titles = [h["title"] for h in headings]
+        self.assertEqual(
+            titles,
+            [
+                "[موقف من مواقف الشيخ في إبطال حيل أهل الطرق الدجالين](١)",
+                "اللغة فيه",
+                "القسم الأوَّل: المفتي المستقل",
+            ],
+        )
+        poetry_lines = [ln for ln in lines if ln.get("is_poetry")]
+        self.assertEqual(len(poetry_lines), 1)
+
+    def test_11_cross_page_sentence_stitching_and_multipart_footnote_routing(self):
+        pages_data = [
+            {
+                "pdf_page": 1,
+                "layout": "standard_single_col",
+                "extracted": {
+                    "printed_page": "١٥٦",
+                    "running_header": "",
+                    "matn": (
+                        "[رسالة الشيخ إلى السلطان الملك الناصر](١)\n"
+                        "قال فيهم : يحقر أحدكم صلاته مع صلاتهم .\n"
+                        "ومثل أولئك إنما [يكون خارجًا](٢) عن طاعة الإمام، وهؤلاء خرجوا عن شريعة رسول الله"
+                    ),
+                    "margin_notes": "[ق/ ٥٥]",
+                    "footnotes": "(١) من المطبوع .\n(٢) في المطبوع : يكونون خارجين .",
+                },
+                "gate_report": {"total_words": 28, "warnings": []},
+            },
+            {
+                "pdf_page": 2,
+                "layout": "standard_single_col",
+                "extracted": {
+                    "printed_page": "١٥٧",
+                    "running_header": "",
+                    "matn": (
+                        "ﷺ وسنته ، وهم شر من التتار في رءوس المئين .\n"
+                        "﴿ فَاعْتَبِرُوا يَا أُولِي الأَبْصَارِ (٢) وَلِيُخْزِيَ الْفَاسِقِينَ ﴾(١) .\n"
+                        "فصل\n"
+                        "تمام هذا الفتح وبركته تقدم مراسم السلطان على أئمتهم ورءوسهم ."
+                    ),
+                    "margin_notes": "",
+                    "footnotes": "(١) [سورة الحشر : ٢-٥] .",
+                },
+                "gate_report": {"total_words": 32, "warnings": []},
+            },
+        ]
+        book = build_structured_book(pages_data, book_slug="test_book")
+        self.assertEqual(len(book["parts"]), 2)
+        p1, p2 = book["parts"][0], book["parts"][1]
+        # Cross-page stitch check
+        self.assertIn("خرجوا عن شريعة رسول الله ⟦ص ١٥٧⟧ ﷺ وسنته", p1["text_continuous"])
+        self.assertIn("خرجوا عن شريعة رسول الله ﷺ وسنته", p1["text_clean"])
+        # Inline marginalia check
+        self.assertIn("⟦هامش ص ١٥٦: [ق/ ٥٥]⟧", p1["text_continuous"])
+        # Quranic verse number (٢) preserved while footnote (١) after ﴾ is scoped
+        self.assertIn("(٢) وَلِيُخْزِيَ الْفَاسِقِينَ ﴾[ص١٥٧/ح١]", p1["text_continuous"])
+        # Footnote [ص١٥٧/ح١] must belong to Part 1 (before 'فصل'), not Part 2 ('فصل')
+        self.assertIn("[ص١٥٧/ح١]", p1["footnotes_scoped"])
+        self.assertEqual(p2["footnotes_scoped"], "")
+
+    def test_12_sqlite_fts5_clitic_and_hamza_search(self):
+        pages_data = [
+            {
+                "pdf_page": 1,
+                "layout": "standard_single_col",
+                "extracted": {
+                    "printed_page": "١٥١",
+                    "running_header": "",
+                    "matn": (
+                        "[رسالة الشيخ]\n"
+                        "الذي أخبر فيه عن تجديد الدين في رءوس المئين ، وهذا المذهب تلقنه لهم أئمتهم ، وهم كفار بإجماع المسلمين ."
+                    ),
+                    "margin_notes": "",
+                    "footnotes": "",
+                },
+                "gate_report": {"total_words": 20, "warnings": []},
+            }
+        ]
+        book = build_structured_book(pages_data, book_slug="test_search")
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test_search.db")
+            write_sqlite_db(db_path, book)
+            toc = query_get_toc(db_path)
+            self.assertEqual(len(toc["toc"]), 1)
+            part1 = query_get_part(db_path, 1, clean=True)
+            self.assertIn("تجديد الدين في رءوس المئين", part1["text"])
+
+            # 1) Hamza variant query: 'رؤوس' -> matches 'رءوس'
+            hits_ruus = query_search_book(db_path, "رؤوس")
+            self.assertEqual(len(hits_ruus), 1)
+            # 2) Construct-state ta marbuta -> maftuha + pronoun suffix: 'أئمة' -> matches 'أئمتهم'
+            hits_aimma = query_search_book(db_path, "أئمة")
+            self.assertEqual(len(hits_aimma), 1)
+            # 3) Proclitic stripping/expansion: 'إجماع' -> matches 'بإجماع'
+            hits_ijma = query_search_book(db_path, "إجماع")
+            self.assertEqual(len(hits_ijma), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
