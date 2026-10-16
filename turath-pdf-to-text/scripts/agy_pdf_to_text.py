@@ -371,10 +371,11 @@ def run_quality_gates(extracted: dict, layout_meta: dict) -> dict:
         ar_map = str.maketrans("٠١٢٣٤٥٦٧٨٩¹²³⁴⁵⁶⁷⁸⁹", "0123456789123456789")
         return int(s.translate(ar_map))
 
+    matn_without_quran = re.sub(r"﴿[^﴾]*﴾", " ", matn_norm)
     matn_markers = []
     for m in re.finditer(
         r"[\(\[]([٠-٩0-9]{1,2})[\)\]]|([¹²³⁴⁵⁶⁷⁸⁹])|(?<=[ء-ي])([٠-٩0-9]{1,2})(?=\s|[،.؛:]|$)",
-        matn_norm,
+        matn_without_quran,
     ):
         raw_num = m.group(1) or m.group(2) or m.group(3)
         val = to_int_marker(raw_num)

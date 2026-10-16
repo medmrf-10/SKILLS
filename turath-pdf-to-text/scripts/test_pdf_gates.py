@@ -159,6 +159,32 @@ class TestTurathPdfToTextGates(unittest.TestCase):
         self.assertIn("MISSING_FOOTNOTES_BELOW_SEPARATOR", warn_str)
         self.assertIn("UNBALANCED_QURAN_BRACKETS", warn_str)
 
+    def test_09_footnote_parity_ignores_quranic_verse_numbers_inside_braces(self):
+        extracted = {
+            "printed_page": "١٥٨",
+            "running_header": "",
+            "matn": (
+                "﴿ فَاعْتَبِرُوا يَا أُولِي الأَبْصَارِ (٢) وَلَوْلا أَن كَتَبَ اللَّهُ عَلَيْهِمُ الْجَلاءَ "
+                "لَعَذَّبَهُمْ فِي الدُّنْيَا وَلَهُمْ فِي الآخِرَةِ عَذَابُ النَّارِ (٣) ذَلِكَ بِأَنَّهُمْ "
+                "شَاقُّوا اللَّهَ وَرَسُولَهُ (٤) وَلِيُخْزِيَ الْفَاسِقِينَ ﴾(١) ."
+            ),
+            "margin_notes": "",
+            "footnotes": "(١) [سورة الحشر : ٢-٥] .",
+            "uncertain_words": [],
+        }
+        meta = {
+            "layout": "standard_single_col",
+            "height": 2200,
+            "visual_line_count": 4,
+            "footnote_separator_y": 1800,
+            "visual_lines": [(100, 130), (200, 230), (300, 330), (1850, 1880)],
+        }
+        gr = run_quality_gates(extracted, meta)
+        self.assertEqual(gr["matn_markers"], [1])
+        self.assertEqual(gr["fn_markers"], [1])
+        self.assertEqual(gr["warnings"], [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
