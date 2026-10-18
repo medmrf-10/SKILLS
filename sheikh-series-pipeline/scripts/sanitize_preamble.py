@@ -104,13 +104,15 @@ def _dedup_inline_consecutive_spans(block, min_overlap_words=4, max_span_words=4
         n = len(lex)
         if n < min_overlap_words * 2:
             break
+        norm_list = [x[2] for x in lex]
         found = False
         max_L = min(max_span_words, n // 2)
         for L in range(max_L, min_overlap_words - 1, -1):
             for i in range(0, n - 2 * L + 1):
-                span1 = [lex[k][2] for k in range(i, i + L)]
-                span2 = [lex[k][2] for k in range(i + L, i + 2 * L)]
-                if span1 == span2 and not _is_devotional_span(span1):
+                if norm_list[i] != norm_list[i + L]:
+                    continue
+                span1 = norm_list[i:i + L]
+                if span1 == norm_list[i + L:i + 2 * L] and not _is_devotional_span(span1):
                     # تأكد من عدم وجود فاصل طويل غير علامات الترقيم بين النسختين
                     between = cur[lex[i + L - 1][1]:lex[i + L][0]]
                     if len(between.strip()) <= 4:
@@ -140,6 +142,8 @@ def _dedup_two_adjacent_chunks(prev_chunk, next_chunk, min_overlap_words=4, max_
             break
         tail_lex = p_lex[-min(len(p_lex), max_window_words):]
         head_lex = n_lex[:min(len(n_lex), max_window_words)]
+        t_words = [x[2] for x in tail_lex]
+        h_words = [x[2] for x in head_lex]
         t_len = len(tail_lex)
         h_len = len(head_lex)
         max_L = min(t_len, h_len)
@@ -148,12 +152,16 @@ def _dedup_two_adjacent_chunks(prev_chunk, next_chunk, min_overlap_words=4, max_
         for L in range(max_L, min_overlap_words - 1, -1):
             # ابحث عن تطابق يقع في آخر 3 كلمات من نهاية المقطع الأول وأول 3 كلمات من بداية المقطع الثاني
             for t_start in range(max(0, t_len - L - 3), t_len - L + 1):
-                t_slice = [tail_lex[k][2] for k in range(t_start, t_start + L)]
-                if _is_devotional_span(t_slice):
-                    continue
+                first_w = t_words[t_start]
+                t_slice = None
                 for h_start in range(0, min(4, h_len - L + 1)):
-                    h_slice = [head_lex[k][2] for k in range(h_start, h_start + L)]
-                    if t_slice == h_slice:
+                    if h_words[h_start] != first_w:
+                        continue
+                    if t_slice is None:
+                        t_slice = t_words[t_start:t_start + L]
+                        if _is_devotional_span(t_slice):
+                            break
+                    if t_slice == h_words[h_start:h_start + L]:
                         matched = (t_start, h_start, L)
                         break
                 if matched:
