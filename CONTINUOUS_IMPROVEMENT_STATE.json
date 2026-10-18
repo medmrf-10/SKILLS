@@ -1,8 +1,18 @@
 {
   "loop_version": "2.0-subagent-driven",
-  "updated_at": "2026-10-18T15:16:00+02:00",
-  "cycle_count": 2,
-  "next_skill_index": 2,
+  "updated_at": "2026-10-18T16:34:00+02:00",
+  "cycle_count": 3,
+  "next_skill_index": 3,
+  "last_improved_skill": "sheikh-curation",
+  "priority_backlog": [
+    {
+      "skill": "sheikh-series-pipeline",
+      "issue_id": "ALIGN-ONSET-BREATH-JUMP",
+      "title": "القفز المبكر لبداية الكلمة التالية أثناء أخذ الشيخ نفساً عميقاً أو سكتة بين الجمل",
+      "description": "عندما يأخذ الشيخ نفساً عميقاً أو يسكت لثوانٍ بين كلمتين، تقفز بداية الكلمة التالية (start_sec) إلى أول النفس/السكتة وتنتظر عدة ثواني حتى ينطقها الشيخ فعلياً (بسبب التقاط أول حرف من الكلمة على صوت النفس أو تمدد إطار البداية عبر إطارات <blank> الداخلية أو غياب <star> بين الكلمات عند star=segment).",
+      "constraint": "يُطبَّق الحل على المحاذاة القادمة فقط؛ يُمنع تعديل أو إعادة محاذاة الملفات المنجزة سابقاً."
+    }
+  ],
   "skills_rotation": [
     "turath-deep-indexing",
     "person-discovery-intake",
@@ -14,18 +24,15 @@
     "agy-lean-cli"
   ],
   "last_completed_cycle": {
-    "cycle": 2,
+    "cycle": 3,
     "skills_tested": [
-      "person-discovery-intake"
+      "sheikh-curation"
     ],
     "real_datasets_used": [
-      "/Users/macm1pro/.gemini/antigravity/brain/a66db81b-9ed5-46c9-a1da-c3de34a35d9c/scratch/jamhara.pdf (real Jamharat A'mal PDF index, 129 deduplicated links)",
-      "/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/*_raw.json (all 17 real sheikhs, 1,340 playlists)",
-      "/Users/macm1pro/REPOS/cheikh/data/full_channels/tankert-shared.json + sariri-personal.json + bardoni-personal.json",
-      "/Users/macm1pro/REPOS/cheikh/data/raw_playlists/*.json (playlist summary fixtures)",
-      "/Users/macm1pro/REPOS/swe/Shamela4_Full_DB (8,589 books indexed into shamela4_books_index.json.gz)"
+      "/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/*_raw.json (all 17 real sheikhs: omari, asimi, alihani, hawwa, bardoni, sariri, sayed, bouti, gomaa, kamali, jifri, shaarawy, samarrai, hashemi, dedew, hafiz, ayman — 1,340 raw playlists, 26,881 raw videos)",
+      "/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/<person_id>.json (17 reference human-curated sheikh files, 1,092 series, 21,074 main lessons)"
     ],
-    "bugs_fixed": 9,
+    "bugs_fixed": 8,
     "gate_status": "PASS (0 errors)"
   }
 }

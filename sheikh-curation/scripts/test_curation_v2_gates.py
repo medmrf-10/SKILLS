@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_curation_v2_gates.py — 3-Layer Deterministic Quality Gate for sheikh-curation v2.0.
+test_curation_v2_gates.py — 4-Layer Deterministic Quality Gate for sheikh-curation v2.1.
 
 Verifies:
   - Gate 1 (All 9 Defect Repairs):
@@ -25,6 +25,15 @@ Verifies:
   - Gate 3 (Series Directory Export `<person_id>/sXXX/_meta.json`):
       Verifies that `<output_series_dir>/<person_id>/sXXX/_meta.json` directories and metadata files
       are generated for every series and are 100% compatible with `sheikh-series-pipeline v5`.
+
+  - Gate 4 (Real 17-Sheikh Corpus Regression & Semantic Fidelity Gate):
+      Verifies Cycle 3 semantic upgrades discovered across all 17 real sheikhs:
+        a. Compound Arabic ordinal phrases (21..99, 100..300, المتم الخمسين) & real-world `#N`/`_N_`/`(N)` numbering.
+        b. Guest speaker & welcoming ceremony isolation without false positives on co-hosted series or event playlists.
+        c. Unclassified matn routing (parenthetical aliases) & automatic clustering of recurring unclassified books/series.
+        d. Reverse-ordered (`N..1`) playlist detection and reversal + semantic `state` resolution (`completed`/`stopped`/`ongoing`)
+           even when raw dump defaults to `state="completed"` with `"تصنيف: ..."` notes.
+        e. Real multi-sheikh raw corpus curation (`sariri`, `alihani`, `bardoni`, `hawwa`, `sayed`) with 0 scanner/audit errors.
 """
 
 from __future__ import annotations
@@ -41,7 +50,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from auto_curate_person import auto_curate_person  # noqa: E402
+from auto_curate_person import (  # noqa: E402
+    auto_curate_person,
+    extract_lesson_num,
+    is_guest_or_event_lesson,
+)
 
 
 def build_adversarial_raw_fixture() -> dict[str, Any]:
@@ -665,15 +678,234 @@ def run_gate_3_series_meta_export(curation_res: dict[str, Any]) -> None:
     )
 
 
+def run_gate_4_real_corpus_semantic_fidelity(tmp_path: Path) -> None:
+    """
+    Gate 4: Verify Cycle 3 semantic upgrades discovered across all 17 real sheikhs:
+      1. Compound Arabic ordinal phrase parsing (21..99, 100..300, المتم الخمسين) & `#N`/`_N_`/`(N)` numbering.
+      2. Guest speaker & welcoming ceremony isolation without false positives on co-hosted series or event playlists.
+      3. Unclassified matn routing (parenthetical aliases) & automatic clustering of recurring unclassified books/series.
+      4. Reverse-ordered (`N..1`) playlist reversal + semantic `state` resolution (`completed`/`stopped`/`ongoing`)
+         even when raw dump defaults to `state="completed"` with `"تصنيف: ..."` notes.
+      5. Real multi-sheikh raw corpus curation (`sariri`, `alihani`, `bardoni`, `hawwa`, `sayed`) with 0 scanner/audit errors.
+    """
+    # 4a. Compound Arabic ordinal phrases & real-world symbol numbering
+    assert extract_lesson_num("المجلس السابع والعشرون من مجالس سماع وقراءة كتاب حلية الأولياء") == 27
+    assert extract_lesson_num("شرح صحيح البخاري المجلس الثاني بعد المئة الأولى للشيخ سعيد الكملي") == 102
+    assert extract_lesson_num("الدرس المتم الخمسين من شرح ألفية ابن مالك") == 50
+    assert extract_lesson_num("الدرس الثالث والستون بعد المئتين من شرح موطأ مالك") == 263
+    assert extract_lesson_num("شرح كتاب شذور الذهب #12 | الشيخ صالح العصيمي") == 12
+    assert extract_lesson_num("مختصر السيرة النبوية _07_ الشيخ صالح العصيمي") == 7
+    assert extract_lesson_num("( 15 ) شرح مقدمة ابن رشد - د. سعيد الكملي") == 15
+    assert extract_lesson_num("شرح الحكم العطائية - وقصيدة: فيا سالكاً (8)") is None
+    assert extract_lesson_num("تفسير سورة البقرة من الآية (15) إلى (20)") is None
+
+    # 4b. Guest speaker & ceremony discrimination vs co-hosted series & prepositions
+    assert is_guest_or_event_lesson(
+        "محاضرة الدكتور حاتم الأنصاري في مدرسة شيخ العمود",
+        sheikh_info={"name": "أيمن عبد الرحيم", "short_name": "أيمن عبد الرحيم"},
+        series_title="دورة تأسيس العلوم",
+    ) is True
+    assert is_guest_or_event_lesson(
+        "كلمة ترحيبية بالشيخ محمد الحسن الددو في افتتاح المركز",
+        sheikh_info={"name": "محمد الحسن الددو", "short_name": "الددو"},
+        series_title="شرح الورقات",
+    ) is True
+    assert is_guest_or_event_lesson(
+        "مراجعات مع إبراهيم رفيق الطويل - الحلقة 5",
+        sheikh_info={"name": "محمد خير الشعال", "short_name": "الهاشمي"},
+        series_title="مراجعات مع إبراهيم رفيق الطويل",
+    ) is False
+    assert is_guest_or_event_lesson(
+        "كلمة الشيخ في المؤتمر العالمي لنصرة النبي",
+        sheikh_info={"name": "محمد الحسن الددو", "short_name": "الددو"},
+        series_title="محاضرات عامة",
+    ) is False
+    assert is_guest_or_event_lesson(
+        "محاضرة الدكتور عمر عبد الكافي في ملتقى رواد الأقصى",
+        sheikh_info={"name": "الحبيب عمر بن حفيظ", "short_name": "بن حفيظ"},
+        series_title="مشاركات ملتقى رواد الأقصى",
+    ) is False
+
+    # 4c & 4d. Synthetic fixture testing parenthetical matn routing, recurring unclassified clustering,
+    # reverse playlist (N..1) reversal, and semantic state override of raw default state="completed"
+    sem_raw = {
+        "person_id": "semsh",
+        "sheikh_name": "الشيخ أبو عبد الله المنهجي",
+        "sheikh": {
+            "id": "semsh",
+            "order_no": 1,
+            "name": "الشيخ أبو عبد الله المنهجي",
+            "short_name": "المنهجي",
+        },
+        "series": [
+            # Series 1: Reverse-ordered playlist (3, 2, 1) with default raw state="completed" and "تصنيف:" note,
+            # stopping mid-book at باب صلاة المسافر -> must reverse to 1..3 and resolve state="stopped"
+            {
+                "id": "PL_rev_fiqh",
+                "order_no": 1,
+                "title": "شرح متن الورقات في أصول الفقه (الورقات)",
+                "yt_playlist_id": "PL_rev_fiqh",
+                "state": "completed",
+                "note": "تصنيف: الفقه وأصوله",
+                "lessons": [
+                    {
+                        "pos": 1,
+                        "yt_id": "vid_wrq_03",
+                        "title": "الدرس 3 من شرح الورقات - باب العام والخاص",
+                        "duration": 2200,
+                        "is_child": False,
+                        "display_no": "1",
+                    },
+                    {
+                        "pos": 2,
+                        "yt_id": "vid_wrq_02",
+                        "title": "الدرس 2 من شرح الورقات - باب الأمر والنهي",
+                        "duration": 2150,
+                        "is_child": False,
+                        "display_no": "2",
+                    },
+                    {
+                        "pos": 3,
+                        "yt_id": "vid_wrq_01",
+                        "title": "الدرس 1 من شرح الورقات - المقدمة وتعريف أصول الفقه",
+                        "duration": 2100,
+                        "is_child": False,
+                        "display_no": "3",
+                    },
+                ],
+            },
+            # Series 2: Unclassified bucket with Lesson 4 of الورقات + 3 recurring lessons of a standalone matn
+            {
+                "id": "semsh__unclassified",
+                "order_no": 2,
+                "title": "غير مصنف",
+                "yt_playlist_id": None,
+                "is_unclassified": True,
+                "state": "completed",
+                "note": "تصنيف: غير مصنف",
+                "lessons": [
+                    {
+                        "pos": 1,
+                        "yt_id": "vid_wrq_04",
+                        "title": "الدرس 4 من شرح الورقات - باب المجمل والمبين",
+                        "duration": 2300,
+                        "is_child": False,
+                        "display_no": "1",
+                    },
+                    {
+                        "pos": 2,
+                        "yt_id": "vid_srf_01",
+                        "title": "شرح متن الصرف الصغير - الدرس 1 - المقدمة والميزان الصرفي",
+                        "duration": 1900,
+                        "is_child": False,
+                        "display_no": "2",
+                    },
+                    {
+                        "pos": 3,
+                        "yt_id": "vid_srf_02",
+                        "title": "شرح متن الصرف الصغير - الدرس 2 - أبنية الأفعال المجردة",
+                        "duration": 1950,
+                        "is_child": False,
+                        "display_no": "3",
+                    },
+                    {
+                        "pos": 4,
+                        "yt_id": "vid_srf_03",
+                        "title": "شرح متن الصرف الصغير - الدرس 3 - خاتمة المتن وتمام الكتاب",
+                        "duration": 2050,
+                        "is_child": False,
+                        "display_no": "4",
+                    },
+                ],
+            },
+        ],
+    }
+    sem_dir = tmp_path / "sem_gate4"
+    sem_dir.mkdir(parents=True, exist_ok=True)
+    sem_raw_file = sem_dir / "semsh_raw.json"
+    with open(sem_raw_file, "w", encoding="utf-8") as f:
+        json.dump(sem_raw, f, ensure_ascii=False, indent=2)
+
+    sem_res = auto_curate_person(
+        raw_input=sem_raw_file,
+        output_json_path=sem_dir / "semsh.json",
+        output_series_dir=sem_dir / "series_export",
+        db_path=sem_dir / "curated.db",
+    )
+    assert sem_res["report"]["stage9"]["passed"] is True
+    sem_series = sem_res["curated_data"]["series"]
+
+    waraqat_s = next(s for s in sem_series if "الورقات" in s["title"])
+    sarf_s = next(s for s in sem_series if "الصرف الصغير" in s["title"])
+
+    # Verify reverse-ordered playlist was reversed and unclassified Lesson 4 was routed into it in order 1..4
+    assert [ep["yt_id"] for ep in waraqat_s["lessons"]] == [
+        "vid_wrq_01",
+        "vid_wrq_02",
+        "vid_wrq_03",
+        "vid_wrq_04",
+    ], f"Gate 4 Failed: Reverse playlist + unclassified routing order mismatch: {[ep['yt_id'] for ep in waraqat_s['lessons']]}"
+    assert [ep["display_no"] for ep in waraqat_s["lessons"]] == ["1", "2", "3", "4"]
+    assert waraqat_s["state"] == "stopped", f"Gate 4 Failed: Mid-book series with raw state='completed' and 'تصنيف:' note should resolve to 'stopped', got {waraqat_s['state']}"
+    assert "من " in waraqat_s["title"] and "إلى " in waraqat_s["title"]
+
+    # Verify 3 recurring unclassified matn lessons were clustered into their own completed series
+    assert [ep["yt_id"] for ep in sarf_s["lessons"]] == ["vid_srf_01", "vid_srf_02", "vid_srf_03"]
+    assert sarf_s["state"] == "completed"
+
+    # 4e. Multi-sheikh real raw corpus verification (if `/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs` exists)
+    cheikh_raw_dir = Path("/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs")
+    tested_real = []
+    if cheikh_raw_dir.exists():
+        for pid in ("sariri", "alihani", "bardoni", "hawwa", "sayed"):
+            raw_p = cheikh_raw_dir / f"{pid}_raw.json"
+            if not raw_p.exists():
+                continue
+            p_dir = tmp_path / f"real_{pid}"
+            p_dir.mkdir(parents=True, exist_ok=True)
+            p_res = auto_curate_person(
+                raw_input=raw_p,
+                output_json_path=p_dir / f"{pid}.json",
+                output_series_dir=p_dir / "series_export",
+                db_path=p_dir / "curated.db",
+            )
+            assert p_res["report"]["stage9"]["passed"] is True, f"Gate 4 Real Corpus Failed on {pid}"
+            assert p_res["report"]["stage9"]["scanner_flaws_total"] == 0
+            assert p_res["report"]["stage9"]["audit_returncode"] == 0
+            tested_real.append(pid)
+
+            if pid == "sariri":
+                s_titles = [s["title"] for s in p_res["curated_data"]["series"]]
+                assert any("الصرف الصغير" in t for t in s_titles), "Gate 4 Failed: sariri missing clustered الصرف الصغير series!"
+                stopped_cnt = sum(1 for s in p_res["curated_data"]["series"] if s["state"] == "stopped")
+                assert stopped_cnt >= 5, f"Gate 4 Failed: sariri expected >=5 stopped series, got {stopped_cnt}"
+            elif pid == "alihani":
+                s_titles = [s["title"] for s in p_res["curated_data"]["series"]]
+                assert any("مبادئ دروس العربية" in t for t in s_titles), "Gate 4 Failed: alihani missing clustered مبادئ دروس العربية series!"
+                assert not any(s.get("is_unclassified") for s in p_res["curated_data"]["series"]), "Gate 4 Failed: alihani still has unclassified bucket!"
+            elif pid == "bardoni":
+                risala2 = next(s for s in p_res["curated_data"]["series"] if "الشرح الثاني" in s["title"])
+                assert extract_lesson_num(risala2["lessons"][0]["title"], risala2["title"]) == 1, (
+                    f"Gate 4 Failed: bardoni الشرح الثاني للرسالة not reversed: {risala2['lessons'][0]['title']}"
+                )
+
+    print(
+        f"  [Gate 4] PASS — Compound ordinals, guest/co-scholar discrimination, unclassified matn clustering, "
+        f"reverse playlist reversal, semantic state resolution, and real raw corpus curation ({', '.join(tested_real)}) verified with 0 errors."
+    )
+
+
 def main() -> None:
-    print("=== Running sheikh-curation v2.0 3-Layer Quality Gates ===")
+    print("=== Running sheikh-curation v2.1 4-Layer Quality Gates ===")
     with tempfile.TemporaryDirectory(prefix="sheikh_curation_v2_gate_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         curation_res = run_gate_1_all_9_defects(tmp_path)
         run_gate_2_scanner_and_global_audit(tmp_path, curation_res)
         run_gate_3_series_meta_export(curation_res)
+        run_gate_4_real_corpus_semantic_fidelity(tmp_path)
     print("\nPASS (0 errors)")
 
 
 if __name__ == "__main__":
     main()
+

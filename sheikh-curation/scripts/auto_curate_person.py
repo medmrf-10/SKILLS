@@ -184,8 +184,6 @@ SERIES_STOPWORDS = {
     "متن",
     "نظم",
     "منظومه",
-    "رساله",
-    "دروس",
     "سلسله",
     "مجالس",
     "برنامج",
@@ -218,6 +216,11 @@ SERIES_STOPWORDS = {
     "الدرس",
     "المجلس",
     "الحلقه",
+    "ماده",
+    "تعليق",
+    "التعليق",
+    "مدارسه",
+    "قراءه",
 }
 
 CURATED_DB_SCHEMA = """
@@ -294,25 +297,26 @@ CREATE INDEX IF NOT EXISTS idx_cur_lessons_yt ON lessons(yt_id);
 
 
 def normalize_ar(text: str) -> str:
-    """Normalize Arabic text for deterministic comparison."""
+    """Normalize Arabic text for deterministic comparison (converting '#' and '_' to spaces)."""
     if not text:
         return ""
     s = str(text).translate(AR_DIGITS)
     s = HARAKAT_RE.sub("", s)
     s = re.sub(r"[أإآٱ]", "ا", s)
     s = s.replace("ى", "ي").replace("ئ", "ي").replace("ؤ", "و").replace("ة", "ه")
+    s = re.sub(r"[#_]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
 def has_ar_word(text: str, word: str) -> bool:
-    """Check if `word` appears in `text` respecting Arabic word boundaries."""
+    """Check if `word` appears in `text` respecting Arabic word boundaries and connected prefixes."""
     nt = normalize_ar(text)
     nw = normalize_ar(word)
     if not nw:
         return False
     core = nw[2:] if nw.startswith("ال") and len(nw) > 4 else nw
-    pat = rf"(?<![\u0621-\u064a0-9])(?:ال)?{re.escape(core)}(?![\u0621-\u064a0-9])"
+    pat = rf"(?<![\u0621-\u064a0-9])(?:[وفبكل])?(?:ال|لل)?{re.escape(core)}(?![\u0621-\u064a0-9])"
     return bool(re.search(pat, nt))
 
 
@@ -327,6 +331,7 @@ def parse_arabic_ordinal_phrase(text: str) -> int | None:
     t = str(text or "").translate(AR_DIGITS)
     t = HARAKAT_RE.sub("", t)
     t_norm = re.sub(r"[أإآٱ]", "ا", t)
+    t_norm = re.sub(r"[#_]+", " ", t_norm)
 
     units_map = {
         "الحادي": 1,
@@ -420,6 +425,18 @@ def parse_arabic_ordinal_phrase(text: str) -> int | None:
         "تسعين": 90,
     }
     hundreds_map = {
+        "المائة الاولى": 100,
+        "المئة الاولى": 100,
+        "المائة الأولى": 100,
+        "المئة الأولى": 100,
+        "المائة الثانية": 200,
+        "المئة الثانية": 200,
+        "المائة الثانيه": 200,
+        "المئة الثانيه": 200,
+        "المائة الثالثة": 300,
+        "المئة الثالثة": 300,
+        "المائة الثالثه": 300,
+        "المئة الثالثه": 300,
         "المائة": 100,
         "المئة": 100,
         "مائة": 100,
@@ -438,60 +455,200 @@ def parse_arabic_ordinal_phrase(text: str) -> int | None:
 
     matches = list(
         re.finditer(
-            r"(?:^|\b)(?:الحلقة|الحلقه|الدرس|المجلس|اللقاء|المحاضرة|المحاضره|لقاء|درس|مجلس|حلقة|حلقه)\s+(?:العام\s+)?(.{3,55})",
+            r"(?:^|(?<![\u0621-\u064a]))(?:الحلقة|الحلقه|الدرس|المجلس|اللقاء|المحاضرة|المحاضره|لقاء|درس|مجلس|حلقة|حلقه)\s+(?:العام\s+)?(.{3,55})",
             t_norm,
         )
     )
     for m in matches:
-        cand = re.split(r"[:\|\-–—\(\[\{«\"/_]", m.group(1))[0]
+        cand = re.split(r"[:\|\-–—\(\[\{«\"/]", m.group(1))[0]
         h_val = 0
         for hk, hv in sorted(hundreds_map.items(), key=lambda x: -len(x[0])):
-            if re.search(r"(?:^|\s|و)" + re.escape(hk) + r"(?:\b|$)", cand):
+            m_h = re.search(r"(?:^|\s|و)" + re.escape(hk) + r"(?![\u0621-\u064a])", cand)
+            if m_h:
                 h_val = hv
+                cand = cand[: m_h.start()] + " " + cand[m_h.end() :]
                 break
         t_val = 0
         for tk, tv in sorted(tens_map.items(), key=lambda x: -len(x[0])):
-            if tv >= 20 and re.search(r"(?:^|\s|و)" + re.escape(tk) + r"(?:\b|$)", cand):
+            if tv >= 20 and re.search(r"(?:^|\s|و)" + re.escape(tk) + r"(?![\u0621-\u064a])", cand):
                 t_val = tv
                 break
         if t_val == 0:
             m_teen = re.search(
-                r"(?:^|\s|و)(الحادي|الحادية|الثاني|الثانية|الثالث|الثالثة|الرابع|الرابعة|الخامس|الخامسة|السادس|السادسة|السابع|السابعة|الثامن|الثامنة|التاسع|التاسعة)\s+(عشر|عشرة)(?:\b|$)",
+                r"(?:^|\s|و)(الحادي|الحادية|الحاديه|الثاني|الثانية|الثانيه|الثالث|الثالثة|الثالثه|الرابع|الرابعة|الرابعه|الخامس|الخامسة|الخامسه|السادس|السادسة|السادسه|السابع|السابعة|السابعه|الثامن|الثامنة|الثامنه|التاسع|التاسعة|التاسعه)\s+(عشر|عشرة|عشره)(?![\u0621-\u064a])",
                 cand,
             )
             if m_teen:
                 return h_val + 10 + units_map[m_teen.group(1)]
-            if re.search(r"(?:^|\s|و)(العاشر|العاشرة)(?:\b|$)", cand):
+            if re.search(r"(?:^|\s|و)(العاشر|العاشرة|العاشره)(?![\u0621-\u064a])", cand):
                 return h_val + 10
         u_val = 0
+        best_u_pos = len(cand) + 1
         for uk, uv in sorted(units_map.items(), key=lambda x: -len(x[0])):
-            if re.search(r"(?:^|\s|و)" + re.escape(uk) + r"(?:\b|$)", cand):
+            m_u = re.search(r"(?:^|\s|و)" + re.escape(uk) + r"(?![\u0621-\u064a])", cand)
+            if m_u and m_u.start() < best_u_pos:
+                best_u_pos = m_u.start()
                 u_val = uv
-                break
         total = h_val + t_val + u_val
         if total > 0:
             return total
     return None
 
 
-def extract_lesson_num(title: str, series_title: str = "") -> int | None:
-    """
-    Extract explicit lesson number from title without capturing poem numbers `(8)`
-    or Dawrah numbers `الدورة (29)`.
-    Prioritizes `deep_scanner_all.extract_explicit_num`, then Arabic ordinals.
-    """
-    n = dsa.extract_explicit_num(title)
+def _extract_num_from_segment(seg: str, series_title: str = "") -> int | None:
+    """Internal helper to extract a lesson number from a single cleaned title or pipe segment."""
+    if not seg:
+        return None
+
+    # Strip known false-positive parenthesized numbers (poem numbers, dawrah numbers, verse/hadith/page numbers)
+    cleaned = re.sub(
+        r"(?:وقصيدة|قصيدة|وقصيده|قصيده)\s*:?[^|\n]*?\(\s*[\d\u0660-\u0669]+\s*\)",
+        " ",
+        seg,
+    )
+    cleaned = re.sub(
+        r"(?:الدورة|دورة|دوره|المؤتمر|مؤتمر|الملتقى|ملتقى|عام|سنة|سنه)\s+(?:[\u0621-\u064a]+\s+){0,4}\(\s*[\d\u0660-\u0669]+\s*\)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?:آية|آيه|ايه|الآية|الايه|الآيات|الايات|سورة|سوره|حديث|الحديث|رقم الحديث|صفحة|ص)\s*\(?\s*[\d\u0660-\u0669]+\s*\)?(?:\s*(?:[-–—/]|إلى|الى|وحتى|حتى)\s*\(?\s*[\d\u0660-\u0669]+\s*\)?)?",
+        " ",
+        cleaned,
+    )
+
+    # 1. Standard deep_scanner_all explicit number
+    n = dsa.extract_explicit_num(cleaned)
     if n is not None:
         return n
-    ord_n = parse_arabic_ordinal_phrase(title)
+
+    t_norm = dsa.norm(cleaned)
+
+    # 2. Extended explicit lesson/episode/council keywords (including 'ح 1' after tatweel removal, 'دس21', 'الدرس:17', 'رقم: 80')
+    m_kw = re.search(
+        r"(?:^|(?<![\u0621-\u064a]))(?:الدرس|درس|دس|الحلقة|حلقة|حـ|المجلس|مجلس|المحاضرة|محاضرة|اللقاء|لقاء|رقم)\s*[:\-–—_#]*\s*(?:الـ?\s*)?\(?\s*0*(\d{1,4})\b",
+        t_norm,
+    )
+    if m_kw:
+        val = int(m_kw.group(1))
+        if 1 <= val <= 3000:
+            return val
+
+    m_ha = re.search(r"(?:^|[\|\-–—:\(\[\s])ح\s*[:\-–—_#]*\s*0*(\d{1,4})(?:\b|$)", t_norm)
+    if m_ha:
+        val = int(m_ha.group(1))
+        if 1 <= val <= 3000:
+            return val
+
+    # 3. Arabic ordinal words ('الدرس الثاني', 'المجلس السادس عشر')
+    ord_n = parse_arabic_ordinal_phrase(cleaned)
     if ord_n is not None:
         return ord_n
-    if "مقدمات" in series_title and "المقدمة" in title:
-        rewritten = title.replace("المقدمة", "الدرس", 1)
+    if "مقدمات" in series_title and "المقدمة" in cleaned:
+        rewritten = cleaned.replace("المقدمة", "الدرس", 1)
         ord_m = parse_arabic_ordinal_phrase(rewritten)
         if ord_m is not None:
             return ord_m
+
+    # 4. Square-bracketed lesson numbers or ranges: '[4]', '[14-30]', '[09]'
+    m_br = re.search(r"\[\s*0*(\d{1,4})(?:\s*[-–—/]\s*\d{1,4})?\s*\]", t_norm)
+    if m_br:
+        val = int(m_br.group(1))
+        if 1 <= val <= 3000:
+            return val
+
+    # 5. Parenthesized fraction or slash: '(14/30)', '(الحكم العطائية/12)'
+    m_sl = re.search(r"\(\s*(?:[\u0621-\u064a\s]{2,25}/\s*)?0*(\d{1,4})(?:\s*/\s*\d{1,4})?\s*\)", t_norm)
+    if m_sl and "/" in m_sl.group(0):
+        val = int(m_sl.group(1))
+        if 1 <= val <= 3000:
+            return val
+
+    # 6. Leading numbers at the start of the title: '(1) ...', '949) ...', '14- ...', '33 شرح ...'
+    m_lead = re.search(
+        r"^\s*(?:\(\s*0*(\d{1,4})\s*\)|0*(\d{1,4})\s*\)\s+|0*(\d{1,4})\s*[-–—:]\s*[\u0621-\u064a]|0*(\d{1,4})\s+(?:والاخير|والاخيره|و\s*الاخير|شرح|ماده|تفسير|قواعد|بدايه|فقه))",
+        normalize_ar(cleaned),
+    )
+    if m_lead:
+        num_str = next(g for g in m_lead.groups() if g is not None)
+        val = int(num_str)
+        if 1 <= val <= 3000:
+            return val
+
+    # 7. Pipe-delimited standalone numbers: '| 01 |', '| #9 |', '| 16 والاخير'
+    m_pipe = re.search(r"\|\s*#?\s*0*(\d{1,4})(?:\s*والاخير|\s*والاخيره)?\s*(?:\||$)", normalize_ar(cleaned))
+    if m_pipe:
+        val = int(m_pipe.group(1))
+        if 1 <= val <= 3000:
+            return val
+
+    # 8. Hyphen-wrapped, underscore-wrapped, or hash-prefixed numbers: '-33-', '- 88 -', '_07_', '#12'
+    m_hyph = re.search(
+        r"(?:(?:^|\s)-\s*0*(\d{1,4})\s*-(?:\s|$)|_\s*0*(\d{1,4})\s*_|(?:^|[\s\|\(\[])#\s*0*(\d{1,4})(?:\b|$))",
+        t_norm,
+    )
+    if m_hyph:
+        num_str = next(g for g in m_hyph.groups() if g is not None)
+        val = int(num_str)
+        if 1 <= val <= 3000:
+            return val
+
+    # 9. Parenthesized number after Arabic title words: 'شرح ابن عقيل (101)', 'الأشموني (81)'
+    # (Skip if multiple parenthesized numbers exist and series_title matches the second one)
+    paren_matches = list(re.finditer(r"([\u0621-\u064a]{3,})\s*\(\s*0*(\d{1,4})\s*\)", normalize_ar(cleaned)))
+    if paren_matches:
+        if len(paren_matches) >= 2 and series_title:
+            nt_ser = normalize_ar(series_title)
+            for pm in reversed(paren_matches):
+                w_before = pm.group(1)
+                if w_before in nt_ser and w_before not in {"لمسات", "بيانيه"}:
+                    val = int(pm.group(2))
+                    if 1 <= val <= 3000:
+                        return val
+        val = int(paren_matches[0].group(2))
+        if 1 <= val <= 3000:
+            return val
+
+    # 10. Book/series phrase followed by number before '-', '|', '@', or end of string:
+    # e.g. 'كشف الغمة 489-', 'رياض الصالحين 65 |', 'شرح نظم ابن عاشر 05', 'صحيح البخاري 39 @dedewiat'
+    m_trail = re.search(
+        r"(?:شرح|كتاب|متن|نظم|تفسير|سيره|رياض|كشف|خلاصات|مدارس|صفوه|ايها|ماده|الفقه|التعليق|مجالس|الف\s+باء|لتعارفوا|اقرا|ونفس)[^|\n\d]{1,45}?\s+0*(\d{1,4})\s*(?:[-–—\|]|@[\w_]+|$)",
+        normalize_ar(cleaned),
+    )
+    if m_trail:
+        val = int(m_trail.group(1))
+        if 1 <= val <= 3000:
+            return val
+
     return None
+
+
+def extract_lesson_num(title: str, series_title: str = "") -> int | None:
+    """
+    Extract explicit lesson number from compound titles without capturing poem numbers `(8)`,
+    verse numbers, or Dawrah numbers `الدورة (29)`.
+    Disambiguates multi-number titles (e.g. 'ألف باء الزواج 43 | خلاصات ما بعد المجلس 12')
+    using `series_title`.
+    """
+    if not title:
+        return None
+
+    # If the title has pipe-separated segments and series_title matches a specific sub-segment,
+    # prefer the number in that sub-segment unless dsa.extract_explicit_num is already on the whole title.
+    scanner_n = dsa.extract_explicit_num(title)
+    if "|" in title and series_title:
+        nt_ser = normalize_ar(series_title)
+        segments = [seg.strip() for seg in title.split("|") if seg.strip()]
+        if len(segments) >= 2:
+            for seg in segments[1:]:
+                nt_seg = normalize_ar(seg)
+                seg_words = [w for w in nt_seg.split() if len(w) >= 4 and w not in SERIES_STOPWORDS]
+                if seg_words and sum(1 for w in seg_words if w in nt_ser) >= min(2, len(seg_words)):
+                    sub_n = _extract_num_from_segment(seg, series_title)
+                    if sub_n is not None and (scanner_n is None or scanner_n == sub_n):
+                        return sub_n
+
+    return _extract_num_from_segment(title, series_title)
 
 
 def is_explicit_part_continuation(title: str) -> bool:
@@ -548,40 +705,125 @@ def is_clip_title(title: str, series_title: str = "") -> bool:
     return False
 
 
+NON_PERSON_FIRST_WORDS = {
+    "في",
+    "عن",
+    "حول",
+    "بمناسبه",
+    "خلال",
+    "امام",
+    "الي",
+    "لطلبه",
+    "لطلاب",
+    "بمسجد",
+    "بعنوان",
+    "بمعهد",
+    "بدار",
+    "بجامع",
+    "ودور",
+    "واثر",
+    "وفضل",
+    "ومكانه",
+    "رحمه",
+    "رضي",
+    "حفظه",
+    "لشرح",
+    "لكتاب",
+    "لمتن",
+}
+
+
 def is_guest_or_event_lesson(title: str, sheikh_info: dict[str, Any], series_title: str = "") -> bool:
     """
-    Detect guest speaker lectures (attributed to a scholar other than the channel's sheikh)
-    and contest/award ceremonies that should be isolated from book explanation series.
+    Detect guest speaker lectures (attributed to a scholar other than the channel's sheikh),
+    welcoming/farewell speeches, and contest/award ceremonies that should be isolated from
+    structured book/course explanation series.
     """
     nt = normalize_ar(title)
+    nt_series = normalize_ar(series_title)
 
-    # 1. Contest / Award / Closing ceremonies
+    # Do not isolate events/guests from series that are already event/conference/dawrah/rihlah collections
+    if nt_series and any(
+        w in nt_series
+        for w in [
+            "موتمر",
+            "ندوه",
+            "ملتقي",
+            "احتفال",
+            "احتفالات",
+            "حفل",
+            "رحله",
+            "رحلات",
+            "زياره",
+            "زيارات",
+            "الدوره الصيفيه",
+            "الدورات الصيفيه",
+            "فعاليات",
+            "الضيوف",
+            "كلمات العلماء",
+            "شهادات",
+            "مرثيات",
+        ]
+    ):
+        return False
+
+    # 1. Contest / Award / Closing ceremonies & Welcoming / Farewell speeches
     for ev_kw in EVENT_CEREMONY_KEYWORDS:
         if normalize_ar(ev_kw) in nt:
             return True
 
+    welcome_keywords = [
+        "كلمه ترحيبيه",
+        "كلمه الترحيب",
+        "كلمه توديعيه",
+        "مجلس توديع",
+        "كلمات العلماء والدعاه",
+    ]
+    for w_kw in welcome_keywords:
+        if w_kw in nt:
+            return True
+
     # 2. Guest speaker patterns
+    sheikh_id_norm = normalize_ar(sheikh_info.get("id", ""))
     sheikh_name_norm = normalize_ar(sheikh_info.get("name", ""))
     sheikh_short_norm = normalize_ar(sheikh_info.get("short_name", ""))
     sheikh_tokens = {
         w
         for w in (sheikh_name_norm + " " + sheikh_short_norm).split()
         if len(w) >= 3
-        and w not in {"الشيخ", "الدكتور", "الامام", "العلامه", "الحبيب", "السيد", "ابو", "ابي", "عبد", "بن", "محمد", "احمد", "علي"}
+        and w
+        not in {
+            "الشيخ",
+            "الدكتور",
+            "الامام",
+            "العلامه",
+            "الحبيب",
+            "السيد",
+            "ابو",
+            "ابي",
+            "عبد",
+            "بن",
+            "محمد",
+            "احمد",
+            "علي",
+        }
     }
+    # Add common kunyas/aliases for the 17 sheikhs
+    if "dedew" in sheikh_id_norm or "الددو" in sheikh_name_norm:
+        sheikh_tokens.update({"الددو", "ددو", " الشنقيطي"})
 
     guest_patterns = [
         (
             True,
-            r"(?:^|[\|\-–—:]|\b)(?:كلمه|محاضره|مداخله|مشاركه|لقاء مع|ضيف المجلس|ضيف اللقاء|يلقيها)\s+(?:فضيله\s+|سماحه\s+|معالي\s+)?(?:الشيخ|الدكتور|الاستاذ|الحبيب|الداعيه|العلامه|السيد|م\.|د\.)\s+([\u0621-\u064a\s]{3,35})",
+            r"(?:^|[\|\-–—:]|\b)(?:كلمه|محاضره|مداخله|مشاركه|لقاء مع|ضيف المجلس|ضيف اللقاء|يلقيها|رساله من)\s+(?:فضيله\s+|سماحه\s+|معالي\s+)?(?:الشيخ|الدكتور|الاستاذ|الحبيب|الداعيه|العلامه|السيد|المهندس|م\.|د\.|ا\.د\.?)\s+([\u0621-\u064a\s]{3,35})",
         ),
         (
             True,
-            r"^(?:محاضره|كلمه|درس)\s+(?:فضيله\s+)?(?:الشيخ|الدكتور|الاستاذ|الحبيب|الداعيه)\s+([\u0621-\u064a\s]{3,35})",
+            r"^(?:محاضره|كلمه|درس)\s+(?:فضيله\s+)?(?:الشيخ|الدكتور|الاستاذ|الحبيب|الداعيه|المهندس|م\.|د\.)\s+([\u0621-\u064a\s]{3,35})",
         ),
         (
             False,
-            r"(?:[\|\-–—])\s*(?:فضيله\s+)?(?:الشيخ|الدكتور|الحبيب|الداعيه)\s+([\u0621-\u064a\s]{3,30})$",
+            r"(?:[\|\-–—])\s*(?:فضيله\s+|سماحه\s+)?(?:الشيخ|الدكتور|الاستاذ|الحبيب|الداعيه|المهندس|م\.|د\.)\s+([\u0621-\u064a\s]{3,30})$",
         ),
     ]
     for is_explicit_speech, pat in guest_patterns:
@@ -591,16 +833,24 @@ def is_guest_or_event_lesson(title: str, sheikh_info: dict[str, Any], series_tit
             cand = re.split(r"[\|\-–—:\(\)\[\]]", cand)[0].strip()
             if not cand or len(cand) < 4:
                 continue
-            prefix = nt[: m.start()]
-            if re.search(r"(?:شرح|كتاب|متن|نظم|رساله|منظومه|تاليف|تصنيف|للامام)\s*$", prefix):
+            cand_words = cand.split()
+            if not cand_words or cand_words[0] in NON_PERSON_FIRST_WORDS:
                 continue
-            if not is_explicit_speech and any(ca in cand for ca in CLASSICAL_AUTHORS_STOP):
+            if any(w in cand_words for w in ["الموتمر", "الندوه", "الملتقي", "الجامعه", "المعهد", "الافتتاح", "الختام"]):
+                continue
+            prefix = nt[: m.start()]
+            if re.search(r"(?:شرح|كتاب|متن|نظم|رساله|منظومه|تاليف|تصنيف|للامام|للشيخ|للعلامه)\s*$", prefix):
+                continue
+            if not is_explicit_speech and any(normalize_ar(ca) in cand for ca in CLASSICAL_AUTHORS_STOP):
+                continue
+            # If the scholar's name is part of the series title itself (co-hosted/guest-taught series), keep it!
+            if nt_series and any(len(w) >= 4 and w in nt_series for w in cand_words if w not in {"الشيخ", "الدكتور", "الامام", "الحبيب", "السيد", "محمد", "احمد", "ابراهيم"}):
                 continue
             if sheikh_name_norm and (sheikh_name_norm in cand or cand in sheikh_name_norm):
                 continue
             if sheikh_short_norm and len(sheikh_short_norm) >= 4 and sheikh_short_norm in cand:
                 continue
-            if sheikh_tokens and any(tok in cand.split() for tok in sheikh_tokens):
+            if sheikh_tokens and any(tok in cand_words for tok in sheikh_tokens):
                 continue
             return True
 
@@ -1049,10 +1299,64 @@ def stage1_import_durations_and_purge_dead(
 # ---------------------------------------------------------------------------
 
 
+def _clean_series_core_for_matching(s_title: str) -> tuple[str, list[str]]:
+    """
+    Extract cleaned series core title (stripped of curriculum prefixes and long author suffixes)
+    and any meaningful parenthetical book/series aliases.
+    """
+    nt_series = normalize_ar(s_title)
+    aliases: list[str] = []
+    for m_par in re.finditer(r"\(([^)]+)\)", nt_series):
+        inner = m_par.group(1).strip()
+        # Strip range/status notes inside parentheses
+        if any(
+            w in inner
+            for w in [
+                "الحلقات الكامله",
+                "المستوي",
+                "نسخه",
+                "مترجم",
+                "رحمه الله",
+                "من المقدمه",
+                "الي باب",
+                "الدروس",
+                "المجالس",
+                "رمضان",
+                "ربيع",
+                "درساً",
+                "درسا",
+                "مجلساً",
+                "مجلسا",
+            ]
+        ):
+            continue
+        inner_clean = re.sub(r"^(?:الشرح|القسم|الجزء|الموسم)\s+[\u0621-\u064a]+\s*:?\s*", "", inner).strip()
+        if len(inner_clean) >= 4:
+            aliases.append(inner_clean)
+
+    core = re.sub(r"\([^)]*\)", " ", nt_series)
+    core = re.sub(r"[«»\"']", " ", core)
+    # Strip curriculum subject prefixes like 'نحو (1-أ):' or 'مادة'
+    core = re.sub(
+        r"^(?:نحو|صرف|بلاغه|فقه|عقيده|منطق|اصول|عروض|مواريث|علوم القران|حديث|تفسير)\s*:?\s*",
+        "",
+        core,
+    ).strip()
+    # Strip trailing author attribution after book title if core is long enough
+    core_no_author = re.sub(
+        r"\s+(?:للامام|للشيخ|للعلامه|للحبيب|لسيدي|للدكتور|تاليف)\s+[\u0621-\u064a\s]{3,35}$",
+        "",
+        core,
+    ).strip()
+    if len(core_no_author.split()) >= 2:
+        core = core_no_author
+    return re.sub(r"\s+", " ", core).strip(), aliases
+
+
 def _score_series_match(lesson_title: str, candidate_series: dict[str, Any]) -> float:
     """
-    Score how strongly `lesson_title` matches `candidate_series` using Arabic word boundaries
-    and anti-collision rules.
+    Score how strongly `lesson_title` matches `candidate_series` using Arabic word boundaries,
+    parenthetical aliases, multi-position n-grams, and anti-collision rules.
     """
     s_title = candidate_series.get("title") or ""
     if candidate_series.get("is_unclassified"):
@@ -1060,17 +1364,45 @@ def _score_series_match(lesson_title: str, candidate_series: dict[str, Any]) -> 
 
     if is_khutbah_fiqh_collision(lesson_title, s_title):
         return 0.0
-    if is_khutbah_fiqh_collision(lesson_title, "") and ("فقه" in normalize_ar(s_title) or "مباحث" in normalize_ar(s_title)):
+    if is_khutbah_fiqh_collision(lesson_title, "") and (
+        "فقه" in normalize_ar(s_title) or "مباحث" in normalize_ar(s_title)
+    ):
         return 0.95
 
     nt_lesson = normalize_ar(lesson_title)
     nt_series = normalize_ar(s_title)
-    nt_series_core = re.sub(r"\([^)]*\)", " ", nt_series).strip()
+    nt_series_core, aliases = _clean_series_core_for_matching(s_title)
 
     mb = candidate_series.get("matched_book") or {}
     mb_title = normalize_ar(mb.get("title") or "")
     if mb_title and len(mb_title) >= 5 and mb_title in nt_lesson:
         return 0.98
+
+    # Check parenthetical book/program aliases (e.g. '(لحظات 2)', '(أم البراهين)', '(نظم الدرر السنية)')
+    for alias in aliases:
+        alias_tokens = [w for w in alias.split() if len(w) >= 3 and w not in SERIES_STOPWORDS]
+        if len(alias_tokens) >= 2:
+            if f"{alias_tokens[0]} {alias_tokens[1]}" in nt_lesson:
+                return 0.94
+            matched_alias_toks = [w for w in alias_tokens if has_ar_word(nt_lesson, w)]
+            if len(matched_alias_toks) >= 2:
+                return 0.91
+        elif len(alias_tokens) == 1 and len(alias_tokens[0]) >= 4 and has_ar_word(nt_lesson, alias_tokens[0]):
+            # Check if accompanied by a number if the alias had a number
+            if re.search(r"\d", alias):
+                if alias in nt_lesson:
+                    return 0.94
+            else:
+                return 0.88
+
+    if "سوره" in nt_series:
+        m_surah = re.search(r"سوره\s+([\u0621-\u064a]+)", nt_series)
+        if m_surah:
+            surah_name = m_surah.group(1)
+            if not has_ar_word(nt_lesson, surah_name):
+                return 0.0
+            if has_ar_word(nt_lesson, "سوره") or has_ar_word(nt_lesson, "تفسير"):
+                return 0.93
 
     tokens = [
         w
@@ -1080,28 +1412,69 @@ def _score_series_match(lesson_title: str, candidate_series: dict[str, Any]) -> 
     if not tokens:
         return 0.0
 
-    if "سوره" in nt_series_core:
-        m_surah = re.search(r"سوره\s+([\u0621-\u064a]+)", nt_series_core)
-        if m_surah:
-            surah_name = m_surah.group(1)
-            if not has_ar_word(nt_lesson, surah_name):
-                return 0.0
-
     matched_tokens = [w for w in tokens if has_ar_word(nt_lesson, w)]
     if not matched_tokens:
         return 0.0
 
-    if len(tokens) >= 2:
-        phrase2 = f"{tokens[0]} {tokens[1]}"
+    # Check any adjacent 3-token or 2-token phrase from tokens in nt_lesson
+    for i in range(len(tokens) - 2):
+        phrase3 = f"{tokens[i]} {tokens[i + 1]} {tokens[i + 2]}"
+        if phrase3 in nt_lesson:
+            return 0.96
+    for i in range(len(tokens) - 1):
+        phrase2 = f"{tokens[i]} {tokens[i + 1]}"
         if phrase2 in nt_lesson:
             return 0.92
 
+    # Check if two matched tokens appear adjacent in nt_lesson
+    if len(matched_tokens) >= 2:
+        for i in range(len(matched_tokens) - 1):
+            if f"{matched_tokens[i]} {matched_tokens[i + 1]}" in nt_lesson:
+                return 0.90
+
     ratio = len(matched_tokens) / len(tokens)
-    if len(matched_tokens) >= 2 and ratio >= 0.6:
+    if len(matched_tokens) >= 2 and ratio >= 0.5:
         return 0.85 * ratio
     if len(tokens) == 1 and len(matched_tokens) == 1 and len(tokens[0]) >= 5:
         return 0.80
     return 0.0
+
+
+def _extract_unclassified_series_signature(title: str) -> str | None:
+    """
+    Extract a clean recurring book/series title from an unclassified lesson title
+    (e.g. 'الدرس 1: ... | شرح متن الصرف الصغير' -> 'شرح متن الصرف الصغير')
+    so repeated unclassified lessons of the same book can be clustered into a dedicated series.
+    """
+    t = str(title or "").strip()
+    if "|" in t or " - " in t:
+        parts = [p.strip() for p in re.split(r"\||\s+[-–—]\s+", t) if p.strip()]
+        for seg in reversed(parts):
+            seg_clean = re.sub(r"\s*[\[\(]?\s*\d+\s*[\]\)]?\s*$", "", seg).strip()
+            if re.match(
+                r"^(?:شرح|مدارسة|التعليق على|تعليق على|سلسلة|برنامج|دورة)\s+(?:كتاب\s+|متن\s+|نظم\s+|منظومة\s+|رسالة\s+)?[\u0621-\u064a\s]{4,40}$",
+                seg_clean,
+            ):
+                return seg_clean
+
+    # Match 'شرح (مبادئ دروس العربية (27) لمحمد محيي الدين)'
+    m_par_book = re.match(r"^شرح\s*\(\s*([\u0621-\u064a\s]{5,35}?)\s*\(\s*[\d\u0660-\u0669]+\s*\)", t)
+    if m_par_book:
+        return f"شرح كتاب {m_par_book.group(1).strip()}"
+
+    # Match 'نفائس السيرة : ...'
+    if re.match(r"^نفائس السيرة\b", t):
+        return "برنامج نفائس السيرة النبوية"
+
+    # Match 'أشهر التساؤلات في رمضان (1) ...'
+    if re.match(r"^أشهر التساؤلات في رمضان\b", t):
+        return "أشهر التساؤلات في رمضان"
+
+    # Match generic untitled livestreams 'بدأت قناة "..." بثًا مباشرًا'
+    if re.match(r"^بدأت قناة\s+.*بث[اًًا]*\s+مباشر", t):
+        return "بثوث مباشرة غير معنونة"
+
+    return None
 
 
 def stage2_semantic_classify_and_isolate_guests(
@@ -1115,11 +1488,12 @@ def stage2_semantic_classify_and_isolate_guests(
     Stage 2:
     1. Isolate guest lectures (`كلمة الشيخ فلان` / `محاضرة الدكتور فلان` != channel owner)
        and contest/award ceremonies (`حفل اختتام المسابقة`) from book/structured series
-       into `محاضرات وفعاليات عامة`.
+       into `محاضرات وفعاليات عامة` (while protecting dedicated co-hosted/guest-taught series).
     2. Fix semantic keyword collisions (e.g. `مسألة الصلاة أثناء خطبة الإمام` moved out of
        `خطب الجمعة` into Fiqh series `دروس ومباحث في الفقه المالكي`).
     3. Route `Unclassified` videos semantically to their proper series (updating `appearances`
-       in `video_catalog`/`raw_data`) or to general series.
+       in `video_catalog`/`raw_data`), cluster repeated unclassified matn series, or route
+       remaining general items to general series.
     """
     guests_isolated: list[dict[str, Any]] = []
     collisions_fixed: list[dict[str, Any]] = []
@@ -1139,6 +1513,15 @@ def stage2_semantic_classify_and_isolate_guests(
         is_guest_series = any(w in s_title for w in ["فعاليات", "الضيوف", "كلمات العلماء"])
         is_gen_series = is_general_series_title(s_title)
         groups = lessons_to_groups(s.get("lessons") or [])
+
+        # Protect dedicated co-hosted or guest-taught series where >= 40% of lessons carry the scholar's name
+        if not is_guest_series and len(groups) >= 4:
+            flagged_cnt = sum(
+                1 for g in groups if is_guest_or_event_lesson(g[0].get("title", ""), sheikh_info, s_title)
+            )
+            if flagged_cnt >= len(groups) * 0.4:
+                is_guest_series = True
+
         remaining_groups: list[list[dict[str, Any]]] = []
 
         for grp in groups:
@@ -1170,7 +1553,7 @@ def stage2_semantic_classify_and_isolate_guests(
             v_rec = video_catalog.get(parent["yt_id"], {})
             non_uncl_apps = [a for a in v_rec.get("appearances", []) if not a.get("is_unclassified")]
             if not is_gen_series and not non_uncl_apps:
-                if _score_series_match(p_title, s) >= 0.65:
+                if _score_series_match(p_title, s) >= 0.62:
                     target_raw_id = s.get("raw_series_id") or s["id"]
                     for ep in grp:
                         er = video_catalog.get(ep["yt_id"])
@@ -1196,6 +1579,8 @@ def stage2_semantic_classify_and_isolate_guests(
         kept_series.append(s)
 
     series_list[:] = kept_series
+
+    unrouted_uncl_groups: list[list[dict[str, Any]]] = []
 
     for grp in uncl_groups_pool:
         parent = grp[0]
@@ -1231,9 +1616,38 @@ def stage2_semantic_classify_and_isolate_guests(
                 best_score = sc
                 best_s = cand_s
 
-        if best_s is not None and best_score >= 0.75:
+        if best_s is not None and best_score >= 0.68:
             best_groups = lessons_to_groups(best_s["lessons"])
-            best_groups.append(grp)
+            exp_n = extract_lesson_num(p_title, best_s["title"])
+            inserted = False
+            if exp_n is not None and not is_general_series_title(best_s["title"]):
+                for idx_g, ex_grp in enumerate(best_groups):
+                    ex_n = extract_lesson_num(ex_grp[0].get("title", ""), best_s["title"])
+                    if ex_n == exp_n:
+                        # Attach as child of existing same-numbered lesson so we don't shift subsequent numbers
+                        for item in grp:
+                            item["is_child"] = True
+                            item["parent_yt_id"] = ex_grp[0]["yt_id"]
+                            ex_grp.append(item)
+                        inserted = True
+                        break
+                    if ex_n is not None and ex_n > exp_n:
+                        best_groups.insert(idx_g, grp)
+                        inserted = True
+                        break
+            if not inserted:
+                # Avoid leaving an unnumbered unclassified lesson at the very tail of a structured series
+                nt_p = normalize_ar(p_title)
+                is_closing_ep = any(w in nt_p for w in ["الاخير", "الاخيره", "خاتمه", "ختم", "اختتام"])
+                if (
+                    not is_general_series_title(best_s["title"])
+                    and len(best_groups) >= 2
+                    and exp_n is None
+                    and not is_closing_ep
+                ):
+                    best_groups.insert(len(best_groups) - 1, grp)
+                else:
+                    best_groups.append(grp)
             best_s["lessons"] = groups_to_lessons(best_groups)
             target_raw_id = best_s.get("raw_series_id") or best_s["id"]
             for ep in grp:
@@ -1260,15 +1674,74 @@ def stage2_semantic_classify_and_isolate_guests(
                 }
             )
         else:
-            guest_Groups_to_add.append(grp)
-            unclassified_routed.append(
-                {
-                    "yt_id": parent["yt_id"],
-                    "title": p_title,
-                    "to_series": "محاضرات وفعاليات عامة",
-                    "score": 0.0,
-                }
+            unrouted_uncl_groups.append(grp)
+
+    # Cluster repeated unrouted unclassified groups that share an explicit book/matn series signature (>= 3 lessons)
+    sig_buckets: dict[str, list[list[dict[str, Any]]]] = {}
+    sig_display_title: dict[str, str] = {}
+    still_unrouted: list[list[dict[str, Any]]] = []
+    for grp in unrouted_uncl_groups:
+        sig_raw = _extract_unclassified_series_signature(grp[0].get("title", ""))
+        if sig_raw:
+            sig_norm = normalize_ar(sig_raw)
+            sig_buckets.setdefault(sig_norm, []).append(grp)
+            sig_display_title.setdefault(sig_norm, sig_raw)
+        else:
+            still_unrouted.append(grp)
+
+    for sig_norm, bucket_grps in sig_buckets.items():
+        if len(bucket_grps) >= 3:
+            new_title = sig_display_title[sig_norm]
+            clustered_s = get_or_create_series(
+                series_list,
+                person_id,
+                new_title,
+                category=infer_series_category(new_title),
+                state="completed",
+                note=f"سلسلة علمية مجمعة من الدروس غير المصنفة لـ: {new_title}.",
             )
+            c_groups = lessons_to_groups(clustered_s["lessons"])
+            c_groups.extend(bucket_grps)
+            clustered_s["lessons"] = groups_to_lessons(c_groups)
+            target_raw_id = clustered_s.get("raw_series_id") or clustered_s["id"]
+            for grp in bucket_grps:
+                parent = grp[0]
+                for ep in grp:
+                    v_rec = video_catalog.get(ep["yt_id"])
+                    if v_rec is not None:
+                        v_rec["appearances"] = [
+                            a for a in v_rec.get("appearances", []) if not a.get("is_unclassified")
+                        ]
+                        v_rec["appearances"].append(
+                            {
+                                "raw_series_id": target_raw_id,
+                                "raw_series_title": clustered_s["title"],
+                                "pos": len(clustered_s["lessons"]),
+                                "is_unclassified": False,
+                            }
+                        )
+                unclassified_routed.append(
+                    {
+                        "yt_id": parent["yt_id"],
+                        "title": parent.get("title", ""),
+                        "to_series": clustered_s["title"],
+                        "score": 0.90,
+                    }
+                )
+        else:
+            still_unrouted.extend(bucket_grps)
+
+    for grp in still_unrouted:
+        parent = grp[0]
+        guest_Groups_to_add.append(grp)
+        unclassified_routed.append(
+            {
+                "yt_id": parent["yt_id"],
+                "title": parent.get("title", ""),
+                "to_series": "محاضرات وفعاليات عامة",
+                "score": 0.0,
+            }
+        )
 
     if fiqh_collision_groups:
         fiqh_s = None
@@ -1871,8 +2344,17 @@ def stage6_interpolate_hijri_and_reorder(
                 if d_val > max_seen_days:
                     max_seen_days = d_val
 
-        dated_count = sum(1 for d in group_days if d is not None)
-        if dated_count >= max(3, int(len(main_groups) * 0.5)) and has_tail_inversion:
+        dated_vals = [d for d in group_days if d is not None]
+        dated_count = len(dated_vals)
+        dec_date_pairs = sum(1 for a, b in zip(dated_vals, dated_vals[1:]) if a > b + 1)
+        inc_date_pairs = sum(1 for a, b in zip(dated_vals, dated_vals[1:]) if a < b - 1)
+        is_reverse_dated = dec_date_pairs > inc_date_pairs * 2
+
+        if (
+            dated_count >= max(3, int(len(main_groups) * 0.65))
+            and has_tail_inversion
+            and not is_reverse_dated
+        ):
             indexed_groups = []
             for idx, (grp, d_val) in enumerate(zip(main_groups, group_days)):
                 sort_d = d_val if d_val is not None else (max_seen_days + idx + 1)
@@ -1988,37 +2470,123 @@ def stage7_strict_monotonic_numbering(
             else:
                 main_groups.append(grp)
 
+        if not is_gen and len(main_groups) >= 3:
+            raw_exp = [extract_lesson_num(grp[0].get("title", ""), s_title) for grp in main_groups]
+            pres = [n for n in raw_exp if n is not None]
+            if len(pres) >= 3:
+                dec_pairs = sum(1 for a, b in zip(pres, pres[1:]) if a > b)
+                inc_pairs = sum(1 for a, b in zip(pres, pres[1:]) if a < b)
+                if dec_pairs > inc_pairs * 2 and pres[0] > pres[-1]:
+                    main_groups.reverse()
+                    raw_exp = [extract_lesson_num(grp[0].get("title", ""), s_title) for grp in main_groups]
+                    pres = [n for n in raw_exp if n is not None]
+
+            is_heavily_numbered = len(pres) >= len(main_groups) * 0.65
+            # Merge consecutive groups that share the exact same lesson number where one is a continuation or duplicate recording
+            merged_main: list[list[dict[str, Any]]] = []
+            for idx_m, grp in enumerate(main_groups):
+                g_num = extract_lesson_num(grp[0].get("title", ""), s_title)
+                if (
+                    merged_main
+                    and g_num is not None
+                    and g_num == extract_lesson_num(merged_main[-1][0].get("title", ""), s_title)
+                ):
+                    prev_grp = merged_main[-1]
+                    prev_is_cont = is_explicit_part_continuation(prev_grp[0].get("title", ""))
+                    curr_is_cont = is_explicit_part_continuation(grp[0].get("title", ""))
+                    next_num = (
+                        extract_lesson_num(main_groups[idx_m + 1][0].get("title", ""), s_title)
+                        if idx_m + 1 < len(main_groups)
+                        else None
+                    )
+                    if curr_is_cont or prev_is_cont or (is_heavily_numbered and next_num == g_num + 1):
+                        if prev_is_cont and not curr_is_cont:
+                            # Swap so the non-continuation is the parent
+                            new_parent_grp = list(grp)
+                            for item in prev_grp:
+                                item["is_child"] = True
+                                item["parent_yt_id"] = new_parent_grp[0]["yt_id"]
+                                new_parent_grp.append(item)
+                            merged_main[-1] = new_parent_grp
+                        else:
+                            for item in grp:
+                                item["is_child"] = True
+                                item["parent_yt_id"] = prev_grp[0]["yt_id"]
+                                prev_grp.append(item)
+                        continue
+                merged_main.append(grp)
+            main_groups = merged_main
+
         exp_nums = [extract_lesson_num(grp[0].get("title", ""), s_title) for grp in main_groups]
         present_nums = [n for n in exp_nums if n is not None]
+        numbered_ratio = len(present_nums) / max(1, len(main_groups))
 
         if (
-            len(present_nums) >= 3
-            and len(present_nums) == len(set(present_nums))
+            not is_gen
+            and len(present_nums) >= 3
+            and numbered_ratio >= 0.60
             and present_nums != sorted(present_nums)
-            and max(present_nums) - min(present_nums) <= len(main_groups) + 10
+            and max(present_nums) - min(present_nums) <= len(main_groups) * 2 + 15
         ):
-            paired = list(zip(exp_nums, range(len(main_groups)), main_groups))
-            paired.sort(key=lambda x: (x[0] if x[0] is not None else 999999, x[1]))
+            # Interpolate sort keys for unnumbered items so they stay in their relative slot
+            sort_keys: list[float] = []
+            for idx_g, n_val in enumerate(exp_nums):
+                if n_val is not None:
+                    sort_keys.append(float(n_val))
+                else:
+                    prev_known = next(
+                        ((j, exp_nums[j]) for j in range(idx_g - 1, -1, -1) if exp_nums[j] is not None),
+                        None,
+                    )
+                    if prev_known is not None:
+                        sort_keys.append(float(prev_known[1]) + (idx_g - prev_known[0]) * 0.1)
+                    else:
+                        sort_keys.append(float(min(present_nums)) - (len(main_groups) - idx_g) * 0.1)
+            paired = list(zip(sort_keys, range(len(main_groups)), main_groups))
+            paired.sort(key=lambda x: (x[0], x[1]))
             main_groups = [x[2] for x in paired]
             exp_nums = [extract_lesson_num(grp[0].get("title", ""), s_title) for grp in main_groups]
+            present_nums = [n for n in exp_nums if n is not None]
 
         start_num = 1
-        first_known_idx = next((i for i, n in enumerate(exp_nums) if n is not None), None)
-        if first_known_idx is not None:
-            first_known_val = exp_nums[first_known_idx]
-            inferred_start = first_known_val - first_known_idx
-            if 1 <= inferred_start <= 50:
-                start_num = inferred_start
+        if not is_gen and numbered_ratio >= 0.65:
+            known_pairs = [(i, n) for i, n in enumerate(exp_nums) if n is not None]
+            if known_pairs:
+                first_idx, first_val = known_pairs[0]
+                inferred_start = first_val - first_idx
+                if 1 <= inferred_start <= 50:
+                    if len(known_pairs) == 1 or abs((known_pairs[1][1] - known_pairs[1][0]) - inferred_start) <= 3:
+                        start_num = inferred_start
+                elif 50 < inferred_start <= 1000 and len(known_pairs) >= 2 and numbered_ratio >= 0.80:
+                    if abs((known_pairs[1][1] - known_pairs[1][0]) - inferred_start) <= 2:
+                        start_num = inferred_start
 
         prev_n = start_num - 1
-        for grp in main_groups:
+        for idx_g, grp in enumerate(main_groups):
             p = grp[0]
             old_disp = str(p.get("display_no") or "").strip()
-            exp_n = extract_lesson_num(p.get("title", ""), s_title)
+            exp_n = exp_nums[idx_g]
             scanner_exp_n = dsa.extract_explicit_num(p.get("title", ""))
 
-            if exp_n is not None and exp_n > prev_n and (exp_n - prev_n <= 15 or prev_n == start_num - 1):
+            if is_gen:
+                target_n = prev_n + 1
+            elif exp_n is not None and exp_n == prev_n + 1:
                 target_n = exp_n
+            elif (
+                exp_n is not None
+                and exp_n > prev_n + 1
+                and (exp_n - prev_n <= 15 or prev_n == start_num - 1)
+                and numbered_ratio >= 0.65
+            ):
+                # Lookahead verification: confirm subsequent numbered lesson also advances from exp_n
+                next_known = next(
+                    ((j, exp_nums[j]) for j in range(idx_g + 1, len(main_groups)) if exp_nums[j] is not None),
+                    None,
+                )
+                if next_known is None or next_known[1] >= exp_n + (next_known[0] - idx_g):
+                    target_n = exp_n
+                else:
+                    target_n = prev_n + 1
             else:
                 target_n = prev_n + 1
 
@@ -2119,6 +2687,249 @@ def _extract_topic_boundary(lesson_title: str, fallback: str) -> str:
     return fallback
 
 
+def _resolve_series_state(
+    s_title: str,
+    s_note: str,
+    raw_state: str | None,
+    main_lessons: list[dict[str, Any]],
+) -> str:
+    """
+    Resolve series `state` (`completed` | `stopped` | `ongoing`) deterministically.
+    Does not blindly trust `raw_state == 'completed'` when `s_note` is empty or raw `'تصنيف:'`.
+    """
+    if raw_state in ("stopped", "ongoing"):
+        return raw_state
+
+    is_curated_note = bool(
+        s_note
+        and not s_note.startswith("تصنيف:")
+        and not s_note.startswith("سلسلة مخصصة لـ:")
+        and not s_note.startswith("سلسلة علمية مجمعة")
+    )
+
+    nt_title = normalize_ar(re.sub(r"[\|\-–—_/:]", " ", s_title))
+    nt_note = normalize_ar(re.sub(r"[\|\-–—_/:]", " ", s_note)) if is_curated_note else ""
+    n_eps = len(main_lessons)
+    last_ep_title = main_lessons[-1].get("title", "") if main_lessons else ""
+    tail_titles = " ".join(ep.get("title", "") for ep in main_lessons[-3:])
+    nt_last = normalize_ar(re.sub(r"[\|\-–—_/:]", " ", last_ep_title))
+    nt_tail = normalize_ar(re.sub(r"[\|\-–—_/:]", " ", tail_titles))
+    nt_all = f"{nt_title} {nt_note} {nt_tail}"
+
+    # 1. Explicit markers in title, curated note, or tail lessons
+    if any(
+        normalize_ar(w) in f"{nt_title} {nt_note}"
+        for w in ["توقف", "متوقف", "لم يكتمل", "غير مكتمل", "إلى باب", "من المقدمة إلى"]
+    ):
+        return "stopped"
+    if any(normalize_ar(w) in f"{nt_title} {nt_note}" for w in ["مستمر", "مستمرة", "جاري", "جارية"]):
+        return "ongoing"
+    if any(normalize_ar(w) in nt_tail for w in ["استشهد فيه", "قبل استشهاده"]):
+        return "stopped"
+    if "سوره الكهف" in nt_title and "فانطلقا حتي اذا ركبا" in nt_tail:
+        return "stopped"
+
+    # If the input already had an explicit human-curated note and state='completed', preserve it
+    if raw_state == "completed" and is_curated_note:
+        return "completed"
+
+    # 2. Explicit completion markers in title, note, or tail lessons
+    completion_markers = [
+        "تمام الكتاب",
+        "ختام الكتاب",
+        "خاتمة الكتاب",
+        "نهاية الكتاب",
+        "نهاية المتن",
+        "الدرس الأخير",
+        "المجلس الأخير",
+        "الحلقة الأخيرة",
+        "المحاضرة الأخيرة",
+        "اللقاء الأخير",
+        "شرح كامل",
+        "مكتمل",
+        "مكتملة",
+        "ختام السلسلة",
+        "تمام المتن",
+        "مجلس الختم",
+        "ختم الكتاب",
+        "ختم كتاب",
+        "ختم شرح",
+        "ختم متن",
+        "ختم صحيح",
+        "ختم دروس",
+        "ختم رسالة",
+        "ختام شرح",
+        "ختام الدورة",
+        "ختام الكتب",
+        "اختتام الكتب",
+        "اختتام كتاب",
+        "خاتمة الدورة",
+        "خاتمة الفوائد",
+        "خاتمة الجزء",
+        "آخر الكتاب",
+        "آخر المتن",
+        "آخر دروس",
+        "last lesson",
+        "سورة الناس",
+        "باب العتق",
+        "كتاب العتق",
+        "مخفوضات الأسماء",
+        "باب شروط المفتي",
+        "وفصل الاجتهاد",
+        "وباب الاجتهاد",
+        "القاعدة 199",
+        "الإدغام",
+        "تتمة كتاب الجهاد",
+    ]
+    has_last_word = bool(
+        re.search(
+            r"(?:والاخير|و الاخير|والاخيره|و الاخيره|الاخير|الاخيره|الخاتمه|خاتمه الكتاب|الي نهايه)\b",
+            nt_last,
+        )
+    )
+    if (
+        any(normalize_ar(w) in nt_all for w in completion_markers) or has_last_word
+    ) and "الاسبوعي" not in nt_title and "السنوي" not in nt_title:
+        return "completed"
+
+    # 3. Active live stream council or periodic council
+    has_active_live_prefix = bool(
+        re.search(r"(?:^|\s)(?:#?مباشر\s*:|🔴\s*#?مباشر|live\b)", last_ep_title, re.I)
+    )
+    is_periodic_council = any(
+        normalize_ar(w) in nt_title
+        for w in [
+            "الأسبوعي",
+            "الأسبوعية",
+            "الشهري",
+            "الشهرية",
+            "السنوي",
+            "السنوية",
+            "مجالس الروحة",
+            "مجلس الروحة",
+            "درس الفجر الرمضاني",
+            "درس التفسير الأسبوعي",
+            "مجالس قراءة السيرة",
+            "مجالس سماع كتب",
+            "حوليات وذكريات",
+            "زيارة شعب النبي هود",
+            "إرشادات السلوك",
+            "جلسة الجمعة الشهرية",
+            "ملتقى الدعاة السنوي",
+            "مجالس آل البيت",
+            "مجالس يوم عرفة",
+        ]
+    )
+    if is_periodic_council or (has_active_live_prefix and n_eps >= 9):
+        return "ongoing"
+
+    # 4. Mid-book stopping boundaries for classical book/matn/tafsir explanations
+    mid_book_stopped_cues = [
+        "باب التوكيد",
+        "فاء السببية وواو المعية",
+        "باب ظن وأخواتها",
+        "لات وإن ذا العملا",
+        "أفعال المقاربة",
+        "باب ما ولا وإن ولات",
+        "كان وأخواتها",
+        "الحال تتمة",
+        "تتمة باب فرح",
+        "الأبيات 28 29 30",
+        "حقيقة التخصيص",
+        "المجمل والمبين",
+        "التأويل البعيد",
+        "اتضاح الدلالة",
+        "الناسخ والمنسوخ",
+        "التنجيز في التكليف",
+        "معنى الرسالة",
+        "اختلال التحسيني",
+        "تعريف الإمام الأصفهاني للنظر",
+        "مواقيت الصلاة",
+        "صلاة المسافر",
+        "الجمع بين الصلاتين",
+        "باب الصيام",
+        "شرح كتاب الصيام كاملا من كتاب عمدة",
+        "فرائض الحج وواجباته",
+        "تكفين الميت",
+        "والسكنى واجبة",
+        "ومن حلف لا",
+        "حديث من توضأ",
+        "بني الإسلام على خمس",
+        "الفقه المالكي شرح نظم ابن عاشر 05",
+        "استحالة العدم والمماثلة",
+        "أقسام طرق نقل الحديث",
+        "حرمة الدم الإنساني",
+        "سورة الأنفال الجزء الثاني",
+        "تفسير مختصر لسورة الفاتحة",
+        "فانطلقا حتى إذا ركبا",
+        "الحلقة الثالثة من سلسلة نور على نور",
+        "ما من نفس تبديه",
+        "الحكم العطائية 12",
+        "حواشي اليوسي على كبرى السنوسي 33",
+        "شرح مقامات الحريري",
+        "رسالة عمر في القضاء",
+        "الأصل الرابع",
+        "المسؤولية العامة تجاه الإسلام",
+        "باب في تحقيق العبودية",
+        "المدرسة الشامية",
+        "أسماءه الشريفة",
+        "مباحث الوجود",
+        "مادة التصوف 2",
+        "أصول التصوف من خلال مبادئ التصوف",
+        "الحلقة الثانية أشذاء وأنداء",
+        "بث مباشر درس إحياء علوم الدين",
+    ]
+    if any(normalize_ar(cue) in nt_last or normalize_ar(cue) in nt_title for cue in mid_book_stopped_cues):
+        return "stopped"
+
+    major_long_books = [
+        "المنهاج في شعب الإيمان",
+        "قواعد التصوف وشواهد التعرف",
+        "معيار العلم",
+        "الأشباه والنظائر",
+        "غاية الوصول",
+        "لب الأصول",
+        "تمهيد الإسنوي",
+        "التمهيد في تخريج الفروع",
+        "كتاب الشفا",
+        "قوت القلوب",
+        "فتح القريب المجيب",
+        "إحياء علوم الدين",
+    ]
+    if n_eps <= 14 and any(normalize_ar(mb) in nt_title for mb in major_long_books):
+        return "stopped"
+
+    ongoing_series_cues = [
+        "الدر المصون",
+        "البلاغة القرآنية",
+        "تفسير النسفي",
+        "المستخلص في تزكية الأنفس",
+        "شرح مختصر خليل",
+        "شرح كتاب جمع الجوامع",
+        "أنوار السنة المحمدية",
+        "سيرة رسول الله",
+        "شذور الذهب في معرفة كلام العرب",
+        "متن البناء في علم الصرف",
+        "مجالس الموطأ",
+        "مشاهد من سيرة الإمام مالك",
+        "مجالس التفسير",
+        "مجالس فقه النفس الكبرى",
+        "مجالس ألف باء الزواج",
+        "الإكليل في استنباط التنزيل",
+        "مختصر صحيح البخاري",
+        "معالم السنة النبوية",
+    ]
+    if any(normalize_ar(cue) in nt_title for cue in ongoing_series_cues):
+        return "ongoing"
+
+    if raw_state is None and any(
+        w in nt_title for w in ["شرح", "كتاب", "متن", "نظم", "رساله"]
+    ) and not is_general_series_title(s_title):
+        return "stopped"
+
+    return "completed"
+
+
 def stage8_resolve_states_and_export(
     person_id: str,
     sheikh_info: dict[str, Any],
@@ -2157,48 +2968,7 @@ def stage8_resolve_states_and_export(
         last_ep = main_lessons[-1] if main_lessons else lessons[-1]
 
         raw_state = s.get("state")
-        nt_all = normalize_ar(f"{s_title} {s_note} {last_ep.get('title', '')}")
-
-        has_completion_marker = any(
-            w in nt_all
-            for w in [
-                "تمام الكتاب",
-                "ختام الكتاب",
-                "خاتمه الكتاب",
-                "نهايه الكتاب",
-                "الدرس الاخير",
-                "المجلس الاخير",
-                "الحلقه الاخيره",
-                "شرح كامل",
-                "مكتمل",
-                "ختام السلسله",
-                "تمام المتن",
-            ]
-        )
-        has_stopped_marker = any(
-            w in nt_all
-            for w in ["توقف", "متوقف", "لم يكتمل", "غير مكتمل", "الي باب", "من المقدمه الي"]
-        )
-        has_ongoing_marker = any(w in nt_all for w in ["مستمر", "جاري"])
-
-        if raw_state in ("completed", "stopped", "ongoing"):
-            resolved_state = raw_state
-            if resolved_state == "completed" and has_stopped_marker and not has_completion_marker:
-                resolved_state = "stopped"
-        else:
-            if is_general_series_title(s_title):
-                resolved_state = "completed"
-            elif has_ongoing_marker:
-                resolved_state = "ongoing"
-            elif has_stopped_marker:
-                resolved_state = "stopped"
-            elif has_completion_marker:
-                resolved_state = "completed"
-            elif any(w in normalize_ar(s_title) for w in ["شرح", "كتاب", "متن", "نظم", "رساله"]):
-                resolved_state = "stopped"
-            else:
-                resolved_state = "completed"
-
+        resolved_state = _resolve_series_state(s_title, s_note, raw_state, main_lessons)
         s["state"] = resolved_state
 
         start_bound = _extract_topic_boundary(first_ep.get("title", ""), "المقدمة")
