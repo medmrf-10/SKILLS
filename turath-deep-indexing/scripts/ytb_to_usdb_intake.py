@@ -113,9 +113,12 @@ def partition_raw_text_lossless(raw_text: str, target_max_chars: int = 1600) -> 
             for m in re.finditer(pat, raw_text[window_lo:window_hi]):
                 cand_end = window_lo + m.end()
                 left_slice = raw_text[cur:cand_end].rstrip()
-                if left_slice.endswith(":"):
+                if left_slice.endswith(":") or left_slice.endswith("："):
                     continue
                 if len(raw_text[cand_end:].split()) < 6:
+                    continue
+                next_anc = extract_anchor_words(raw_text[cand_end:], 6)
+                if next_anc and next_anc in raw_text[cur:cand_end]:
                     continue
                 candidates.append(cand_end)
             if candidates:

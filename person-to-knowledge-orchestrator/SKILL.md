@@ -82,10 +82,12 @@ All pipeline artifacts for `<person_id>` live in a deterministic, self-contained
   3. Zero duplicate `video_id` across active episodes (`series` + `standalone_lectures`).
 
 ### Stage 3 — Dual-Track Extraction (`sheikh-series-pipeline v5.0` + `turath-pdf-to-text v2.0`)
-- **Track 3A (Audio/Video Series)**:
-  - Copies/stages series folders into `03_extracted/series/<person_id>/sXXX/`, runs `sanitize_preamble.process_dir()` from `/Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/sanitize_preamble.py` to strip any AI preambles (`إليك التفريغ...`), conversational closings, or decorative headers, and verifies `.txt` + `.align.json` + `_meta.json` readiness.
-- **Track 3B (Written Books / PDFs)**:
-  - Runs `convert_pdf_output_to_preflight()` from `/Users/macm1pro/REPOS/SKILLS/turath-pdf-to-text/scripts/pdf_to_preflight_adapter.py` (with `round_num=4`) for every book in the person's inventory, generating `pages_preflight.json`, `adapter_manifest.json`, `round_manifest_r4_r10.json`, and `raw_round4_books.json`.
+- **Track 3A (Audio/Video Series — Multi-Format Series Matcher)**:
+  - Matches external series directories under `--series-transcripts-dir` across all 4 production naming conventions (`yt_id`/`vid` overlap, `series_slug` e.g. `sharh_manzouma_adoudiya`, `playlist_id` e.g. `alasimi-mut-744`, `row_id` e.g. `984`, or safe `sNNN` without cross-series pollution).
+  - Stages lesson `.txt`, `.align.json`, and `.meta.json` files into `03_extracted/series/<person_id>/sXXX/` without overwriting curated v5.0 `_meta.json`, runs `sanitize_preamble.process_dir()` to strip Latin/Arabic AI preambles and closings, preserves real word-level CTC `.align.json` files (or generates deterministic word-level alignments when missing), and syncs `transcribed_count`, `aligned_count`, and per-lesson `has_transcript = 1` across `_meta.json`, `<person_id>.json`, and `curated.db`.
+- **Track 3B (Written Books / PDFs & Shamela4 JSONL Auto-Ingestion)**:
+  - Automatically resolves books discovered in Stage 1 (`books` from `shamela4_books_index.json.gz` or `matched_book` on curated series, prioritizing `shamela_id` for `shamela:<N>` IDs and ignoring `tafsir:surah_*`) against `/Users/macm1pro/REPOS/swe/Shamela4_Full_DB` (or `--shamela-db-dir`), or accepts explicit `--book-input` pointing to a Shamela4 book folder, `.jsonl`, `pages/` directory, or `.json`.
+  - Converts Shamela4 `pages.jsonl` + `book_metadata.json` into `pages/pNNNN.json` (cleaning inline HTML tags and routing unnumbered colophon lines in `footnotes` to `margin_notes` so `orphan_head == 0` with `100.0%` character retention) and runs `convert_pdf_output_to_preflight()` (`round_num=4`).
 - **Hard Gate `G3`**:
   1. Every lecture `.txt` file has `0` AI preamble/closing patterns (`strip_preamble_and_header(text)[1] == []`) and non-empty Arabic content.
   2. Every book's `adapter_manifest.json` has `status == "PASS"`, `zero_loss_check.passed == True`, `body_char_loss == 0`, `footnotes_char_loss == 0`, `retention_pct == 100.0`, and `manifest_v4_verification.passed == True`.
@@ -140,8 +142,9 @@ python3 /Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/or
 - `--person-id`: Explicit ASCII slug (optional; auto-derived via `normalize_person_id` if omitted).
 - `--work-dir`: Root directory under which `<person_id>/` workspace is created.
 - `--youtube-url` / `--archive-id` / `--index-pdf` / `--books-json` / `--offline-fixture`: Discovery inputs passed to Stage 1.
-- `--series-transcripts-dir`: Optional directory containing pre-extracted `.txt` / `.align.json` lecture transcripts (keyed by series or flat) to stage into `03_extracted/series/<person_id>/`.
-- `--book-input`: Repeatable path(s) to PDF extraction outputs (JSON or directory with `book_matn.txt` + `footnotes.json`) to process in Stage 3B.
+- `--series-transcripts-dir`: Optional directory containing pre-extracted `.txt` / `.align.json` lecture transcripts (supporting `series_slug`, `playlist_id`, `row_id`, `sNNN`, or flat layouts) to stage into `03_extracted/series/<person_id>/`.
+- `--book-input`: Repeatable path(s) to PDF extraction outputs, Shamela4 book directories (`pages.jsonl`), standalone `.jsonl` files, or `.json` payloads to process in Stage 3B.
+- `--shamela-db-dir` / `--no-auto-shamela-books` / `--max-auto-books`: Configure automatic resolution and ingestion of discovered Shamela4 books from `/Users/macm1pro/REPOS/swe/Shamela4_Full_DB`.
 - `--from-stage` / `--to-stage`: Run a specific slice of stages (`0`..`5`).
 - `--resume` / `--force`: `--resume` (default) skips stages already marked `"PASS"` in `pipeline_state.json`; `--force` re-runs all requested stages from scratch.
 - `--embedding-backend`: `"auto"`, `"sentence-transformers"`, or `"deterministic"`.

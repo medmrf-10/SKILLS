@@ -526,11 +526,290 @@ def test_hard_gates_block_corrupt_inputs(errors: List[str]) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def test_multi_format_series_and_shamela_jsonl_ingestion(errors: List[str]) -> None:
+    """
+    Gate 4: Multi-Format Real Series & Shamela JSONL Book Auto-Ingestion Gate.
+    Verifies:
+      1. Track 3A matches external series transcript folders across all 4 production naming schemes:
+         - `series_slug` (e.g. `sharh_manzouma_adoudiya`)
+         - `playlist_id` (e.g. `alasimi-mut-744`)
+         - `row_id` (e.g. `984`)
+         - server `sNNN` (e.g. `s011` on server whose `yt_id`s belong to curated `s003`, without polluting `s001`/`s002`)
+      2. `_meta.json` and `curated.db` are updated with accurate `transcribed_count`, `aligned_count`, and `has_transcript = 1`.
+      3. Track 3B auto-discovers Shamela4 JSONL books (`pages.jsonl` + `book_metadata.json` with `shamela_id` vs `book_id`,
+         inline HTML `<span ...>`, CRLF `\r`, and unnumbered colophon lines in `footnotes`), converts them losslessly
+         (`100.0%` retention, `0` orphan footnote heads), and populates `matn_triangulation` across book & lecture passages.
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="test_orchestrator_gate4_"))
+    try:
+        # 1. Build a mock Shamela4_Full_DB with two books to verify shamela_id vs folder book_id disambiguation
+        shamela_db = tmp_dir / "Shamela4_Full_DB"
+        cat_dir = shamela_db / "أصول الفقه"
+        # Decoy folder whose folder prefix is 1751, but shamela_id is 99999
+        decoy_dir = cat_dir / "1751__كتاب-مختلف"
+        decoy_dir.mkdir(parents=True, exist_ok=True)
+        (decoy_dir / "book_metadata.json").write_text(
+            json.dumps({"book_id": 1751, "shamela_id": 99999, "title": "كتاب مختلف", "category_name": "أصول الفقه"}),
+            encoding="utf-8",
+        )
+        (decoy_dir / "pages.jsonl").write_text(
+            json.dumps({"page_num": 1, "part": 1, "body": "نص مختلف تماما", "footnotes": ""}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Target book whose folder prefix is 1600, and shamela_id is 1751
+        target_bdir = cat_dir / "1600__شرح-الورقات-في-أصول-الفقه"
+        target_bdir.mkdir(parents=True, exist_ok=True)
+        (target_bdir / "book_metadata.json").write_text(
+            json.dumps(
+                {
+                    "book_id": 1600,
+                    "shamela_id": 1751,
+                    "title": "شرح الورقات في أصول الفقه",
+                    "author": "الشيخ محمد الحسن الددو",
+                    "death": "1445",
+                    "category_name": "أصول الفقه",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        shamela_pages = [
+            {
+                "page_id": 1,
+                "book_id": 1600,
+                "part": None,
+                "page_num": 1,
+                "body": (
+                    '<span data-type="title" id=toc-1>باب تعريف أصول الفقه والأحكام الشرعية</span>\r'
+                    "بسم الله الرحمن الرحيم، الحمد لله رب العالمين. "
+                    "اعلم أن الفقه في الاصطلاح معرفة الأحكام الشرعية التي طريقها الاجتهاد، "
+                    "والأحكام السبعة هي الواجب والمندوب والمباح والمحظور والمكروه والصحيح والباطل (١).\r"
+                    "وقد قرر الإمام الجويني والشافعي ومالك بن أنس في المدينة المنورة أن الواجب ما يثاب على فعله ويعاقب على تركه، "
+                    "قال الله تعالى: ﴿وَأَقِيمُوا الصَّلَاةَ وَآتُوا الزَّكَاةَ﴾."
+                ),
+                "footnotes": "(١) انظر شرح الورقات للإمام الجويني والمحلي في تحرير حد الفقه وأبواب الأصول.",
+            },
+            {
+                "page_id": 2,
+                "book_id": 1600,
+                "part": None,
+                "page_num": 2,
+                "body": (
+                    '<span data-type="title" id=toc-2>باب العام والخاص والأمر والنهي</span>\r'
+                    "والأمر استدعاء الفعل بالقول ممن هو دونه على سبيل الوجوب، والصيغة الدالة عليه افعل، "
+                    "وهي عند الإطلاق والتجرد عن القرينة تحمل على الوجوب عند جمهور الأصوليين كالإمام مالك والشافعي وأحمد بن حنبل.\r"
+                    "قال الله تعالى: ﴿وَمَا آتَاكُمُ الرَّسُولُ فَخُذُوهُ وَمَا نَهَاكُمْ عَنْهُ فَانْتَهُوا﴾."
+                ),
+                # Unnumbered colophon in footnotes to verify routing to margin_notes with 0 orphan_head
+                "footnotes": "تم طبع هذا الكتاب بمطبعة السعادة بالقاهرة على نفقة طلاب العلم.",
+            },
+        ]
+        (target_bdir / "pages.jsonl").write_text(
+            "\n".join(json.dumps(p, ensure_ascii=False) for p in shamela_pages) + "\n",
+            encoding="utf-8",
+        )
+
+        # Verify resolve_shamela_book_path prioritizes shamela_id for "shamela:1751" and ignores "tafsir:surah_001"
+        resolved_sh = orch.resolve_shamela_book_path({"id": "shamela:1751"}, shamela_db_dir=shamela_db)
+        if resolved_sh != target_bdir.resolve():
+            errors.append(f"[Gate4] Expected shamela:1751 to resolve to {target_bdir}, got {resolved_sh}")
+        resolved_taf = orch.resolve_shamela_book_path({"id": "tafsir:surah_001"}, shamela_db_dir=shamela_db)
+        if resolved_taf is not None:
+            errors.append(f"[Gate4] Expected tafsir:surah_001 to return None, got {resolved_taf}")
+
+        # 2. Build multi-series discovery fixture + 4 external series directories using all 4 naming conventions
+        ext_series_root = tmp_dir / "real_ytb_samples"
+        s_slug_dir = ext_series_root / "sharh_manzouma_adoudiya"
+        s_pl_dir = ext_series_root / "alasimi-mut-744"
+        s_row_dir = ext_series_root / "984"
+        # Server folder named s001 on disk, whose yt_ids actually belong to curated series 3!
+        s_mismatched_dir = ext_series_root / "s001"
+        for d in (s_slug_dir, s_pl_dir, s_row_dir, s_mismatched_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        lec_s1_txt = (
+            "Here is the transcription of the audio:\n\n"
+            "بسم الله الرحمن الرحيم، الحمد لله رب العالمين، وصلى الله وسلم على نبينا محمد. "
+            "في هذا الدرس الأول من شرح المنظومة العضدية والورقات في أصول الفقه نشرح قول المصنف: "
+            "اعلم أن الفقه في الاصطلاح معرفة الأحكام الشرعية التي طريقها الاجتهاد، "
+            "وبيان الأحكام السبعة من الواجب والمندوب والمباح والمحظور والمكروه والصحيح والباطل عند الإمام مالك والشافعي في المدينة المنورة. "
+            "قال الله تعالى: ﴿وَأَقِيمُوا الصَّلَاةَ وَآتُوا الزَّكَاةَ﴾.\n"
+        )
+        lec_s2_txt = (
+            "بسم الله الرحمن الرحيم، الحمد لله رب العالمين. "
+            "في هذا المجلس من برنامج المتون العلمية نشرح باب العام والخاص والأمر والنهي، "
+            "والأمر استدعاء الفعل بالقول ممن هو دونه على سبيل الوجوب عند الإمام مالك بن أنس والشافعي وأحمد بن حنبل. "
+            "قال الله تعالى: ﴿وَمَا آتَاكُمُ الرَّسُولُ فَخُذُوهُ وَمَا نَهَاكُمْ عَنْهُ فَانْتَهُوا﴾.\n"
+        )
+
+        # Populate s_slug_dir (`sharh_manzouma_adoudiya`) and s_mismatched_dir (`s001` on server -> belongs to s002)
+        (s_slug_dir / "001_vid_adoud_01.txt").write_text(lec_s1_txt, encoding="utf-8")
+        (s_mismatched_dir / "001_vid_usul_01.txt").write_text(lec_s2_txt, encoding="utf-8")
+        # Direct unit check of _match_external_series_dirs across all 4 naming conventions
+        (s_pl_dir / "001_vid_pl_01.txt").write_text(lec_s1_txt, encoding="utf-8")
+        (s_row_dir / "001_vid_row_01.txt").write_text(lec_s2_txt, encoding="utf-8")
+
+        mock_curated_series = [
+            {
+                "series_id": "s001",
+                "series_slug": "sharh_manzouma_adoudiya",
+                "title": "شرح المنظومة العضدية",
+                "lessons": [{"episode_num": 1, "yt_id": "vid_adoud_01", "title": "المجلس 1"}],
+            },
+            {
+                "series_id": "s002",
+                "playlist_id": "alasimi-mut-744",
+                "title": "شرح الورقات في أصول الفقه",
+                "lessons": [{"episode_num": 1, "yt_id": "vid_pl_01", "title": "المجلس 1"}],
+            },
+            {
+                "series_id": "s003",
+                "row_id": 984,
+                "title": "مجالس الأصول",
+                "lessons": [{"episode_num": 1, "yt_id": "vid_row_01", "title": "المجلس 1"}],
+            },
+            {
+                "series_id": "s004",
+                "title": "مباحث الأمر والنهي",
+                "lessons": [{"episode_num": 1, "yt_id": "vid_usul_01", "title": "المجلس 1"}],
+            },
+        ]
+        matched_map = orch._match_external_series_dirs(ext_series_root, mock_curated_series)
+        if (
+            matched_map.get("s001") != s_slug_dir
+            or matched_map.get("s002") != s_pl_dir
+            or matched_map.get("s003") != s_row_dir
+            or matched_map.get("s004") != s_mismatched_dir
+        ):
+            errors.append(f"[Gate4] Multi-format series matching failed: {matched_map}")
+
+        # 3. Run full 6-stage pipeline with auto-discovered Shamela4 book + multi-format series
+        disc_fixture = {
+            "channels": [{"channel_id": "UC_DEDEW", "title": "قناة الشيخ الددو", "url": "https://youtube.com/@dedew"}],
+            "playlists": [
+                {
+                    "id": "PL_ADOUD_01",
+                    "playlist_id": "PL_ADOUD_01",
+                    "title": "سلسلة شرح المنظومة العضدية",
+                    "videos": [
+                        {
+                            "vid": "vid_adoud_01",
+                            "yt_id": "vid_adoud_01",
+                            "video_id": "vid_adoud_01",
+                            "title": "شرح المنظومة العضدية - الدرس 1",
+                            "dur_s": 2400,
+                            "duration": 2400,
+                        }
+                    ],
+                },
+                {
+                    "id": "PL_USUL_02",
+                    "playlist_id": "PL_USUL_02",
+                    "title": "سلسلة مباحث الأمر والنهي في أصول الفقه",
+                    "videos": [
+                        {
+                            "vid": "vid_usul_01",
+                            "yt_id": "vid_usul_01",
+                            "video_id": "vid_usul_01",
+                            "title": "مباحث الأمر والنهي في أصول الفقه - الدرس 1",
+                            "dur_s": 2500,
+                            "duration": 2500,
+                        }
+                    ],
+                },
+            ],
+            "videos": [],
+            "archive_items": [],
+            "books": [
+                {
+                    "book_id": "shamela:1751",
+                    "title": "شرح الورقات في أصول الفقه",
+                    "author": "الشيخ محمد الحسن الددو",
+                    "science": "أصول الفقه",
+                }
+            ],
+        }
+        disc_path = tmp_dir / "dedew_disc.json"
+        disc_path.write_text(json.dumps(disc_fixture, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # Keep only the 2 active series directories in ext_series_root for the 2 playlists in disc_fixture
+        shutil.rmtree(s_pl_dir, ignore_errors=True)
+        shutil.rmtree(s_row_dir, ignore_errors=True)
+
+        quota_mock = {
+            "models": [
+                {
+                    "label": "Gemini 3.8 Flash (High)",
+                    "remainingPercentage": 0.90,
+                    "timeUntilResetMs": 3600000,
+                    "isExhausted": False,
+                }
+            ]
+        }
+        work_dir = tmp_dir / "work"
+        report = orch.orchestrate_person(
+            name="الشيخ محمد الحسن الددو",
+            person_id="dedew_gate4",
+            work_dir=work_dir,
+            offline_fixture=str(disc_path),
+            series_transcripts_dir=ext_series_root,
+            shamela_db_dir=shamela_db,
+            auto_ingest_shamela_books=True,
+            quota_override=quota_mock,
+            embedding_backend="deterministic-arabic-mps",
+            embedding_dim=768,
+        )
+
+        if report.get("overall_status") != "PASS":
+            errors.append(f"[Gate4] Expected overall_status == 'PASS', got {report.get('overall_status')}")
+
+        # Verify _meta.json transcribed_count was updated to 1 on both series
+        for sid_check in ("s001", "s002"):
+            m_path = work_dir / "dedew_gate4" / "03_extracted" / "series" / "dedew_gate4" / sid_check / "_meta.json"
+            m_data = json.loads(m_path.read_text(encoding="utf-8"))
+            if int(m_data.get("transcribed_count", 0)) != 1:
+                errors.append(f"[Gate4] Expected {sid_check} transcribed_count == 1 in _meta.json, got {m_data.get('transcribed_count')}")
+
+        # Verify SQLite has both Shamela book passages and lecture_series passages, 0 char loss, and matn_triangulation > 0
+        db_path = work_dir / "dedew_gate4" / "04_knowledge_db" / "dedew_gate4_objects.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.cursor()
+            src_counts = dict(
+                cur.execute(
+                    "SELECT s.source_type, COUNT(p.passage_id) "
+                    "FROM passages p JOIN sources s ON p.source_id = s.source_id "
+                    "GROUP BY s.source_type"
+                ).fetchall()
+            )
+            if src_counts.get("book", 0) < 1 or src_counts.get("lecture_series", 0) < 2:
+                errors.append(f"[Gate4] Expected book >= 1 and lecture_series >= 2 passages, got {src_counts}")
+
+            tri_by_type = dict(
+                cur.execute(
+                    "SELECT s.source_type, COUNT(*) "
+                    "FROM matn_triangulation m "
+                    "JOIN passages p ON m.passage_id = p.passage_id "
+                    "JOIN sources s ON p.source_id = s.source_id "
+                    "GROUP BY s.source_type"
+                ).fetchall()
+            )
+            if tri_by_type.get("book", 0) < 1 or tri_by_type.get("lecture_series", 0) < 1:
+                errors.append(f"[Gate4] Expected matn_triangulation across both book and lecture_series, got {tri_by_type}")
+        finally:
+            conn.close()
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def main() -> int:
     errors: List[str] = []
     print("=== Running person-to-knowledge-orchestrator End-to-End & Gate Tests ===")
     test_e2e_full_6_stage_pipeline(errors)
     test_hard_gates_block_corrupt_inputs(errors)
+    test_multi_format_series_and_shamela_jsonl_ingestion(errors)
 
     if errors:
         print(f"FAIL ({len(errors)} errors):")
@@ -545,6 +824,7 @@ def main() -> int:
     print("  [PASS] Stage 4 (Gate G4): Unified Deep Indexing & USDB v5.7 SQLite (0% char loss, 0 P0 errors) verified")
     print("  [PASS] Stage 5 (Gate G5): Dual-vector 768-dim Gemma-2 embeddings & HybridSearchEngine verified")
     print("  [PASS] Hard Gate Blocking (G0..G5 negative corruption rejection) & Checkpoint Resume verified")
+    print("  [PASS] Gate 4: Multi-Format Real Series & Shamela4 JSONL Book Auto-Ingestion verified")
     print("PASS (0 errors)")
     return 0
 

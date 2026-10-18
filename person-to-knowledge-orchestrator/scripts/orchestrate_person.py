@@ -137,6 +137,532 @@ def _build_word_ctc_align_payload(text: str) -> Dict[str, Any]:
 
 
 # ============================================================================
+# ============================================================================
+# Multi-Format Series Matcher & Shamela4 JSONL Book Resolver (Stage 3 Helpers)
+# ============================================================================
+
+DEFAULT_SHAMELA_DB_DIR = Path("/Users/macm1pro/REPOS/swe/Shamela4_Full_DB")
+
+SHAMELA_SCIENCE_MAP: Dict[str, str] = {
+    "العقيدة": "akida",
+    "عقيدة": "akida",
+    "الفرق والردود": "akida",
+    "أصول الفقه": "ossoul",
+    "القواعد الفقهية": "qawaid",
+    "الفقه المالكي": "maliki",
+    "الفقه الشافعي": "maliki",
+    "الفقه الحنبلي": "maliki",
+    "الفقه الحنفي": "maliki",
+    "الفقه العام": "maliki",
+    "مسائل فقهية": "maliki",
+    "السياسة الشرعية والقضاء": "maliki",
+    "النحو والصرف": "nahw",
+    "اللغة": "lugha",
+    "الغريب والمعاجم": "lugha",
+    "البلاغة": "balagha",
+    "الأدب": "adab",
+    "العروض والقوافي": "adab",
+    "التفسير": "tafsir",
+    "علوم القرآن وأصول التفسير": "tafsir",
+    "التجويد والقراءات": "tafsir",
+    "كتب السنة": "hadith",
+    "شروح الحديث": "hadith",
+    "العلل والسؤالات الحديثية": "hadith",
+    "مصطلح الحديث": "hadith",
+    "التخريج والأطراف": "hadith",
+    "السيرة النبوية": "sirah",
+    "الشمائل المحمدية": "sirah",
+    "التاريخ": "tari5",
+    "التراجم والطبقات": "tarajim",
+    "الأنساب": "tarajim",
+    "البلدان والرحلات": "tari5",
+    "الرقائق والآداب والأذكار": "tazkia",
+    "الدعوة وأحوال المسلمين": "tazkia",
+    "كتب عامة": "tazkia",
+    "فهارس الكتب والأدلة": "tazkia",
+    "المنطق": "mantiq",
+}
+
+_SHAMELA_LOOKUP_CACHE: Dict[str, Tuple[Dict[int, Path], Dict[int, Path], List[Tuple[str, Path]]]] = {}
+
+
+def _norm_ar_text(text: str) -> str:
+    if not text:
+        return ""
+    t = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", str(text))
+    t = re.sub(r"[إأآٱ]", "ا", t)
+    t = re.sub(r"ة", "ه", t)
+    t = re.sub(r"ى", "ي", t)
+    t = re.sub(r"[^\w\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _normalize_science_code(raw_science: Optional[str], title_hint: str = "") -> str:
+    valid_sciences = getattr(merge_round_mod, "SCIENCE_META", {})
+    if raw_science:
+        s_clean = str(raw_science).strip()
+        if s_clean in valid_sciences:
+            return s_clean
+        if s_clean.lower() in valid_sciences:
+            return s_clean.lower()
+        if s_clean in SHAMELA_SCIENCE_MAP and SHAMELA_SCIENCE_MAP[s_clean] in valid_sciences:
+            return SHAMELA_SCIENCE_MAP[s_clean]
+    # Infer from title_hint if possible
+    t_norm = _norm_ar_text(title_hint)
+    if any(w in t_norm for w in ("اصول", "الورقات", "مراقي", "جمع الجوامع", "روضة الناظر")):
+        return "ossoul"
+    if any(w in t_norm for w in ("نحو", "الفيه", "اجروميه", "قطر الندي", "شذور الذهب", "اعراب")):
+        return "nahw"
+    if any(w in t_norm for w in ("عقيده", "توحيد", "واسطيه", "طحاويه", "تدمر", "حمويه")):
+        return "akida"
+    if any(w in t_norm for w in ("تفسير", "قران", "سوره")):
+        return "tafsir"
+    if any(w in t_norm for w in ("حديث", "بخاري", "مسلم", "ترمذي", "اربعون", "عمدة الاحكام", "بلوغ المرام")):
+        return "hadith"
+    if any(w in t_norm for w in ("سيره", "شمائل", "مغازي")):
+        return "sirah"
+    if any(w in t_norm for w in ("اخضري", "رساله ابن ابي زيد", "مختصر خليل", "مرشد المعين", "فقه")):
+        return "maliki"
+    return "tazkia" if "tazkia" in valid_sciences else "maliki"
+
+
+def _extract_numeric_shamela_id(val: Any) -> Optional[int]:
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, int):
+        return val if val > 0 else None
+    s = str(val).strip()
+    if not s or s.startswith("tafsir:"):
+        return None
+    m = re.match(r"^(?:shamela:)?(\d+)$", s)
+    if m:
+        num = int(m.group(1))
+        return num if num > 0 else None
+    return None
+
+
+def _build_shamela_lookup(
+    shamela_db_dir: Path,
+) -> Tuple[Dict[int, Path], Dict[int, Path], List[Tuple[str, Path]]]:
+    cache_key = str(shamela_db_dir.resolve())
+    if cache_key in _SHAMELA_LOOKUP_CACHE:
+        return _SHAMELA_LOOKUP_CACHE[cache_key]
+
+    by_shamela_id: Dict[int, Path] = {}
+    by_folder_book_id: Dict[int, Path] = {}
+    by_norm_title: List[Tuple[str, Path]] = []
+
+    if not shamela_db_dir.exists():
+        _SHAMELA_LOOKUP_CACHE[cache_key] = (by_shamela_id, by_folder_book_id, by_norm_title)
+        return _SHAMELA_LOOKUP_CACHE[cache_key]
+
+    # 1. Check flat books/<id>.jsonl or <id>.jsonl if present
+    for flat_dir in (shamela_db_dir / "books", shamela_db_dir):
+        if flat_dir.is_dir():
+            for jf in flat_dir.glob("*.jsonl"):
+                if jf.stem.isdigit():
+                    bid = int(jf.stem)
+                    by_shamela_id.setdefault(bid, jf)
+                    by_folder_book_id.setdefault(bid, jf)
+
+    # 2. Scan category folders <category>/<book_id>__<slug>/
+    for cat_dir in sorted(shamela_db_dir.iterdir()):
+        if not cat_dir.is_dir() or cat_dir.name.startswith("."):
+            continue
+        for bdir in cat_dir.iterdir():
+            if not bdir.is_dir() or "__" not in bdir.name:
+                continue
+            pages_jsonl = bdir / "pages.jsonl"
+            if not pages_jsonl.exists():
+                continue
+            prefix_str, slug_title = bdir.name.split("__", 1)
+            if prefix_str.isdigit():
+                by_folder_book_id[int(prefix_str)] = bdir
+            meta_fp = bdir / "book_metadata.json"
+            b_title = slug_title.replace("-", " ")
+            if meta_fp.exists():
+                try:
+                    mdata = json.loads(meta_fp.read_text(encoding="utf-8"))
+                    sh_id = _extract_numeric_shamela_id(mdata.get("shamela_id"))
+                    if sh_id:
+                        by_shamela_id[sh_id] = bdir
+                    fb_id = _extract_numeric_shamela_id(mdata.get("book_id"))
+                    if fb_id:
+                        by_folder_book_id.setdefault(fb_id, bdir)
+                    if mdata.get("title"):
+                        b_title = str(mdata["title"])
+                except Exception:
+                    pass
+            nt = _norm_ar_text(b_title)
+            if nt:
+                by_norm_title.append((nt, bdir))
+
+    _SHAMELA_LOOKUP_CACHE[cache_key] = (by_shamela_id, by_folder_book_id, by_norm_title)
+    return _SHAMELA_LOOKUP_CACHE[cache_key]
+
+
+def resolve_shamela_book_path(
+    book_entry: Dict[str, Any],
+    shamela_db_dir: Optional[Path] = None,
+) -> Optional[Path]:
+    """Resolves a book dict from discovery/curation against local Shamela4_Full_DB."""
+    for k in ("input_path", "local_path", "path"):
+        lp = book_entry.get(k)
+        if lp and Path(lp).exists():
+            return Path(lp).resolve()
+
+    db_root = Path(shamela_db_dir) if shamela_db_dir else DEFAULT_SHAMELA_DB_DIR
+    if not db_root.exists():
+        return None
+
+    by_shamela_id, by_folder_book_id, by_norm_title = _build_shamela_lookup(db_root)
+
+    # Priority 1: Explicit shamela_id or "shamela:<N>" id (must match shamela_id first!)
+    for raw_sh in (
+        book_entry.get("shamela_id"),
+        book_entry.get("id"),
+        book_entry.get("book_id") if isinstance(book_entry.get("book_id"), str) and str(book_entry.get("book_id")).startswith("shamela:") else None,
+        (book_entry.get("matched_book") or {}).get("id") if isinstance(book_entry.get("matched_book"), dict) else None,
+    ):
+        if isinstance(raw_sh, str) and raw_sh.startswith("tafsir:"):
+            return None
+        sh_id = _extract_numeric_shamela_id(raw_sh)
+        if sh_id is not None:
+            if sh_id in by_shamela_id:
+                return by_shamela_id[sh_id].resolve()
+            # Only fall back to folder book_id if raw_sh was NOT explicitly prefixed with "shamela:"
+            if not (isinstance(raw_sh, str) and raw_sh.startswith("shamela:")) and sh_id in by_folder_book_id:
+                return by_folder_book_id[sh_id].resolve()
+
+    # Priority 2: Explicit folder book_id
+    raw_fb = book_entry.get("book_id")
+    if not (isinstance(raw_fb, str) and raw_fb.startswith("shamela:")):
+        fb_id = _extract_numeric_shamela_id(raw_fb)
+        if fb_id is not None:
+            if fb_id in by_folder_book_id:
+                return by_folder_book_id[fb_id].resolve()
+            if fb_id in by_shamela_id:
+                return by_shamela_id[fb_id].resolve()
+
+    # Priority 3: Exact normalized Arabic title match
+    raw_title = (
+        book_entry.get("title")
+        or ((book_entry.get("matched_book") or {}).get("title") if isinstance(book_entry.get("matched_book"), dict) else "")
+        or ""
+    )
+    nt = _norm_ar_text(raw_title)
+    if nt and len(nt) >= 6:
+        for cand_nt, cand_path in by_norm_title:
+            if cand_nt == nt:
+                return cand_path.resolve()
+
+    return None
+
+
+def _clean_shamela_page_text(text: str) -> str:
+    if not text:
+        return ""
+    # Normalize CRLF/CR to LF and strip inline HTML tags present in some Shamela4 dumps
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"<[^>]+>", "", t)
+    return t.strip()
+
+
+def convert_shamela_to_preflight_dir(
+    src_path: Path,
+    staging_dir: Path,
+    fallback_meta: Optional[Dict[str, Any]] = None,
+    max_chars: int = 22000,
+) -> Dict[str, Any]:
+    """
+    Converts a Shamela4 book folder (with pages.jsonl + book_metadata.json) or standalone .jsonl
+    into a turath-pdf-to-text compatible directory (`pages/pNNNN.json`) with 100% character retention
+    and strict footnote head verification (routing unnumbered colophons to `margin_notes`).
+    """
+    fallback_meta = fallback_meta or {}
+    src_path = Path(src_path).resolve()
+    if src_path.is_dir():
+        jsonl_path = src_path / "pages.jsonl"
+        meta_path = src_path / "book_metadata.json"
+    else:
+        jsonl_path = src_path
+        meta_path = src_path.parent / "book_metadata.json"
+
+    if not jsonl_path.exists():
+        raise FileNotFoundError(f"Shamela JSONL file not found at {jsonl_path}")
+
+    disk_meta: Dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            disk_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            disk_meta = {}
+
+    pages_dir = staging_dir / "pages"
+    if pages_dir.exists():
+        shutil.rmtree(pages_dir)
+    pages_dir.mkdir(parents=True, exist_ok=True)
+
+    fn_head_re = getattr(
+        pdf_adapter_mod,
+        "FN_LINE_HEAD_RE",
+        re.compile(r"^\s*(?:[\(\[«]?\s*[٠-٩0-9]{1,3}\s*[\)\]».\-–—:]*|[٠-٩0-9]{1,3}\s*[\)\]».\-–—:])"),
+    )
+
+    total_chars = 0
+    written_pages = 0
+    with jsonl_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+
+            body = _clean_shamela_page_text(str(rec.get("body") or rec.get("text") or rec.get("body_text") or ""))
+            fn_raw = _clean_shamela_page_text(str(rec.get("footnotes") or ""))
+            margin = _clean_shamela_page_text(str(rec.get("margin_notes") or ""))
+
+            if not body and not fn_raw and not margin:
+                continue
+
+            # Ensure every block in `footnotes` starts with a valid footnote number head;
+            # move any unnumbered colophon or leading continuation lines into `margin_notes`
+            # so 100.0% of characters are preserved while `orphan_head` == 0.
+            clean_fn = fn_raw
+            if fn_raw:
+                fn_lines = [ln.strip() for ln in fn_raw.split("\n") if ln.strip()]
+                first_num_idx: Optional[int] = None
+                for l_idx, ln in enumerate(fn_lines):
+                    if fn_head_re.match(ln):
+                        first_num_idx = l_idx
+                        break
+                if first_num_idx is None:
+                    margin = (margin + "\n" + "\n".join(fn_lines)).strip() if margin else "\n".join(fn_lines)
+                    clean_fn = ""
+                elif first_num_idx > 0:
+                    leading_unnumbered = "\n".join(fn_lines[:first_num_idx])
+                    margin = (margin + "\n" + leading_unnumbered).strip() if margin else leading_unnumbered
+                    clean_fn = "\n".join(fn_lines[first_num_idx:])
+                else:
+                    clean_fn = "\n".join(fn_lines)
+
+            page_char_len = len(body) + len(clean_fn) + len(margin)
+            if written_pages > 0 and max_chars > 0 and (total_chars + page_char_len) > max_chars:
+                break
+
+            written_pages += 1
+            total_chars += page_char_len
+            raw_pnum = rec.get("page_num") or rec.get("page_number") or written_pages
+            p_num = int(raw_pnum) if str(raw_pnum).isdigit() else written_pages
+            raw_vol = rec.get("part") or rec.get("volume") or 1
+            vol_num = int(raw_vol) if str(raw_vol).isdigit() else 1
+            page_payload = {
+                "pdf_page": written_pages,
+                "tag": f"p{written_pages:04d}",
+                "layout": "standard_single_col",
+                "page_number": p_num,
+                "volume": vol_num,
+                "body_text": body,
+                "footnotes": clean_fn,
+                "margin_notes": margin,
+                "extracted": {
+                    "printed_page": str(p_num),
+                    "running_header": "",
+                    "matn": body,
+                    "margin_notes": margin,
+                    "footnotes": clean_fn,
+                },
+                "Needs_Review": False,
+            }
+            (pages_dir / f"p{written_pages:04d}.json").write_text(
+                json.dumps(page_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+    raw_id = (
+        fallback_meta.get("book_id")
+        or disk_meta.get("shamela_id")
+        or disk_meta.get("book_id")
+        or fallback_meta.get("id")
+        or 9001
+    )
+    resolved_book_id = _extract_numeric_shamela_id(raw_id) or 9001
+    resolved_title = str(
+        disk_meta.get("title")
+        or fallback_meta.get("title")
+        or src_path.stem.split("__")[-1].replace("-", " ")
+    )
+    raw_sci = (
+        fallback_meta.get("science")
+        or disk_meta.get("category_name")
+        or fallback_meta.get("category")
+        or ""
+    )
+    resolved_science = _normalize_science_code(raw_sci, title_hint=resolved_title)
+    resolved_author = str(disk_meta.get("author") or fallback_meta.get("author") or "المصنف")
+    resolved_death = str(disk_meta.get("death") or fallback_meta.get("death") or "1445")
+
+    meta_out: Dict[str, Any] = {
+        "input_path": str(staging_dir),
+        "source_shamela_path": str(src_path),
+        "book_id": resolved_book_id,
+        "science": resolved_science,
+        "title": resolved_title,
+        "author": resolved_author,
+        "death": resolved_death,
+        "pages_written": written_pages,
+        "total_chars": total_chars,
+    }
+    (staging_dir / "book_meta.json").write_text(
+        json.dumps(meta_out, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    meta_out["input_path"] = staging_dir
+    return meta_out
+
+
+def _match_external_series_dirs(
+    ext_root: Optional[Path],
+    curated_series: List[Dict[str, Any]],
+) -> Dict[str, Path]:
+    """
+    Matches external series directories under `ext_root` to curated series `sid` (`s001`, `s002`, ...)
+    supporting all 4 real production naming conventions:
+      1. `yt_id` (`vid`) overlap between `NNN_<vid>.txt` / `<vid>.txt` and curated `lessons`
+      2. `series_slug` (e.g. `sharh_manzouma_adoudiya`), `playlist_id` (e.g. `alasimi-mut-744`), or `row_id` (e.g. `984`)
+      3. Normalized Arabic series title in `_meta.json`
+      4. `sNNN` directory name ONLY when its video IDs do not belong to a different curated series
+    """
+    if not ext_root or not ext_root.exists():
+        return {}
+
+    # Gather candidate directories containing .txt files
+    cand_dirs: List[Path] = []
+    if list(ext_root.glob("*.txt")):
+        cand_dirs.append(ext_root)
+    for d in sorted(ext_root.rglob("*")):
+        if d.is_dir() and list(d.glob("*.txt")):
+            cand_dirs.append(d)
+
+    if not cand_dirs:
+        return {}
+
+    # Map every curated video_id to its curated series_id
+    vid_to_curated_sid: Dict[str, str] = {}
+    for s_idx, s in enumerate(curated_series, 1):
+        sid = s.get("series_id") or f"s{s_idx:03d}"
+        for ep in s.get("lessons") or s.get("episodes", []):
+            vid = ep.get("yt_id") or ep.get("video_id") or ""
+            if vid:
+                vid_to_curated_sid[vid] = sid
+
+    cand_infos: List[Dict[str, Any]] = []
+    for cdir in cand_dirs:
+        vids: set[str] = set()
+        for tf in cdir.glob("*.txt"):
+            vids.add(tf.stem)
+            m = re.match(r"^\d+_(.+)$", tf.stem)
+            if m:
+                vids.add(m.group(1))
+        cmeta: Dict[str, Any] = {}
+        meta_fp = cdir / "_meta.json"
+        if meta_fp.exists():
+            try:
+                cmeta = json.loads(meta_fp.read_text(encoding="utf-8"))
+            except Exception:
+                cmeta = {}
+        # Determine if this candidate's videos strongly belong to a specific curated series
+        owner_counts: Dict[str, int] = {}
+        for v in vids:
+            if v in vid_to_curated_sid:
+                osid = vid_to_curated_sid[v]
+                owner_counts[osid] = owner_counts.get(osid, 0) + 1
+        dominant_sid = max(owner_counts.items(), key=lambda kv: kv[1])[0] if owner_counts else None
+
+        cand_infos.append(
+            {
+                "dir": cdir,
+                "name": cdir.name,
+                "vids": vids,
+                "meta": cmeta,
+                "dominant_sid": dominant_sid,
+                "owner_counts": owner_counts,
+                "norm_title": _norm_ar_text(
+                    str(cmeta.get("title") or cmeta.get("clean_title") or cmeta.get("series_title") or "")
+                ),
+            }
+        )
+
+    matched: Dict[str, Path] = {}
+    used_dirs: set[Path] = set()
+
+    # Pass 1: Match by positive video_id (`yt_id`) overlap
+    for s_idx, s in enumerate(curated_series, 1):
+        sid = s.get("series_id") or f"s{s_idx:03d}"
+        best_c: Optional[Dict[str, Any]] = None
+        best_ov = 0
+        for c in cand_infos:
+            if c["dir"] in used_dirs:
+                continue
+            ov = c["owner_counts"].get(sid, 0)
+            if ov > best_ov:
+                best_ov = ov
+                best_c = c
+        if best_c is not None and best_ov > 0:
+            matched[sid] = best_c["dir"]
+            used_dirs.add(best_c["dir"])
+
+    # Pass 2: Match by explicit slug / playlist_id / row_id / normalized title / safe sNNN
+    for s_idx, s in enumerate(curated_series, 1):
+        sid = s.get("series_id") or f"s{s_idx:03d}"
+        if sid in matched:
+            continue
+
+        s_Idents = {
+            str(x).strip()
+            for x in (
+                s.get("series_slug"),
+                s.get("slug"),
+                s.get("playlist_id"),
+                s.get("row_id"),
+            )
+            if x is not None and str(x).strip()
+        }
+        s_norm_title = _norm_ar_text(str(s.get("title") or s.get("clean_title") or ""))
+
+        for c in cand_infos:
+            if c["dir"] in used_dirs:
+                continue
+            # Never match a candidate directory whose videos belong to a DIFFERENT curated series
+            if c["dominant_sid"] and c["dominant_sid"] != sid:
+                continue
+
+            cmeta = c["meta"]
+            c_idents = {
+                str(x).strip()
+                for x in (
+                    c["name"],
+                    cmeta.get("series_slug"),
+                    cmeta.get("slug"),
+                    cmeta.get("playlist_id"),
+                    cmeta.get("row_id"),
+                )
+                if x is not None and str(x).strip()
+            }
+            if (s_Idents and (s_Idents & c_idents)) or (
+                s_norm_title and c["norm_title"] and s_norm_title == c["norm_title"]
+            ) or (c["name"] == sid and c["dominant_sid"] is None):
+                matched[sid] = c["dir"]
+                used_dirs.add(c["dir"])
+                break
+
+    return matched
+
+
+# ============================================================================
 # Deterministic Deep Extraction Builder for Books (Stage 4 Helper)
 # ============================================================================
 
@@ -151,7 +677,7 @@ def auto_build_deep_book_extraction(
     author_name = meta.get("author") or raw_book.get("author") or "المصنف"
     parts_list = raw_book.get("parts", []) or []
 
-    # 1. Extract base_matn_clauses from «...» or قوله: «...» across parts
+    # 1. Extract base_matn_clauses from «...» or قوله: «...» across parts, with verbatim fallback for plain Shamela books
     clauses_out: List[Dict[str, Any]] = []
     seen_clause_texts: set[str] = set()
     for p_in in parts_list:
@@ -169,15 +695,47 @@ def auto_build_deep_book_extraction(
                     }
                 )
 
+    if len(clauses_out) < 3:
+        for p_in in parts_list:
+            raw_part = p_in.get("text", "")
+            for cand in ytb_intake_mod.extract_candidate_sentences(raw_part):
+                c_txt = cand.strip()
+                if any(tok in c_txt for tok in ("[ص:", "[هامش", "(¬", "___")):
+                    continue
+                words = c_txt.split()
+                if len(words) >= 4:
+                    short_c = " ".join(words[: min(7, len(words))]).strip(" ،.؛:؟!«»\"'()-")
+                    if (
+                        18 <= len(short_c) <= 85
+                        and len(short_c.split()) >= 4
+                        and short_c in raw_part
+                        and short_c not in seen_clause_texts
+                    ):
+                        seen_clause_texts.add(short_c)
+                        cid = f"M{len(clauses_out) + 1}"
+                        clauses_out.append(
+                            {
+                                "clause_id": cid,
+                                "title": f"فقرة المتن ({cid})",
+                                "text": short_c,
+                            }
+                        )
+                        if len(clauses_out) >= 6:
+                            break
+            if len(clauses_out) >= 6:
+                break
+
     deep_toc_passages: List[Dict[str, Any]] = []
     science_gems: List[Dict[str, Any]] = []
     stories: List[Dict[str, Any]] = []
     quotes: List[Dict[str, Any]] = []
 
+    target_max_chars = 1100 if science == "akida" else 1500
+
     for idx_p, p_in in enumerate(parts_list):
         pt = int(p_in.get("i", p_in.get("part", idx_p)))
         raw_part = p_in.get("text", "")
-        spans = ytb_intake_mod.partition_raw_text_lossless(raw_part, target_max_chars=1500)
+        spans = ytb_intake_mod.partition_raw_text_lossless(raw_part, target_max_chars=target_max_chars)
 
         for s_idx, (c_start, c_end) in enumerate(spans):
             p_raw = raw_part[c_start:c_end]
@@ -201,6 +759,28 @@ def auto_build_deep_book_extraction(
                         core_matn = p_raw[anc_pos:]
 
             persons, places, chronology, evidences = ytb_intake_mod.detect_passage_entities(core_matn)
+
+            # Fallback person detection for explicit Arabic nasab (فلان بن فلان) to prevent P0_MISSED_PERSONS
+            if not persons:
+                for m_bn in re.finditer(
+                    r"\b((?:أبو\s+[\u0621-\u064A]+\s+)?[\u0621-\u064A]{3,}\s+بن\s+[\u0621-\u064A]{3,}(?:\s+ال[\u0621-\u064A]{3,})?)",
+                    core_matn,
+                ):
+                    p_cand = m_bn.group(1).strip()
+                    first_w = p_cand.split()[0]
+                    if first_w in ("وهو", "قال", "كان", "أن", "إن", "عن", "من", "في", "على", "إلى", "حدثنا", "أخبرنا"):
+                        continue
+                    if p_cand in core_matn:
+                        persons.append(
+                            {
+                                "canonical_name": p_cand,
+                                "mentioned_as": p_cand,
+                                "category": "علم مذكور في المتن",
+                                "role": "علم أو فقيه مترجم",
+                                "source_layer": "matn",
+                            }
+                        )
+                        break
 
             # Tag explicit isnad narrators from isnad_prefix with source_layer='isnad'
             if isnad_prefix:
@@ -769,6 +1349,9 @@ def orchestrate_person(
     offline_fixture: Optional[str] = None,
     series_transcripts_dir: Optional[str | Path] = None,
     book_inputs: Optional[List[str | Path]] = None,
+    shamela_db_dir: Optional[str | Path] = None,
+    auto_ingest_shamela_books: bool = True,
+    max_auto_books: int = 1,
     preferred_model: str = "gemini-3.8-flash-high",
     quota_override: Optional[Dict[str, Any]] = None,
     embedding_backend: str = "deterministic-arabic-mps",
@@ -916,16 +1499,16 @@ def orchestrate_person(
         # Map video_id -> optional inline transcript from raw discovery fixture (playlists or videos)
         inline_transcripts: Dict[str, str] = {}
         for pl in raw_discovery_data.get("playlists", []):
-            for entry in pl.get("entries", []):
-                vid = entry.get("video_id")
+            for entry in pl.get("entries") or pl.get("videos") or []:
+                vid = entry.get("video_id") or entry.get("yt_id") or entry.get("vid")
                 if vid and entry.get("transcript_text"):
                     inline_transcripts[vid] = entry["transcript_text"]
         for v in raw_discovery_data.get("videos", []):
-            vid = v.get("video_id")
+            vid = v.get("video_id") or v.get("yt_id") or v.get("vid")
             if vid and v.get("transcript_text"):
                 inline_transcripts[vid] = v["transcript_text"]
 
-        # Map video_id -> file from series_transcripts_dir if flat
+        # Map video_id -> file from series_transcripts_dir (recursive) and match series folders across 4 naming schemes
         external_vid_files: Dict[str, Path] = {}
         ext_root = Path(series_transcripts_dir) if series_transcripts_dir else None
         if ext_root and ext_root.exists():
@@ -934,6 +1517,14 @@ def orchestrate_person(
                 m_vid = re.match(r"^\d+_(.+)$", tf.stem)
                 if m_vid:
                     external_vid_files[m_vid.group(1)] = tf
+
+        matched_ext_series_dirs = _match_external_series_dirs(
+            ext_root=ext_root,
+            curated_series=curated_data.get("series", []),
+        )
+
+        curated_updated = False
+        transcribed_series_ids: set[str] = set()
 
         # Track 3A: Copy _meta.json for each curated series and stage + sanitize transcripts
         for s_idx, s in enumerate(curated_data.get("series", []), 1):
@@ -944,15 +1535,21 @@ def orchestrate_person(
             if (src_sdir / "_meta.json").exists():
                 shutil.copy2(src_sdir / "_meta.json", dst_sdir / "_meta.json")
 
-            if ext_root and (ext_root / sid).is_dir():
-                for item in sorted((ext_root / sid).iterdir()):
-                    if item.is_file():
-                        shutil.copy2(item, dst_sdir / item.name)
+            matched_ext_sdir = matched_ext_series_dirs.get(sid)
+            ext_sdir_vid_map: Dict[str, Path] = {}
+            if matched_ext_sdir and matched_ext_sdir.is_dir():
+                for tf in sorted(matched_ext_sdir.glob("*.txt")):
+                    ext_sdir_vid_map[tf.stem] = tf
+                    m_v = re.match(r"^\d+_(.+)$", tf.stem)
+                    if m_v:
+                        ext_sdir_vid_map[m_v.group(1)] = tf
 
-            for ep_idx, ep in enumerate(s.get("lessons") or s.get("episodes", []), 1):
-                vid = ep.get("yt_id") or ep.get("video_id", "")
+            matched_ep_vids: set[str] = set()
+            lessons_list = s.get("lessons") or s.get("episodes", [])
+            for ep_idx, ep in enumerate(lessons_list, 1):
+                vid = ep.get("yt_id") or ep.get("video_id") or ep.get("vid") or ""
                 ep_num = ep.get("episode_num") or ep_idx
-                # Clean vid forLESSON_TXT_RE compatibility (alphanumeric, _, -, 6..20 chars)
+                # Clean vid for LESSON_TXT_RE compatibility (alphanumeric, _, -, 6..20 chars)
                 safe_vid = re.sub(r"[^A-Za-z0-9_-]", "", vid)[:20]
                 if len(safe_vid) < 6:
                     safe_vid = (safe_vid + "000000")[:6]
@@ -962,32 +1559,61 @@ def orchestrate_person(
                 target_meta = dst_sdir / f"{prefix}.meta.json"
 
                 if not target_txt.exists():
-                    if vid in external_vid_files:
-                        shutil.copy2(external_vid_files[vid], target_txt)
-                        align_cand = external_vid_files[vid].with_suffix(".align.json")
+                    src_tf = ext_sdir_vid_map.get(vid) or external_vid_files.get(vid)
+                    if src_tf and src_tf.exists():
+                        shutil.copy2(src_tf, target_txt)
+                        matched_ep_vids.add(vid)
+                        align_cand = src_tf.with_suffix(".align.json")
                         if align_cand.exists():
                             shutil.copy2(align_cand, target_align)
+                        meta_cand = src_tf.with_suffix(".meta.json")
+                        if meta_cand.exists():
+                            shutil.copy2(meta_cand, target_meta)
                     elif vid in inline_transcripts:
                         target_txt.write_text(inline_transcripts[vid], encoding="utf-8")
+                        matched_ep_vids.add(vid)
+                else:
+                    matched_ep_vids.add(vid)
 
-                if target_txt.exists() and not target_meta.exists():
-                    target_meta.write_text(
-                        json.dumps(
-                            {
-                                "video_id": vid,
-                                "title": ep.get("title", ""),
-                                "part_number": int(ep_num),
-                                "series_id": sid,
-                                "speaker": name,
-                            },
-                            ensure_ascii=False,
-                            indent=2,
-                        ),
-                        encoding="utf-8",
-                    )
+                if target_txt.exists():
+                    ep["has_transcript"] = 1
+                    if not target_meta.exists():
+                        target_meta.write_text(
+                            json.dumps(
+                                {
+                                    "video_id": vid,
+                                    "title": ep.get("title", ""),
+                                    "part_number": int(ep_num),
+                                    "series_id": sid,
+                                    "speaker": name,
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+
+            # Copy any additional lesson transcripts from matched_ext_sdir that were not already mapped by vid
+            if matched_ext_sdir and matched_ext_sdir.is_dir():
+                for item in sorted(matched_ext_sdir.iterdir()):
+                    if not item.is_file() or item.name == "_meta.json":
+                        continue
+                    if item.suffix == ".txt":
+                        m_v = re.match(r"^\d+_(.+)$", item.stem)
+                        raw_v = m_v.group(1) if m_v else item.stem
+                        if raw_v in matched_ep_vids:
+                            continue
+                        dst_txt = dst_sdir / item.name
+                        if not dst_txt.exists():
+                            shutil.copy2(item, dst_txt)
+                        for ext_suf in (".align.json", ".meta.json"):
+                            sib = item.with_suffix(ext_suf)
+                            if sib.exists() and not (dst_sdir / sib.name).exists():
+                                shutil.copy2(sib, dst_sdir / sib.name)
 
             txt_files_in_dir = sorted(dst_sdir.glob("*.txt"))
             if txt_files_in_dir:
+                transcribed_series_ids.add(sid)
                 # Sanitize all .txt transcripts in dst_sdir FIRST
                 sanitize_mod.process_dir(str(dst_sdir), dry_run=False)
                 for txt_fp in sorted(dst_sdir.glob("*.txt")):
@@ -1004,57 +1630,166 @@ def orchestrate_person(
                         align_payload = _build_word_ctc_align_payload(clean_txt)
                         align_fp.write_text(json.dumps(align_payload, ensure_ascii=False), encoding="utf-8")
 
-        # Track 3B: Process written books via pdf_to_preflight_adapter
+                # Sync transcribed_count & aligned_count in _meta.json (both dst_sdir and src_sdir) and curated_data
+                final_txts = sorted(dst_sdir.glob("*.txt"))
+                final_aligns = sorted(dst_sdir.glob("*.align.json"))
+                s["transcribed_count"] = len(final_txts)
+                s["aligned_count"] = len(final_aligns)
+                curated_updated = True
+
+                for meta_target in (dst_sdir / "_meta.json", src_sdir / "_meta.json"):
+                    if meta_target.exists():
+                        try:
+                            m_obj = json.loads(meta_target.read_text(encoding="utf-8"))
+                            m_obj["transcribed_count"] = len(final_txts)
+                            m_obj["aligned_count"] = len(final_aligns)
+                            for m_ep in m_obj.get("lessons") or m_obj.get("episodes", []):
+                                m_vid = m_ep.get("yt_id") or m_ep.get("video_id") or m_ep.get("vid") or ""
+                                if m_vid in matched_ep_vids:
+                                    m_ep["has_transcript"] = 1
+                            meta_target.write_text(
+                                json.dumps(m_obj, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            pass
+
+        if curated_updated:
+            curated_json_path.write_text(json.dumps(curated_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            if curated_db_path.exists():
+                try:
+                    c_conn = sqlite3.connect(str(curated_db_path))
+                    for s in curated_data.get("series", []):
+                        sid_u = s.get("series_id")
+                        tc_u = int(s.get("transcribed_count", 0))
+                        if sid_u and tc_u > 0:
+                            c_conn.execute(
+                                "UPDATE series SET transcribed_count = ? WHERE series_id = ?",
+                                (tc_u, sid_u),
+                            )
+                            for ep in s.get("lessons") or s.get("episodes", []):
+                                if ep.get("has_transcript"):
+                                    evid = ep.get("yt_id") or ep.get("video_id") or ""
+                                    if evid:
+                                        c_conn.execute(
+                                            "UPDATE lessons SET has_transcript = 1 WHERE series_id = ? AND yt_id = ?",
+                                            (sid_u, evid),
+                                        )
+                    c_conn.commit()
+                    c_conn.close()
+                except Exception:
+                    pass
+
+        # Track 3B: Process written books via pdf_to_preflight_adapter (including Shamela4 JSONL books)
+        resolved_shamela_db = Path(shamela_db_dir) if shamela_db_dir else DEFAULT_SHAMELA_DB_DIR
         all_book_sources: List[Dict[str, Any]] = []
+        seen_book_paths: set[str] = set()
+
+        def _stage_book_source(
+            raw_path: Path,
+            idx_num: int,
+            meta_hint: Dict[str, Any],
+        ) -> Dict[str, Any]:
+            raw_path = raw_path.resolve()
+            slug_base = discovery_mod.normalize_person_id(
+                str(meta_hint.get("title") or raw_path.stem.split("__")[-1] or f"book_{idx_num}")
+            )
+            slug = f"book_{idx_num:02d}_{slug_base}"
+            # Detect Shamela4 directory (with pages.jsonl) or standalone .jsonl file
+            if (raw_path.is_dir() and (raw_path / "pages.jsonl").exists()) or (
+                raw_path.is_file() and raw_path.suffix.lower() == ".jsonl"
+            ):
+                staging_dir = dir_03_extracted / f"_staged_shamela_{slug}"
+                converted = convert_shamela_to_preflight_dir(
+                    src_path=raw_path,
+                    staging_dir=staging_dir,
+                    fallback_meta=meta_hint,
+                )
+                return {
+                    "slug": slug,
+                    "input_path": converted["input_path"],
+                    "book_id": int(converted["book_id"]),
+                    "science": converted["science"],
+                    "title": converted["title"],
+                    "author": converted["author"],
+                    "death": str(converted["death"]),
+                }
+
+            b_meta = dict(meta_hint)
+            if raw_path.is_file() and raw_path.suffix.lower() == ".json":
+                try:
+                    loaded = json.loads(raw_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        for k, v in loaded.items():
+                            b_meta.setdefault(k, v)
+                except Exception:
+                    pass
+            title_val = str(b_meta.get("title") or f"كتاب {name} ({idx_num})")
+            return {
+                "slug": slug,
+                "input_path": raw_path,
+                "book_id": int(_extract_numeric_shamela_id(b_meta.get("book_id")) or (9000 + idx_num)),
+                "science": _normalize_science_code(b_meta.get("science"), title_hint=title_val),
+                "title": title_val,
+                "author": str(b_meta.get("author") or name),
+                "death": str(b_meta.get("death") or "750"),
+            }
+
         for idx, b_in in enumerate(book_inputs or [], 1):
             b_path = Path(b_in).resolve()
-            b_meta: Dict[str, Any] = {}
-            if b_path.is_file() and b_path.suffix.lower() == ".json":
-                try:
-                    b_meta = json.loads(b_path.read_text(encoding="utf-8"))
-                except Exception:
-                    b_meta = {}
-            all_book_sources.append(
-                {
-                    "slug": f"book_{idx:02d}_{b_path.stem}",
-                    "input_path": b_path,
-                    "book_id": int(b_meta.get("book_id", 9000 + idx)),
-                    "science": b_meta.get("science", "maliki"),
-                    "title": b_meta.get("title", f"كتاب {name} ({idx})"),
-                    "author": b_meta.get("author", name),
-                    "death": str(b_meta.get("death", "750")),
-                }
-            )
+            if not b_path.exists():
+                continue
+            seen_book_paths.add(str(b_path))
+            all_book_sources.append(_stage_book_source(b_path, idx, {"author": name}))
 
-        for idx, b_disc in enumerate(raw_discovery_data.get("books", []), len(all_book_sources) + 1):
+        # Process books from Stage 1 discovery (`books`) and Stage 2 curated series (`matched_book`)
+        disc_books = list(raw_discovery_data.get("books", []))
+        # Prioritize books that have explicit local paths or inline pages first, then books linked to transcribed series
+        transcribed_matched_books: List[Dict[str, Any]] = []
+        other_matched_books: List[Dict[str, Any]] = []
+        for s in curated_data.get("series", []):
+            mb = s.get("matched_book")
+            if isinstance(mb, dict) and mb.get("id") and not str(mb.get("id")).startswith("tafsir:"):
+                if s.get("series_id") in transcribed_series_ids:
+                    transcribed_matched_books.append(mb)
+                else:
+                    other_matched_books.append(mb)
+
+        auto_ingested_count = 0
+        for b_disc in disc_books + transcribed_matched_books + other_matched_books:
             local_p = b_disc.get("input_path") or b_disc.get("local_path")
+            idx_next = len(all_book_sources) + 1
             if local_p and Path(local_p).exists():
-                all_book_sources.append(
-                    {
-                        "slug": f"book_{idx:02d}_{discovery_mod.normalize_person_id(b_disc.get('title', f'book_{idx}'))}",
-                        "input_path": Path(local_p).resolve(),
-                        "book_id": int(b_disc.get("book_id", 9000 + idx)),
-                        "science": b_disc.get("science", "maliki"),
-                        "title": b_disc.get("title", f"كتاب {name}"),
-                        "author": b_disc.get("author", name),
-                        "death": str(b_disc.get("death", "750")),
-                    }
-                )
+                rp = str(Path(local_p).resolve())
+                if rp in seen_book_paths:
+                    continue
+                seen_book_paths.add(rp)
+                all_book_sources.append(_stage_book_source(Path(local_p), idx_next, b_disc))
             elif b_disc.get("pages") or b_disc.get("body_text"):
-                slug = f"book_{idx:02d}_{discovery_mod.normalize_person_id(b_disc.get('title', f'book_{idx}'))}"
+                slug = f"book_{idx_next:02d}_{discovery_mod.normalize_person_id(b_disc.get('title', f'book_{idx_next}'))}"
                 staging_json = dir_03_extracted / f"_staged_{slug}.json"
                 staging_json.write_text(json.dumps(b_disc, ensure_ascii=False, indent=2), encoding="utf-8")
+                title_val = str(b_disc.get("title") or f"كتاب {name}")
                 all_book_sources.append(
                     {
                         "slug": slug,
                         "input_path": staging_json,
-                        "book_id": int(b_disc.get("book_id", 9000 + idx)),
-                        "science": b_disc.get("science", "maliki"),
-                        "title": b_disc.get("title", f"كتاب {name}"),
-                        "author": b_disc.get("author", name),
-                        "death": str(b_disc.get("death", "750")),
+                        "book_id": int(_extract_numeric_shamela_id(b_disc.get("book_id")) or (9000 + idx_next)),
+                        "science": _normalize_science_code(b_disc.get("science"), title_hint=title_val),
+                        "title": title_val,
+                        "author": str(b_disc.get("author") or name),
+                        "death": str(b_disc.get("death") or "750"),
                     }
                 )
+            elif auto_ingest_shamela_books and auto_ingested_count < max_auto_books:
+                shamela_cand = resolve_shamela_book_path(b_disc, shamela_db_dir=resolved_shamela_db)
+                if shamela_cand and shamela_cand.exists():
+                    rp = str(shamela_cand.resolve())
+                    if rp in seen_book_paths:
+                        continue
+                    seen_book_paths.add(rp)
+                    all_book_sources.append(_stage_book_source(shamela_cand, idx_next, b_disc))
+                    auto_ingested_count += 1
 
         for b_src in all_book_sources:
             out_bdir = extracted_books_dir / b_src["slug"]
@@ -1283,7 +2018,30 @@ def main() -> int:
         help="Offline discovery fixture JSON",
     )
     parser.add_argument("--series-transcripts-dir", default=None, help="Directory of pre-extracted transcripts")
-    parser.add_argument("--book-input", "--books-pages-dir", dest="book_input", action="append", default=[], help="Path to PDF book output dir or JSON")
+    parser.add_argument(
+        "--book-input",
+        "--books-pages-dir",
+        dest="book_input",
+        action="append",
+        default=[],
+        help="Path to PDF book output dir, Shamela4 book dir, .jsonl, or JSON",
+    )
+    parser.add_argument(
+        "--shamela-db-dir",
+        default=None,
+        help="Path to local Shamela4_Full_DB directory for automatic book resolution",
+    )
+    parser.add_argument(
+        "--no-auto-shamela-books",
+        action="store_true",
+        help="Disable automatic Shamela4 book ingestion from discovered/matched books",
+    )
+    parser.add_argument(
+        "--max-auto-books",
+        type=int,
+        default=1,
+        help="Maximum number of Shamela4 books to auto-ingest when not explicitly passed via --book-input",
+    )
     parser.add_argument("--preferred-model", default="gemini-3.8-flash-high", help="Preferred model for Stage 0")
     parser.add_argument(
         "--embedding-backend",
@@ -1310,6 +2068,9 @@ def main() -> int:
         offline_fixture=args.offline_fixture,
         series_transcripts_dir=args.series_transcripts_dir,
         book_inputs=args.book_input,
+        shamela_db_dir=args.shamela_db_dir,
+        auto_ingest_shamela_books=not args.no_auto_shamela_books,
+        max_auto_books=args.max_auto_books,
         preferred_model=args.preferred_model,
         embedding_backend=args.embedding_backend,
         embedding_dim=args.embedding_dim,
