@@ -34,6 +34,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from discover_person import (  # noqa: E402
     attribute_shared_channel_owner,
+    discover_author_books_in_shamela,
     discover_person,
     extract_links_from_pdf,
     find_shamela_authored_books,
@@ -867,6 +868,166 @@ def test_gate5_shamela_series_matcher_and_cross_source_linking(
     )
 
 
+def test_gate6_author_books_and_multiplatform_pdf_links(errors: list[str]) -> None:
+    """
+    [Gate 6] Author Books Discovery in Shamela & Multi-Platform PDF Link Extraction Gate:
+      1. High-precision scholar book & tahqiq discovery in `shamela4_books_index.json.gz`
+         for البوطي, الشعراوي, علي جمعة, وهبة الزحيلي, ابن عثيمين, صالح الفوزان, الشنقيطي,
+         with strict anti-collision against partial-name false positives (e.g., عماد علي جمعة,
+         محمد مصطفى الزحيلي, عبد الله بن صالح العثيمين, عبد الله بن صالح الفوزان, and 13 other
+         Shenqiti authors) and support for `a`, `author`, and `auth` keys + `role` (`author`/`muhaqqiq`).
+      2. Multi-platform PDF link extraction (`extract_links_from_pdf`) classifying Telegram
+         (`t.me/...`), Google Drive (`drive.google.com/...`), and SoundCloud (`soundcloud.com/...`)
+         into structured fields (`telegram_links`, `gdrive_links`, `soundcloud_links`) inside
+         `pdf_extracted_links` alongside `youtube_playlists`, `youtube_videos`, `archive_items`,
+         and `shortlinks`.
+    """
+    # 1a. Verify real Shamela 8,589-book index author & muhaqqiq discovery without false positives
+    bouti_books = discover_author_books_in_shamela("الشيخ الدكتور محمد سعيد رمضان البوطي", person_id="bouti")
+    if len(bouti_books) < 4:
+        errors.append(f"[Gate 6] Expected >= 4 Shamela books for البوطي, got {len(bouti_books)}")
+
+    shaarawy_books = discover_author_books_in_shamela("فضيلة الشيخ محمد متولي الشعراوي", person_id="shaarawy")
+    if len(shaarawy_books) < 2:
+        errors.append(f"[Gate 6] Expected >= 2 Shamela books for الشعراوي, got {len(shaarawy_books)}")
+
+    gomaa_books = discover_author_books_in_shamela("أ.د. علي جمعة", person_id="ali_gomaa")
+    if len(gomaa_books) != 2 or any(b.get("author") != "علي جمعة" for b in gomaa_books):
+        errors.append(f"[Gate 6] Expected exact match for علي جمعة (2 books, no عماد علي جمعة collision), got {gomaa_books}")
+
+    zuhayli_books = discover_author_books_in_shamela("الدكتور وهبة بن مصطفى الزحيلي", person_id="zuhayli")
+    if len(zuhayli_books) < 4 or any("محمد مصطفى الزحيلي" in str(b.get("author", "")) for b in zuhayli_books):
+        errors.append(f"[Gate 6] Expected >= 4 books for وهبة الزحيلي without محمد مصطفى الزحيلي collision, got {len(zuhayli_books)}")
+
+    uthaymeen_books = discover_author_books_in_shamela("فضيلة الشيخ محمد بن صالح العثيمين", person_id="uthaymeen")
+    if len(uthaymeen_books) < 100:
+        errors.append(f"[Gate 6] Expected >= 100 Shamela books for ابن عثيمين via patronymic resolution, got {len(uthaymeen_books)}")
+    if any("عبد الله بن صالح العثيمين" in str(b.get("author", "")) for b in uthaymeen_books):
+        errors.append("[Gate 6] Collision: عبد الله بن صالح العثيمين leaked into محمد بن صالح العثيمين books")
+    if any(b.get("role") == "muhaqqiq" for b in uthaymeen_books):
+        errors.append("[Gate 6] Collision: historian '- ت العثيمين' tahqiq leaked into Sheikh Ibn Uthaymeen books")
+
+    fawzan_books = discover_author_books_in_shamela("الشيخ صالح بن فوزان الفوزان", person_id="fawzan")
+    if len(fawzan_books) < 19 or any("عبد الله بن صالح الفوزان" in str(b.get("author", "")) for b in fawzan_books):
+        errors.append(f"[Gate 6] Expected >= 19 books for صالح الفوزان without عبد الله بن صالح الفوزان collision, got {len(fawzan_books)}")
+
+    shanqiti_books = discover_author_books_in_shamela("الشيخ محمد الأمين الشنقيطي", person_id="shanqiti")
+    if len(shanqiti_books) < 20:
+        errors.append(f"[Gate 6] Expected >= 20 books for محمد الأمين الشنقيطي, got {len(shanqiti_books)}")
+    if any(b.get("author") != "محمد الأمين الشنقيطي" for b in shanqiti_books):
+        errors.append("[Gate 6] Collision: other الشنقيطي authors leaked into محمد الأمين الشنقيطي books")
+
+    # 1b. Verify custom index_entries supporting `a`, `author`, `auth` keys and `author` vs `muhaqqiq` roles
+    synthetic_shamela_entries = [
+        {"id": 90001, "n": "فقه السيرة النبوية - ط الفكر", "a": "محمد سعيد رمضان البوطي", "c": 24, "h": 1434},
+        {"id": 90002, "name": "ضوابط المصلحة في الشريعة الإسلامية", "author": "سعيد رمضان البوطي", "c": 13, "h": 1434},
+        {"id": 90003, "title": "الحكم العطائية - ت البوطي", "auth": "ابن عطاء الله السكندري", "c": 30, "h": 709},
+        {"id": 90004, "n": "المكتبات في الحضارة الإسلامية", "a": "عماد علي جمعة", "c": 27, "h": 99999},
+    ]
+    synth_bouti = discover_author_books_in_shamela(
+        "محمد سعيد رمضان البوطي",
+        person_id="bouti",
+        index_entries=synthetic_shamela_entries,
+    )
+    roles_by_id = {b["shamela_id"]: b["role"] for b in synth_bouti}
+    if roles_by_id != {90001: "author", 90002: "author", 90003: "muhaqqiq"}:
+        errors.append(
+            f"[Gate 6] Expected synthetic Shamela lookup to return 2 authored + 1 muhaqqiq for البوطي, got {roles_by_id}"
+        )
+    if synth_bouti[0]["title"] != "فقه السيرة النبوية":
+        errors.append(
+            f"[Gate 6] Expected edition suffix '- ط الفكر' to be cleaned into 'فقه السيرة النبوية', got {synth_bouti[0]['title']!r}"
+        )
+
+    # 2a. Verify Multi-Platform PDF Link Extraction on synthetic FlateDecode PDF
+    multiplatform_stream = (
+        "BT /F1 12 Tf 72 720 Td (Multi-Platform Scholar Index PDF) Tj ET\n"
+        "<< /Type /Action /S /URI /URI (https://www.youtube.com/playlist?list=PL_GATE6_PLAYLIST_01) >>\n"
+        "<< /Type /Action /S /URI /URI (https://youtu.be/dQw4w9WgXcQ) >>\n"
+        "<< /Type /Action /S /URI /URI (https://archive.org/details/gate6_archive_collection) >>\n"
+        "<< /Type /Action /S /URI /URI (https://t.me/saeed_albouty/1245) >>\n"
+        "<< /Type /Action /S /URI /URI (https://telegram.me/turath_channel) >>\n"
+        "<< /Type /Action /S /URI /URI (https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=sharing) >>\n"
+        "<< /Type /Action /S /URI /URI (https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa987654/view) >>\n"
+        "<< /Type /Action /S /URI /URI (https://soundcloud.com/alarabiya/sets/sharh-al-hikam) >>\n"
+        "<< /Type /Action /S /URI /URI (https://on.soundcloud.com/AbCdEf123) >>\n"
+        "<< /Type /Action /S /URI /URI (https://bit.ly/3xYzAbC) >>\n"
+    ).encode("latin1")
+    compressed_mp = zlib.compress(multiplatform_stream)
+    pdf_bytes = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Length " + str(len(compressed_mp)).encode("ascii") + b" /Filter /FlateDecode >>\nstream\n"
+        + compressed_mp
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mp_pdf = Path(tmpdir) / "multiplatform_index.pdf"
+        mp_pdf.write_bytes(pdf_bytes)
+        extracted_mp = extract_links_from_pdf(mp_pdf)
+
+        required_structured_keys = (
+            "youtube_playlists",
+            "youtube_videos",
+            "archive_items",
+            "telegram_links",
+            "gdrive_links",
+            "soundcloud_links",
+            "shortlinks",
+        )
+        for key in required_structured_keys:
+            if key not in extracted_mp:
+                errors.append(f"[Gate 6] Missing structured field '{key}' in pdf_extracted_links")
+
+        if len(extracted_mp["youtube_playlists"]) != 1:
+            errors.append(f"[Gate 6] Expected 1 youtube_playlist in multiplatform PDF, got {len(extracted_mp['youtube_playlists'])}")
+        if len(extracted_mp["youtube_videos"]) != 1:
+            errors.append(f"[Gate 6] Expected 1 youtube_video in multiplatform PDF, got {len(extracted_mp['youtube_videos'])}")
+        if len(extracted_mp["archive_items"]) != 1:
+            errors.append(f"[Gate 6] Expected 1 archive_item in multiplatform PDF, got {len(extracted_mp['archive_items'])}")
+        if len(extracted_mp["telegram_links"]) != 2:
+            errors.append(f"[Gate 6] Expected 2 telegram_links in multiplatform PDF, got {len(extracted_mp['telegram_links'])}")
+        if len(extracted_mp["gdrive_links"]) != 2:
+            errors.append(f"[Gate 6] Expected 2 gdrive_links in multiplatform PDF, got {len(extracted_mp['gdrive_links'])}")
+        else:
+            gd_ids = {g.get("extracted_id") for g in extracted_mp["gdrive_links"]}
+            if gd_ids != {"1AbCdEfGhIjKlMnOpQrStUvWxYz012345", "1ZyXwVuTsRqPoNmLkJiHgFeDcBa987654"}:
+                errors.append(f"[Gate 6] Unexpected Google Drive extracted IDs: {gd_ids}")
+        if len(extracted_mp["soundcloud_links"]) != 2:
+            errors.append(f"[Gate 6] Expected 2 soundcloud_links in multiplatform PDF, got {len(extracted_mp['soundcloud_links'])}")
+        if len(extracted_mp["shortlinks"]) != 1:
+            errors.append(f"[Gate 6] Expected 1 shortlink in multiplatform PDF, got {len(extracted_mp['shortlinks'])}")
+
+        # Verify end-to-end discover_person preserves structured fields on pdf_extracted_links
+        res_mp = discover_person(
+            "الشيخ محمد سعيد رمضان البوطي",
+            person_id="bouti",
+            pdf_paths=[mp_pdf],
+            offline_fixture={"sheikh": {"id": "bouti", "name": "الشيخ محمد سعيد رمضان البوطي"}, "raw_series": [], "unique_videos": []},
+        )
+        raw_pdf_links = res_mp["pdf_extracted_links"]
+        if len(raw_pdf_links["telegram_links"]) != 2 or len(raw_pdf_links["gdrive_links"]) != 2 or len(raw_pdf_links["soundcloud_links"]) != 2:
+            errors.append("[Gate 6] discover_person output pdf_extracted_links did not preserve structured platform lists")
+        if res_mp["stats"].get("pdf_telegram_links_count") != 2 or res_mp["stats"].get("pdf_gdrive_links_count") != 2 or res_mp["stats"].get("pdf_soundcloud_links_count") != 2:
+            errors.append(f"[Gate 6] discover_person stats missing multi-platform PDF counts: {res_mp['stats']}")
+
+    # 2b. Verify on real Jamhara PDF when present on disk
+    real_jamhara = Path("/Users/macm1pro/.gemini/antigravity/brain/a66db81b-9ed5-46c9-a1da-c3de34a35d9c/scratch/jamhara.pdf")
+    if real_jamhara.exists():
+        jamhara_links = extract_links_from_pdf(real_jamhara)
+        if len(jamhara_links["gdrive_links"]) < 30 or len(jamhara_links["soundcloud_links"]) < 35:
+            errors.append(
+                f"[Gate 6] Expected >= 30 gdrive_links and >= 35 soundcloud_links in real jamhara.pdf, "
+                f"got gdrive={len(jamhara_links['gdrive_links'])}, soundcloud={len(jamhara_links['soundcloud_links'])}"
+            )
+
+    print(
+        f"[Gate 6] Author Books Discovery in Shamela & Multi-Platform PDF Link Extraction: "
+        f"verified البوطي ({len(bouti_books)}), الشعراوي ({len(shaarawy_books)}), علي جمعة ({len(gomaa_books)}), "
+        f"وهبة الزحيلي ({len(zuhayli_books)}), ابن عثيمين ({len(uthaymeen_books)}), الفوزان ({len(fawzan_books)}), "
+        f"الشنقيطي ({len(shanqiti_books)}) with 0 collisions, and Telegram/GDrive/SoundCloud PDF extraction."
+    )
+
+
 def main() -> None:
     errors: list[str] = []
     test_gate1_pdf_flatedecode_extraction(errors)
@@ -874,6 +1035,7 @@ def main() -> None:
     test_gate3_schema_and_sheikh_curation_compatibility(raw_data, errors)
     test_gate4_cycle2_real_data_regressions(errors)
     test_gate5_shamela_series_matcher_and_cross_source_linking(raw_data, errors)
+    test_gate6_author_books_and_multiplatform_pdf_links(errors)
 
     if errors:
         print(f"\nFAIL ({len(errors)} errors):")

@@ -42,17 +42,22 @@ HARAKAT_RE = re.compile(r"[\u064B-\u065F\u0670\u0640]")
 
 KNOWN_PERSON_SLUGS: dict[str, str] = {
     "مولود السريري": "sariri",
+    "أحمد السريري": "sariri",
     "محمد البردوني": "bardoni",
     "محمد البردوني الحسيمي": "bardoni",
+    "إبراهيم البردوني": "bardoni",
     "علي هاني": "alihani",
     "علي هاني العقرباوي": "alihani",
     "محمد متولي الشعراوي": "shaarawy",
+    "متولي الشعراوي": "shaarawy",
     "الشعراوي": "shaarawy",
     "محمد سعيد رمضان البوطي": "bouti",
     "محمد سعيد البوطي": "bouti",
+    "رمضان البوطي": "bouti",
     "البوطي": "bouti",
     "فاضل السامرائي": "samarrai",
     "فاضل صالح السامرائي": "samarrai",
+    "السامرائي": "samarrai",
     "الحبيب علي الجفري": "jifri",
     "علي الجفري": "jifri",
     "الحبيب عمر بن حفيظ": "hafiz",
@@ -63,9 +68,12 @@ KNOWN_PERSON_SLUGS: dict[str, str] = {
     "معاذ سعيد حوى": "hawwa",
     "معاذ سعيد حوا": "hawwa",
     "سعيد الكملي": "kamali",
+    "الكملي": "kamali",
     "محمد الحسن الددو": "dedew",
     "محمد الحسن الددو الشنقيطي": "dedew",
+    "الددو": "dedew",
     "علي جمعة": "gomaa",
+    "علي جمعة محمد عبد الوهاب": "gomaa",
     "عبد الرحمن ذاكر الهاشمي": "hashemi",
     "ذاكر الهاشمي": "hashemi",
     "أحمد السيد": "sayed",
@@ -78,15 +86,58 @@ KNOWN_PERSON_SLUGS: dict[str, str] = {
     "أحمد طه ريان": "rayyan",
     "محمد نعيم عرقسوسي": "arqsousi",
     "عبد الفتاح أبو غدة": "abughuddah",
+    "أبو غدة": "abughuddah",
     "نور الدين عتر": "itr",
     "محمد محمد أبو موسى": "abumusa",
     "وهبة الزحيلي": "zuhayli",
+    "وهبة بن مصطفى الزحيلي": "zuhayli",
+    "وهبة مصطفى الزحيلي": "zuhayli",
+    "ابن عثيمين": "uthaymin",
+    "محمد بن صالح العثيمين": "uthaymin",
+    "محمد بن صالح بن عثيمين": "uthaymin",
+    "محمد صالح العثيمين": "uthaymin",
+    "العثيمين": "uthaymin",
+    "محمد الأمين الشنقيطي": "amin_shanqiti",
+    "محمد الأمين بن محمد المختار الشنقيطي": "amin_shanqiti",
+    "محمد الأمين بن محمد المختار الجكني الشنقيطي": "amin_shanqiti",
+    "الأمين الشنقيطي": "amin_shanqiti",
+    "محمد المختار الشنقيطي": "mukhtar_shanqiti",
+    "محمد بن محمد المختار الشنقيطي": "mukhtar_shanqiti",
+    "المختار الشنقيطي": "mukhtar_shanqiti",
+    "الشنقيطي": "shanqiti",
+    "صالح الفوزان": "fawzan",
+    "صالح بن فوزان الفوزان": "fawzan",
+    "صالح بن فوزان بن عبد الله الفوزان": "fawzan",
+    "الفوزان": "fawzan",
+    "عبد الكريم الخضير": "khudayr",
+    "عبد الكريم بن عبد الله الخضير": "khudayr",
+    "الخضير": "khudayr",
+    "عبد العزيز بن باز": "ibnbaz",
+    "عبد العزيز بن عبد الله بن باز": "ibnbaz",
+    "ابن باز": "ibnbaz",
+    "محمد ناصر الدين الألباني": "albani",
+    "ناصر الدين الألباني": "albani",
+    "الألباني": "albani",
     "محمد الطاهر بن عاشور": "ibnashur",
+    "الطاهر بن عاشور": "ibnashur",
     "ابن عاشور": "ibnashur",
     "جلال الدين السيوطي": "suyuti",
+    "الجلال السيوطي": "suyuti",
     "أبو إسحاق الشاطبي": "shatibi",
+    "الشاطبي الأصولي النحوي": "shatibi",
     "أبو حامد الغزالي": "ghazali",
+    "محمد الغزالي": "m_ghazali",
     "يحيى بن شرف النووي": "nawawi",
+    "محيي الدين النووي": "nawawi",
+    "النووي": "nawawi",
+    "ابن تيمية": "ibntaymiyya",
+    "أحمد بن عبد الحليم بن تيمية": "ibntaymiyya",
+    "تقي الدين ابن تيمية": "ibntaymiyya",
+    "ابن القيم": "ibnalqayyim",
+    "ابن قيم الجوزية": "ibnalqayyim",
+    "شمس الدين ابن القيم": "ibnalqayyim",
+    "علي الطنطاوي": "tantawi",
+    "محمد سيد طنطاوي": "sayed_tantawi",
 }
 
 SHEIKH_PHOTOS: dict[str, str] = {
@@ -123,6 +174,29 @@ AR_TO_LATIN_MAP: dict[str, str] = {
     "ئ": "i", "ء": "",
 }
 
+SCHOLAR_HONORIFIC_PHRASES_RE = re.compile(
+    r"(?:"
+    r"شيخ الاسلام|حجه الاسلام|امام الحرمين|امام الدعاه|مفتي الديار المصريه|مفتي الجمهوريه"
+    r"|عضو هييه كبار العلماء|رحمه الله|حفظه الله|رضي الله عنه|غفر الله له|قدس سره|تعالي"
+    r")",
+)
+
+SCHOLAR_HONORIFIC_WORDS: set[str] = {
+    "الشيخ", "شيخ", "العلامه", "علامه", "الامام", "امام", "الحافظ", "حافظ",
+    "الحجه", "الفقيه", "فقيه", "الاصولي", "المحدث", "محدث", "المفسر", "مفسر",
+    "المقري", "المؤرخ", "مورخ", "الاديب", "اللغوي", "النحوي", "الدكتور", "دكتور",
+    "الاستاذ", "استاذ", "المهندس", "مهندس", "الحبيب", "السيد", "سيدنا",
+    "سيدي", "مولانا", "الشريف", "القاضي", "قاضي", "المفتي", "مفتي", "فضيله",
+    "سماحه", "معالي", "صاحب", "اد", "د", "م", "ا",
+}
+
+OPTIONAL_TRAILING_NISBAS: set[str] = {
+    "الشافعي", "المالكي", "الحنفي", "الحنبلي", "الظاهري", "الاشعري", "الماتريدي",
+    "الاثري", "السلفي", "الدمشقي", "الحلبي", "المصري", "الازهري", "المغربي",
+    "التونسي", "الجزائري", "الموريتاني", "النجدي", "التميمي", "القرشي", "الهاشمي",
+    "الحسني", "الحسيني", "الجكني", "المدني", "المكي", "الحجازي", "الشامي", "الحراني",
+}
+
 
 def normalize_arabic(text: str) -> str:
     """Normalize Arabic string for deterministic matching (strip diacritics, unify hamzas/digits)."""
@@ -136,6 +210,67 @@ def normalize_arabic(text: str) -> str:
     return s
 
 
+def strip_scholar_honorifics_and_qualifiers(name: str) -> list[str]:
+    """
+    Decompose a scholar's name (with kunyas, honorifics, titles, and nisbas) into clean
+    normalized candidate name strings without losing the scholar's given name:
+      - Reorders inverted comma names (`الشنقيطي، عبد الله بن إبراهيم` -> `عبد الله بن إبراهيم الشنقيطي`).
+      - Strips leading academic/religious honorifics (`الشيخ`, `العلامة`, `الأستاذ الدكتور`, `أ.د.`, `إمام الدعاة`, etc.)
+        without stripping patronymics (`محمد بن حبيب`) or trailing family names (`أحمد السيد`, `العوني الشريف`).
+      - Generates forms with and without a leading kunya (`أبو توفيق`, `أبو عبد الله`, `أبو الفضل`)
+        when followed by >= 2 personal name words.
+      - Generates forms with and without optional trailing madhhab/city/tribal nisbas
+        (`الدمشقي`, `الشافعي`, `التميمي`, `الجكني`, `الحلبي`, `الأزهري`, `الحسيني`).
+    """
+    if not name:
+        return []
+    raw = str(name).strip()
+    if "،" in raw or "," in raw:
+        parts = [p.strip() for p in re.split(r"[،,]", raw, maxsplit=1) if p.strip()]
+        if len(parts) == 2:
+            raw = f"{parts[1]} {parts[0]}"
+
+    # Clean punctuation like أ.د. -> اد before normalization
+    raw = re.sub(r"\bأ\.?\s*د\.?\b", " ", raw)
+    raw = re.sub(r"\b(?:د|م|أ)\.\s*", " ", raw)
+    norm = normalize_arabic(raw)
+    norm = SCHOLAR_HONORIFIC_PHRASES_RE.sub(" ", norm)
+    raw_tokens = [t for t in re.split(r"[\s/\-–—_(\[\{«\"'،؛,.؟!)\]\}\»]+", norm) if t]
+    # Strip leading honorific tokens while keeping at least the final personal/family name tokens
+    idx_start = 0
+    while idx_start < len(raw_tokens) - 1 and raw_tokens[idx_start] in SCHOLAR_HONORIFIC_WORDS:
+        idx_start += 1
+    tokens = raw_tokens[idx_start:]
+    if not tokens:
+        return [norm] if norm else []
+
+    base_forms: list[list[str]] = [tokens]
+
+    # Strip leading kunya (`ابو X` or `ابو عبد X`) ONLY when >= 2 tokens remain after it
+    if len(tokens) >= 4 and tokens[0] in ("ابو", "ابي"):
+        if tokens[1] == "عبد" and len(tokens) >= 5:
+            base_forms.append(tokens[3:])
+        else:
+            base_forms.append(tokens[2:])
+
+    # Also generate variants with optional trailing madhhab/city/tribal nisbas stripped
+    expanded_forms: list[str] = []
+    seen: set[str] = set()
+    for form_toks in base_forms:
+        cur = list(form_toks)
+        while cur:
+            s_cur = " ".join(cur).strip()
+            if s_cur and s_cur not in seen:
+                seen.add(s_cur)
+                expanded_forms.append(s_cur)
+            if len(cur) >= 2 and cur[-1] in OPTIONAL_TRAILING_NISBAS:
+                cur = cur[:-1]
+            else:
+                break
+
+    return expanded_forms
+
+
 def normalize_person_id(name: str, explicit_id: str | None = None) -> str:
     """Generate or normalize a canonical ASCII slug `person_id` from a person's name."""
     if explicit_id and str(explicit_id).strip():
@@ -143,20 +278,40 @@ def normalize_person_id(name: str, explicit_id: str | None = None) -> str:
         if slug:
             return slug
 
+    candidate_forms = strip_scholar_honorifics_and_qualifiers(name)
     norm_name = normalize_arabic(name)
-    # Remove common honorific prefixes
-    cleaned = re.sub(
-        r"^(?:الشيخ|العلامه|الامام|الدكتور|الاستاذ|المهندس|الحبيب|السيد|فضيله|أ\.?د\.?|د\.?|م\.?)\s+",
-        "",
-        norm_name,
-    ).strip()
+    if norm_name and norm_name not in candidate_forms:
+        candidate_forms.append(norm_name)
 
-    for k, v in KNOWN_PERSON_SLUGS.items():
-        nk = normalize_arabic(k)
-        if nk == norm_name or nk == cleaned or (nk in norm_name and len(nk) >= 7):
-            return v
+    # Sort KNOWN_PERSON_SLUGS by descending normalized key length so specific names
+    # (e.g. 'محمد الحسن الددو الشنقيطي', 'محمد الأمين الشنقيطي') match before bare 'الشنقيطي'
+    sorted_known = sorted(
+        KNOWN_PERSON_SLUGS.items(),
+        key=lambda kv: len(normalize_arabic(kv[0])),
+        reverse=True,
+    )
 
-    # Fallback deterministic transliteration of last significant word or full name
+    # Pass 1: Exact match against any cleaned candidate form
+    for cf in candidate_forms:
+        for k, v in sorted_known:
+            if normalize_arabic(k) == cf:
+                return v
+
+    # Pass 2: Prefix match where the cleaned candidate starts with the known multi-word scholar name
+    # (e.g. 'علي جمعة محمد عبد الوهاب' starts with 'علي جمعة'), NEVER suffix-matching after a different given name
+    for cf in candidate_forms:
+        cf_toks = cf.split()
+        for k, v in sorted_known:
+            nk = normalize_arabic(k)
+            nk_toks = nk.split()
+            if len(nk_toks) >= 2 and len(cf_toks) > len(nk_toks):
+                if cf_toks[: len(nk_toks)] == nk_toks:
+                    return v
+                # Also allow middle patronymic ('محمد سعيد رمضان البوطي' vs 'محمد سعيد البوطي')
+                if cf_toks[0] == nk_toks[0] and cf_toks[-1] == nk_toks[-1] and all(t in cf_toks for t in nk_toks):
+                    return v
+
+    cleaned = candidate_forms[0] if candidate_forms else norm_name
     ascii_chars = []
     for ch in cleaned.lower():
         if ch in AR_TO_LATIN_MAP:
@@ -191,7 +346,12 @@ RAW_URL_RE = re.compile(
     re.IGNORECASE,
 )
 SHORTLINK_NO_SCHEME_RE = re.compile(
-    r"(?<!://)(?<!\.)\b(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co|youtu\.be)/[A-Za-z0-9_\-]+",
+    r"(?<!://)(?<!\.)\b(?:"
+    r"(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co|youtu\.be)/[A-Za-z0-9_\-]+"
+    r"|(?:t\.me|telegram\.me|telegram\.dog)/(?:s/)?[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_\-]+)?"
+    r"|(?:drive\.google\.com|docs\.google\.com)/[A-Za-z0-9_\-/?=&.%+]+"
+    r"|(?:soundcloud\.com|on\.soundcloud\.com)/[A-Za-z0-9_\-/?=&.%+]+"
+    r")",
     re.IGNORECASE,
 )
 BARE_PLAYLIST_ID_RE = re.compile(r"\b(PL[A-Za-z0-9_\-]{16,34})\b")
@@ -209,10 +369,126 @@ PDF_NOISE_URL_RE = re.compile(
     r"|purl\.org/dc/"
     r"|ns\.adobe\.com/"
     r"|iptc\.org/std/"
-    r"|^https?://(?:bit|bit\.ly|goo\.gl|tinyurl\.com|t\.co)/?$"
+    r"|^https?://(?:bit|bit\.ly|goo\.gl|tinyurl\.com|t\.co|t\.me|telegram\.me)/?$"
     r")",
     re.IGNORECASE,
 )
+
+PDF_LINK_CATEGORIES: tuple[str, ...] = (
+    "youtube_playlists",
+    "youtube_videos",
+    "archive_items",
+    "telegram_links",
+    "gdrive_links",
+    "soundcloud_links",
+    "shortlinks",
+    "other_links",
+)
+
+_CATEGORY_TO_LINK_TYPE: dict[str, str] = {
+    "youtube_playlists": "youtube_playlist",
+    "youtube_videos": "youtube_video",
+    "archive_items": "archive_item",
+    "telegram_links": "telegram_link",
+    "gdrive_links": "gdrive_link",
+    "soundcloud_links": "soundcloud_link",
+    "shortlinks": "shortlink",
+    "other_links": "other",
+}
+
+
+class PDFExtractedLinks(list):
+    """
+    Hybrid list + structured-category accessor for `pdf_extracted_links`.
+    - Behaves 100% as a `list[dict[str, Any]]` when iterated (`for lnk in links:`),
+      measured (`len(links)`), indexed by int/slice (`links[0]`), or serialized to JSON.
+    - Simultaneously supports structured dictionary key lookup (`links["telegram_links"]`,
+      `links["gdrive_links"]`, `links["soundcloud_links"]`, `links["youtube_playlists"]`,
+      `links["youtube_videos"]`, `links["archive_items"]`, `links["shortlinks"]`),
+      `.get(key)`, `key in links`, `.keys()`, `.items()`, and `.to_dict()`.
+    """
+
+    def _category_items(self, key: str) -> list[dict[str, Any]]:
+        if key == "all_links":
+            return list(self)
+        ltype = _CATEGORY_TO_LINK_TYPE.get(key)
+        if ltype is not None:
+            return [lnk for lnk in super().__iter__() if isinstance(lnk, dict) and lnk.get("link_type") == ltype]
+        raise KeyError(key)
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, str):
+            return self._category_items(key)
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self._category_items(key)
+        except KeyError:
+            return default
+
+    def __contains__(self, item: Any) -> bool:
+        if isinstance(item, str) and (item in _CATEGORY_TO_LINK_TYPE or item == "all_links"):
+            return True
+        return super().__contains__(item)
+
+    def keys(self) -> list[str]:
+        return list(PDF_LINK_CATEGORIES)
+
+    def values(self) -> list[list[dict[str, Any]]]:
+        return [self._category_items(k) for k in PDF_LINK_CATEGORIES]
+
+    def items(self) -> list[tuple[str, list[dict[str, Any]]]]:
+        return [(k, self._category_items(k)) for k in PDF_LINK_CATEGORIES]
+
+    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
+        out = {k: self._category_items(k) for k in PDF_LINK_CATEGORIES}
+        out["all_links"] = list(self)
+        return out
+
+    to_structured_dict = to_dict
+
+    @property
+    def youtube_playlists(self) -> list[dict[str, Any]]:
+        return self._category_items("youtube_playlists")
+
+    @property
+    def youtube_videos(self) -> list[dict[str, Any]]:
+        return self._category_items("youtube_videos")
+
+    @property
+    def archive_items(self) -> list[dict[str, Any]]:
+        return self._category_items("archive_items")
+
+    @property
+    def telegram_links(self) -> list[dict[str, Any]]:
+        return self._category_items("telegram_links")
+
+    @property
+    def gdrive_links(self) -> list[dict[str, Any]]:
+        return self._category_items("gdrive_links")
+
+    @property
+    def soundcloud_links(self) -> list[dict[str, Any]]:
+        return self._category_items("soundcloud_links")
+
+    @property
+    def shortlinks(self) -> list[dict[str, Any]]:
+        return self._category_items("shortlinks")
+
+
+def group_pdf_extracted_links(links: list[dict[str, Any]] | dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return a structured dictionary grouping PDF-extracted links by platform."""
+    if isinstance(links, PDFExtractedLinks):
+        return links.to_dict()
+    if isinstance(links, dict):
+        flat: list[dict[str, Any]] = []
+        for k in PDF_LINK_CATEGORIES:
+            for item in links.get(k) or []:
+                if isinstance(item, dict):
+                    flat.append(item)
+        return PDFExtractedLinks(flat).to_dict()
+    return PDFExtractedLinks(links or []).to_dict()
 
 
 def _unescape_pdf_string(raw_bytes: bytes) -> str:
@@ -276,12 +552,30 @@ def resolve_http_redirect(url: str, timeout: int = 8) -> str:
 
 
 def classify_extracted_url(url: str, resolved_url: str | None = None) -> dict[str, Any]:
-    """Classify a discovered URL into playlist, video, archive_item, shortlink, or other."""
+    """
+    Classify a discovered URL into:
+      - `youtube_playlist` (`playlist_id`, optional `video_id`)
+      - `youtube_video` (`video_id`)
+      - `archive_item` (`archive_id`)
+      - `telegram_link` (`telegram_channel`, `telegram_post_id`, `telegram_kind`)
+      - `gdrive_link` (`gdrive_id`, `gdrive_kind`)
+      - `soundcloud_link` (`soundcloud_user`, `soundcloud_set`, `soundcloud_kind`)
+      - `shortlink`
+      - `other`
+    """
     clean_orig = url.strip().rstrip(".,;)]}>'\"")
     target = unwrap_redirect_wrapper_url(resolved_url or clean_orig).strip().rstrip(".,;)]}>'\"")
     playlist_id = None
     video_id = None
     archive_id = None
+    telegram_channel = None
+    telegram_post_id = None
+    telegram_kind = None
+    gdrive_id = None
+    gdrive_kind = None
+    soundcloud_user = None
+    soundcloud_set = None
+    soundcloud_kind = None
     link_type = "other"
 
     # Extract both playlist_id and video_id if present (e.g., watch?v=VID&list=PL_ID)
@@ -308,27 +602,124 @@ def classify_extracted_url(url: str, resolved_url: str | None = None) -> dict[st
         if m_arch:
             archive_id = m_arch.group(1)
             link_type = "archive_item"
-        elif re.search(r"^https?://(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co)/[A-Za-z0-9_\-]+", target, re.I):
-            link_type = "shortlink"
+        else:
+            # Telegram links: t.me/<channel>, t.me/s/<channel>, t.me/<channel>/<msg_id>, t.me/+<invite>, t.me/joinchat/<invite>
+            m_tg = re.search(
+                r"(?:^|//)(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/(?:(s)/)?([A-Za-z0-9_+\-]+)(?:/([A-Za-z0-9_\-]+))?",
+                target,
+                re.IGNORECASE,
+            )
+            if m_tg:
+                link_type = "telegram_link"
+                seg1 = m_tg.group(2)
+                seg2 = m_tg.group(3)
+                if seg1.startswith("+") or seg1.lower() == "joinchat":
+                    telegram_kind = "invite"
+                    telegram_channel = seg2 if seg1.lower() == "joinchat" and seg2 else seg1
+                elif seg2 and seg2.isdigit():
+                    telegram_kind = "message"
+                    telegram_channel = seg1
+                    telegram_post_id = seg2
+                else:
+                    telegram_kind = "channel"
+                    telegram_channel = seg1
+            else:
+                # Google Drive / Google Docs links
+                m_gd_folder = re.search(
+                    r"drive\.google\.com/drive/(?:u/\d+/)?folders/([A-Za-z0-9_\-]+)",
+                    target,
+                    re.IGNORECASE,
+                )
+                m_gd_file = re.search(
+                    r"(?:drive|docs)\.google\.com/(?:file|document|spreadsheets|presentation)/d/([A-Za-z0-9_\-]+)",
+                    target,
+                    re.IGNORECASE,
+                )
+                m_gd_open = re.search(
+                    r"drive\.google\.com/(?:open|uc)\?.*?(?:[?&]|^)id(?:=|%3[Dd])([A-Za-z0-9_\-]+)",
+                    target,
+                    re.IGNORECASE,
+                )
+                if m_gd_folder:
+                    link_type = "gdrive_link"
+                    gdrive_id = m_gd_folder.group(1)
+                    gdrive_kind = "folder"
+                elif m_gd_file:
+                    link_type = "gdrive_link"
+                    gdrive_id = m_gd_file.group(1)
+                    gdrive_kind = "file"
+                elif m_gd_open:
+                    link_type = "gdrive_link"
+                    gdrive_id = m_gd_open.group(1)
+                    gdrive_kind = "open"
+                elif re.search(r"(?:^|//)(?:drive|docs)\.google\.com/", target, re.IGNORECASE):
+                    link_type = "gdrive_link"
+                    gdrive_kind = "other"
+                else:
+                    # SoundCloud links: soundcloud.com/<user>/sets/<set_slug> or soundcloud.com/<user>/<track>?in=<user>/sets/<set_slug>
+                    m_sc = re.search(
+                        r"(?:^|//)(?:www\.|m\.)?(?:soundcloud\.com|on\.soundcloud\.com)/([A-Za-z0-9_\-]+)(?:/sets/([A-Za-z0-9_\-]+)|/([A-Za-z0-9_\-]+))?",
+                        target,
+                        re.IGNORECASE,
+                    )
+                    if m_sc:
+                        link_type = "soundcloud_link"
+                        soundcloud_user = m_sc.group(1)
+                        if m_sc.group(2):
+                            soundcloud_set = m_sc.group(2)
+                            soundcloud_kind = "set"
+                        else:
+                            m_in_set = re.search(r"[?&]in=[^&]*/sets/([A-Za-z0-9_\-]+)", target, re.IGNORECASE)
+                            if m_in_set:
+                                soundcloud_set = m_in_set.group(1)
+                            soundcloud_kind = "track" if m_sc.group(3) else "profile"
+                    elif re.search(r"^https?://(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co)/[A-Za-z0-9_\-]+", target, re.I):
+                        link_type = "shortlink"
 
-    return {
+    extracted_id = (
+        playlist_id
+        or video_id
+        or archive_id
+        or gdrive_id
+        or (f"{telegram_channel}/{telegram_post_id}" if telegram_channel and telegram_post_id else telegram_channel)
+        or soundcloud_set
+        or soundcloud_user
+    )
+    info: dict[str, Any] = {
         "url": clean_orig,
         "resolved_url": target,
         "link_type": link_type,
+        "extracted_id": extracted_id,
         "playlist_id": playlist_id,
         "video_id": video_id,
         "archive_id": archive_id,
     }
+    if link_type == "telegram_link":
+        info["telegram_channel"] = telegram_channel
+        info["telegram_post_id"] = telegram_post_id
+        info["telegram_kind"] = telegram_kind
+    elif link_type == "gdrive_link":
+        info["gdrive_id"] = gdrive_id
+        info["gdrive_kind"] = gdrive_kind
+    elif link_type == "soundcloud_link":
+        info["soundcloud_user"] = soundcloud_user
+        info["soundcloud_set"] = soundcloud_set
+        info["soundcloud_kind"] = soundcloud_kind
+    return info
 
 
 def extract_links_from_pdf(
     pdf_path: str | Path,
     resolve_redirects: bool = False,
-) -> list[dict[str, Any]]:
+) -> PDFExtractedLinks:
     """
     Extract all embedded links (YouTube playlists, unlisted playlists, videos, Archive.org items,
-    and shortlinks) from a PDF file by scanning both uncompressed `/URI` annotations and
-    `zlib.decompress`-ed `FlateDecode` streams.
+    Telegram channels/messages, Google Drive folders/files, SoundCloud sets/tracks, and shortlinks)
+    from a PDF file by scanning both uncompressed `/URI` annotations and `zlib.decompress`-ed
+    `FlateDecode` streams.
+    Returns a `PDFExtractedLinks` list that also supports structured category lookup:
+      `links["youtube_playlists"]`, `links["youtube_videos"]`, `links["archive_items"]`,
+      `links["telegram_links"]`, `links["gdrive_links"]`, `links["soundcloud_links"]`, `links["shortlinks"]`.
     """
     path = Path(pdf_path)
     if not path.exists():
@@ -441,7 +832,7 @@ def extract_links_from_pdf(
         info["extraction_method"] = method
         results.append(info)
 
-    return results
+    return PDFExtractedLinks(results)
 
 
 # ---------------------------------------------------------------------------
@@ -1734,23 +2125,119 @@ QURAN_SURAHS: list[tuple[int, str]] = [
 
 PERSON_AUTHOR_ALIASES: dict[str, list[str]] = {
     "shaarawy": ["الشعراوي", "محمد متولي الشعراوي"],
-    "bouti": ["محمد سعيد البوطي", "محمد سعيد رمضان البوطي"],
+    "bouti": ["محمد سعيد البوطي", "محمد سعيد رمضان البوطي", "سعيد رمضان البوطي", "رمضان البوطي"],
     "samarrai": ["فاضل صالح السامرائي", "فاضل السامرائي"],
     "dedew": ["محمد الحسن الددو الشنقيطي", "محمد الحسن الددو"],
+    "amin_shanqiti": ["محمد الأمين الشنقيطي", "محمد الأمين بن محمد المختار الشنقيطي"],
+    "mukhtar_shanqiti": ["محمد بن محمد المختار الشنقيطي", "محمد المختار الشنقيطي"],
+    "shanqiti": ["محمد الأمين الشنقيطي", "محمد بن محمد المختار الشنقيطي", "محمد المختار الشنقيطي"],
+    "uthaymin": ["ابن عثيمين", "محمد بن صالح العثيمين", "محمد صالح العثيمين"],
+    "ibnbaz": ["ابن باز", "عبد العزيز بن باز", "عبد العزيز بن عبد الله بن باز"],
+    "albani": ["ناصر الدين الألباني", "محمد ناصر الدين الألباني", "الألباني"],
+    "fawzan": ["صالح الفوزان", "صالح بن فوزان الفوزان"],
+    "khudayr": ["عبد الكريم الخضير", "عبد الكريم بن عبد الله الخضير"],
+    "gomaa": ["علي جمعة", "علي جمعة محمد عبد الوهاب"],
     "itr": ["نور الدين عتر"],
     "abughuddah": ["عبد الفتاح أبو غدة"],
-    "zuhayli": ["وهبة الزحيلي"],
-    "ibnashur": ["ابن عاشور", "محمد الطاهر بن عاشور"],
+    "zuhayli": ["وهبة الزحيلي", "وهبة بن مصطفى الزحيلي", "وهبة مصطفى الزحيلي"],
+    "ibnashur": ["ابن عاشور", "محمد الطاهر بن عاشور", "الطاهر بن عاشور"],
     "suyuti": ["الجلال السيوطي", "جلال الدين السيوطي"],
-    "shatibi": ["الشاطبي الأصولي النحوي", "أبو إسحاق الشاطبي"],
+    "shatibi": ["الشاطبي الأصولي النحوي", "أبو إسحاق الشاطبي", "إبراهيم بن موسى الشاطبي"],
     "ghazali": ["أبو حامد الغزالي"],
-    "nawawi": ["النووي", "محيي الدين يحيى بن شرف النووي"],
+    "m_ghazali": ["محمد الغزالي"],
+    "nawawi": ["النووي", "محيي الدين النووي", "يحيى بن شرف النووي"],
+    "ibntaymiyya": ["ابن تيمية", "تقي الدين ابن تيمية", "أحمد بن عبد الحليم بن تيمية"],
+    "ibnalqayyim": ["ابن القيم", "ابن قيم الجوزية", "شمس الدين ابن القيم"],
+    "tantawi": ["علي الطنطاوي"],
+    "sayed_tantawi": ["محمد سيد طنطاوي"],
     "omari": ["علي محمود العمري"],
     "bardoni": ["محمد البردوني الحسيمي", "محمد البردوني"],
     "sariri": ["مولود السريري"],
     "sayed": ["أحمد السيد"],
     "hashemi": ["عبد الرحمن ذاكر الهاشمي", "ذاكر الهاشمي"],
     "ayman": ["أيمن عبد الرحيم"],
+}
+
+PERSON_ID_CANONICAL_MAP: dict[str, str] = {
+    "uthaymeen": "uthaymin",
+    "ibn_uthaymin": "uthaymin",
+    "ibn_uthaymeen": "uthaymin",
+    "ali_gomaa": "gomaa",
+    "al_bouti": "bouti",
+    "albouti": "bouti",
+    "al_shaarawy": "shaarawy",
+    "al_zuhayli": "zuhayli",
+    "ibn_baz": "ibnbaz",
+    "abu_ghuddah": "abughuddah",
+}
+
+# Explicit anti-collision exclusions for scholars sharing family/nisba/patronymic names in Shamela
+PERSON_EXCLUDED_AUTHORS: dict[str, set[str]] = {
+    "gomaa": {normalize_arabic("عماد علي جمعة"), normalize_arabic("جمعة علي الخولي"), normalize_arabic("جمعة فتحي عبد الحليم")},
+    "zuhayli": {normalize_arabic("محمد مصطفى الزحيلي")},
+    "uthaymin": {normalize_arabic("عبد الله بن صالح العثيمين"), normalize_arabic("صالح بن عبد العزيز آل عثيمين")},
+    "fawzan": {
+        normalize_arabic("عبد الله بن صالح الفوزان"),
+        normalize_arabic("عبد الله بن فوزان الفوزان"),
+        normalize_arabic("عبد العزيز بن فوزان بن صالح الفوزان"),
+        normalize_arabic("فوزان السابق"),
+    },
+    "khudayr": {
+        normalize_arabic("عبد الله بن جوران الخضير"),
+        normalize_arabic("إبراهيم الخضيري"),
+        normalize_arabic("محمد بن عبد العزيز الخضيري"),
+    },
+    "amin_shanqiti": {
+        normalize_arabic("أحمد بن الأمين الشنقيطي"),
+        normalize_arabic("أحمد بن أحمد المختار الشنقيطي"),
+        normalize_arabic("أحمد بن عبد الوهاب الشنقيطي"),
+        normalize_arabic("أحمد بن محمد الشنقيطي"),
+        normalize_arabic("الشنقيطي، عبد الله بن إبراهيم"),
+        normalize_arabic("عبد الله بن إبراهيم الشنقيطي"),
+        normalize_arabic("سيد ساداتي الشنقيطي"),
+        normalize_arabic("عبد الله بن عمر الشنقيطي"),
+        normalize_arabic("محمد أحمد عبد القادر الشنقيطي المدني"),
+        normalize_arabic("محمد الحسن الددو الشنقيطي"),
+        normalize_arabic("محمد الخضر الشنقيطي"),
+        normalize_arabic("محمد المختار الشنقيطي"),
+        normalize_arabic("محمد بن محفوظ الشنقيطي"),
+        normalize_arabic("محمد بن محمد المختار الشنقيطي"),
+    },
+    "mukhtar_shanqiti": {
+        normalize_arabic("أحمد بن أحمد المختار الشنقيطي"),
+        normalize_arabic("أحمد بن الأمين الشنقيطي"),
+        normalize_arabic("محمد الأمين الشنقيطي"),
+        normalize_arabic("محمد الحسن الددو الشنقيطي"),
+        normalize_arabic("محمد الخضر الشنقيطي"),
+    },
+    "dedew": {
+        normalize_arabic("محمد الأمين الشنقيطي"),
+        normalize_arabic("محمد المختار الشنقيطي"),
+        normalize_arabic("محمد بن محمد المختار الشنقيطي"),
+        normalize_arabic("محمد الخضر الشنقيطي"),
+    },
+    "ibnbaz": {
+        normalize_arabic("ابن الخباز"),
+        normalize_arabic("أحمد بن عمر بازمول"),
+        normalize_arabic("محمد بن عمر بازمول"),
+        normalize_arabic("محمد عباس الباز"),
+        normalize_arabic("بازيار العزيز الفاطمي"),
+    },
+    "shatibi": {normalize_arabic("الشاطبي المقرئ")},
+    "ghazali": {normalize_arabic("محمد الغزالي"), normalize_arabic("محمد الغزالي العثماني")},
+    "m_ghazali": {normalize_arabic("أبو حامد الغزالي"), normalize_arabic("محمد الغزالي العثماني")},
+    "nawawi": {normalize_arabic("نووي الجاوي")},
+    "ibntaymiyya": {normalize_arabic("مجد الدين بن تيمية")},
+    "ibnalqayyim": {normalize_arabic("برهان الدين ابن القيم")},
+}
+
+# Muhaqqiq (editor/verifier) markers in Shamela book titles (`- ت <muhaqqiq>`)
+PERSON_MUHAQQIQ_MARKERS: dict[str, list[str]] = {
+    "abughuddah": ["أبي غدة", "أبو غدة", "عبد الفتاح أبو غدة"],
+    "itr": ["عتر", "نور الدين عتر"],
+    "albani": ["الألباني", "ناصر الدين الألباني"],
+    "bouti": ["البوطي", "محمد سعيد رمضان البوطي", "سعيد رمضان البوطي"],
+    "zuhayli": ["وهبة الزحيلي"],
 }
 
 _SHAMELA_BOOKS_CACHE: list[dict[str, Any]] | None = None
@@ -1949,62 +2436,252 @@ def _word_boundary_match(needle_norm: str, haystack_norm: str) -> bool:
     return bool(re.search(pattern, haystack_norm))
 
 
-def _is_author_match(sheikh_name: str, author_name: str, person_id: str | None = None) -> bool:
-    """Check if `author_name` matches the scholar `sheikh_name` / `person_id`."""
-    norm_person = normalize_arabic(sheikh_name)
-    norm_author = normalize_arabic(author_name)
-    if not norm_person or not norm_author:
+def _extract_given_and_family_signature(tokens: list[str]) -> tuple[list[str], str]:
+    """
+    Extract the scholar's given-name head (`Ism`) before any patronymic `بن`/`ابن` (when `بن` is not index 0)
+    and the final family/nisba token.
+    Handles compound given names (`عبد X`, `ابو X`, `ابن X`, `X الدين`, `محمد سعيد`, `محمد الامين`,
+    `محمد متولي`, `محمد الحسن`, `محمد المختار`, `محمد مصطفي`, `محمد الخضر`, `محمد سيد`, `محمد الطاهر`).
+    """
+    if not tokens:
+        return [], ""
+    last_tok = tokens[-1]
+    if "بن" in tokens[1:]:
+        idx_bin = tokens.index("بن", 1)
+        head = tokens[:idx_bin]
+    elif "ابن" in tokens[1:]:
+        idx_ibn = tokens.index("ابن", 1)
+        head = tokens[:idx_ibn]
+    else:
+        if len(tokens) >= 2 and tokens[0] in ("عبد", "ابو", "ابي", "ابن", "بن"):
+            head = tokens[:2]
+        elif len(tokens) >= 2 and tokens[1] == "الدين":
+            head = tokens[:2]
+        elif len(tokens) >= 3 and tokens[0] == "محمد" and tokens[1] in (
+            "سعيد", "الامين", "متولي", "الحسن", "المختار", "مصطفي", "الخضر", "سيد", "الطاهر", "نعيم",
+        ):
+            head = tokens[:2]
+        else:
+            head = tokens[:1]
+    return head, last_tok
+
+
+def _names_match_strictly(cand_norm: str, author_norm: str) -> bool:
+    """
+    High-precision Arabic scholar name comparison between a normalized query candidate `cand_norm`
+    and a normalized Shamela author string `author_norm` without partial-name collisions:
+      1. Exact equality (`cand_norm == author_norm`).
+      2. Prefix match ONLY when `author_norm` is the 2+ word prefix of a longer patronymic query `cand_norm`
+         (e.g. query `علي جمعه محمد عبد الوهاب` matches author `علي جمعه`), NEVER when `author_norm` has
+         an extra trailing nisba (`محمد الغزالي العثماني` vs `محمد الغزالي`) or a different leading given name
+         (`عماد علي جمعه` vs `علي جمعه`).
+      3. Middle patronymic omission match (e.g. `محمد سعيد رمضان البوطي` vs `محمد سعيد البوطي`,
+         `وهبه بن مصطفي الزحيلي` vs `وهبه الزحيلي`, `صالح بن فوزان الفوزان` vs `صالح الفوزان`)
+         requiring identical given-name head (`Ism`), identical family/nisba ending, and ordered token containment.
+    """
+    if not cand_norm or not author_norm:
         return False
-    if norm_person == norm_author:
-        return True
-    if len(norm_author) >= 7 and (
-        _word_boundary_match(norm_author, norm_person) or _word_boundary_match(norm_person, norm_author)
-    ):
+    if cand_norm == author_norm:
         return True
 
-    pid = person_id or normalize_person_id(sheikh_name)
+    c_toks = cand_norm.split()
+    a_toks = author_norm.split()
+    if not c_toks or not a_toks:
+        return False
+
+    # Case 2: Query includes full patronymic chain beyond the 2+ word author name in Shamela
+    if len(a_toks) >= 2 and len(c_toks) > len(a_toks) and c_toks[: len(a_toks)] == a_toks:
+        # Ensure the remaining tokens in c_toks are patronymics, not a conflicting family nisba
+        return True
+
+    # Case 3: Middle patronymic/father-name omission (both must have >= 2 tokens)
+    if len(c_toks) >= 2 and len(a_toks) >= 2:
+        c_head, c_last = _extract_given_and_family_signature(c_toks)
+        a_head, a_last = _extract_given_and_family_signature(a_toks)
+        if c_last != a_last or not c_head or not a_head:
+            return False
+        # Given-name heads must match (or if one is `محمد بن محمد المختار` and the other is `محمد المختار`)
+        if c_head != a_head:
+            return False
+        # Strip internal 'بن'/'ابن' connectors for ordered subsequence check
+        c_clean = [t for idx, t in enumerate(c_toks) if idx == 0 or t not in ("بن", "ابن")]
+        a_clean = [t for idx, t in enumerate(a_toks) if idx == 0 or t not in ("بن", "ابن")]
+        shorter, longer = (c_clean, a_clean) if len(c_clean) <= len(a_clean) else (a_clean, c_clean)
+        it = iter(longer)
+        if all(tok in it for tok in shorter):
+            return True
+
+    return False
+
+
+def _resolve_canonical_author_pid(sheikh_name: str, person_id: str | None = None) -> str:
+    """Resolve `person_id` to its canonical Shamela author lookup key."""
+    pid = (person_id or normalize_person_id(sheikh_name)).strip().lower()
+    pid = PERSON_ID_CANONICAL_MAP.get(pid, pid)
+    norm_person = normalize_arabic(sheikh_name or "")
+    if pid == "shanqiti":
+        if "الامين" in norm_person:
+            return "amin_shanqiti"
+        if "المختار" in norm_person:
+            return "mukhtar_shanqiti"
+    return pid
+
+
+def _is_author_match(sheikh_name: str, author_name: str, person_id: str | None = None) -> bool:
+    """
+    Check if `author_name` in Shamela matches the scholar `sheikh_name` / `person_id`
+    with high precision (supporting kunyas, honorifics, and nisbas while preventing
+    partial-name collisions such as `علي جمعة` vs `عماد علي جمعة` or `وهبة الزحيلي` vs `محمد مصطفى الزحيلي`).
+    """
+    if not sheikh_name or not author_name:
+        return False
+
+    author_forms = strip_scholar_honorifics_and_qualifiers(author_name)
+    norm_author_raw = normalize_arabic(author_name)
+    if norm_author_raw and norm_author_raw not in author_forms:
+        author_forms.append(norm_author_raw)
+    if not author_forms:
+        return False
+
+    query_forms = strip_scholar_honorifics_and_qualifiers(sheikh_name)
+    norm_person_raw = normalize_arabic(sheikh_name)
+    if norm_person_raw and norm_person_raw not in query_forms:
+        query_forms.append(norm_person_raw)
+
+    pid = _resolve_canonical_author_pid(sheikh_name, person_id=person_id)
+
+    # 1. Explicit anti-collision exclusion list for known confusable authors
+    excluded_set = PERSON_EXCLUDED_AUTHORS.get(pid, set())
+    if any(af in excluded_set for af in author_forms):
+        return False
+
+    # 2. Check canonical aliases for `pid`
     for alias in PERSON_AUTHOR_ALIASES.get(pid, []):
-        nalias = normalize_arabic(alias)
-        if nalias and (nalias == norm_author or (len(nalias) >= 7 and _word_boundary_match(nalias, norm_author))):
+        for alias_form in strip_scholar_honorifics_and_qualifiers(alias):
+            for af in author_forms:
+                if _names_match_strictly(alias_form, af):
+                    return True
+
+    # 3. Check direct candidate forms from `sheikh_name` against `author_forms`
+    # (Skip if `sheikh_name` was a bare single-word nisba like `الشنقيطي` that already resolved to `pid` aliases)
+    for qf in query_forms:
+        if len(qf.split()) == 1 and pid in PERSON_AUTHOR_ALIASES:
+            continue
+        for af in author_forms:
+            if _names_match_strictly(qf, af):
+                return True
+
+    return False
+
+
+def _is_muhaqqiq_match(sheikh_name: str, raw_title: str, person_id: str | None = None) -> bool:
+    """
+    Check if `raw_title` in Shamela indicates a book edited/verified (`- ت <muhaqqiq>`) by the scholar.
+    """
+    if not raw_title or " - ت " not in raw_title:
+        return False
+    m = re.search(r"\s-\s*ت\s+([^\-]+)", raw_title)
+    if not m:
+        return False
+    muh_str = m.group(1).strip()
+    if not muh_str:
+        return False
+    norm_muh = normalize_arabic(muh_str)
+    pid = _resolve_canonical_author_pid(sheikh_name, person_id=person_id)
+
+    # Prevent confusing `- ت العثيمين` (Dr. Abdullah bin Salih al-Uthaymin, historian) with Sheikh Ibn Uthaymin
+    if pid == "uthaymin":
+        return False
+
+    for marker in PERSON_MUHAQQIQ_MARKERS.get(pid, []):
+        if normalize_arabic(marker) == norm_muh:
+            return True
+
+    # Also allow exact multi-word scholar name match in `- ت <full_name>`
+    for qf in strip_scholar_honorifics_and_qualifiers(sheikh_name):
+        if len(qf.split()) >= 2 and qf == norm_muh:
             return True
     return False
 
 
-def find_shamela_authored_books(
+def _clean_shamela_authored_book_title(raw_title: str, author_name: str = "") -> str:
+    """
+    Clean Shamela edition suffixes (`- ط ...`, `- ضمن «...»`, `- مجلة ...`, `- التفريغ`, `- كتاب`)
+    and trailing author attributions (`- الزحيلي`, `- وهبة الزحيلي`, `- نور الدين عتر`) for deduplication.
+    """
+    base = re.sub(
+        r"\s*-\s*(?:ط\s+.*|ضمن\s+.*|مجلة\s+.*|كتاب|محاضرات|محاضرة|التفريغ|ت\s+.*)$",
+        "",
+        (raw_title or "").strip(),
+    ).strip()
+    if author_name:
+        # Remove trailing ` - <author>` or ` - <last_name>`
+        a_parts = author_name.strip().split()
+        suffixes = [author_name.strip()]
+        if a_parts:
+            suffixes.append(a_parts[-1])
+        for sfx in suffixes:
+            if sfx and len(sfx) >= 4:
+                base = re.sub(rf"\s+-\s+{re.escape(sfx)}$", "", base).strip()
+    return base or raw_title.strip()
+
+
+def discover_author_books_in_shamela(
     sheikh_name: str,
     person_id: str | None = None,
     shamela_db_dir: str | Path | None = None,
-    max_books: int = 25,
+    shamela_index: list[dict[str, Any]] | None = None,
+    index_entries: list[dict[str, Any]] | None = None,
+    include_tahqiqat: bool = True,
+    max_books: int = 200,
 ) -> list[dict[str, Any]]:
-    """Discover books authored by `sheikh_name` from the Shamela4 database index."""
-    shamela_books = load_shamela_books_index(shamela_db_dir)
+    """
+    Discover books authored (or edited/verified via `- ت <muhaqqiq>`) by `sheikh_name`
+    from `shamela4_books_index.json.gz` (supporting `"a"`, `"author"`, and `"auth"` fields)
+    with strict anti-partial-collision matching across kunyas, honorifics, and nisbas.
+    """
+    custom_entries = index_entries if index_entries is not None else shamela_index
+    shamela_books = custom_entries if custom_entries is not None else load_shamela_books_index(shamela_db_dir)
     if not shamela_books:
         return []
 
-    pid = person_id or normalize_person_id(sheikh_name)
+    pid = normalize_person_id(sheikh_name, explicit_id=person_id)
     matched_books: list[dict[str, Any]] = []
     seen_base_titles: set[str] = set()
 
     for b in shamela_books:
-        author = b.get("a") or ""
-        if not _is_author_match(sheikh_name, author, person_id=pid):
-            continue
-        raw_title = (b.get("t") or "").strip()
+        author = (b.get("a") or b.get("author") or b.get("auth") or "").strip()
+        raw_title = (b.get("t") or b.get("n") or b.get("title") or b.get("name") or "").strip()
         if not raw_title:
             continue
-        # Clean edition suffix like ' - كتاب' or ' - محاضرات' or ' - ت فلان' for deduplication
-        base_title = re.sub(r"\s+-\s+(?:كتاب|محاضرات|محاضرة|ت\s+.*)$", "", raw_title).strip()
+
+        is_direct_author = _is_author_match(sheikh_name, author, person_id=pid)
+        is_tahqiq = False
+        if not is_direct_author and include_tahqiqat:
+            is_tahqiq = _is_muhaqqiq_match(sheikh_name, raw_title, person_id=pid)
+
+        if not is_direct_author and not is_tahqiq:
+            continue
+
+        base_title = _clean_shamela_authored_book_title(raw_title, author_name=author)
         norm_base = normalize_arabic(base_title)
         if norm_base in seen_base_titles:
             continue
         seen_base_titles.add(norm_base)
+
+        bid_val = b.get("id") or b.get("book_id") or b.get("shamela_id") or len(matched_books) + 1
+        book_id_str = str(bid_val) if str(bid_val).startswith("shamela:") else f"shamela:{bid_val}"
         matched_books.append({
-            "book_id": f"shamela:{b['id']}",
+            "book_id": book_id_str,
+            "shamela_id": int(bid_val) if str(bid_val).isdigit() else bid_val,
             "title": base_title,
+            "raw_title": raw_title,
             "author": author,
-            "science": b.get("c") or "علوم شرعية",
+            "science": str(b.get("c") or b.get("category") or "علوم شرعية"),
             "source": "shamela4_db",
+            "role": "muhaqqiq" if is_tahqiq else "author",
             "is_authored_by_person": True,
+            "is_tahqiq_by_person": is_tahqiq,
             "is_explained_by_person": False,
             "matched_playlists": [],
         })
@@ -2012,6 +2689,30 @@ def find_shamela_authored_books(
             break
 
     return matched_books
+
+
+def find_shamela_authored_books(
+    sheikh_name: str,
+    person_id: str | None = None,
+    shamela_db_dir: str | Path | None = None,
+    max_books: int = 200,
+    shamela_index: list[dict[str, Any]] | None = None,
+    index_entries: list[dict[str, Any]] | None = None,
+    include_tahqiqat: bool = True,
+) -> list[dict[str, Any]]:
+    """Backward-compatible wrapper around `discover_author_books_in_shamela`."""
+    return discover_author_books_in_shamela(
+        sheikh_name=sheikh_name,
+        person_id=person_id,
+        shamela_db_dir=shamela_db_dir,
+        shamela_index=shamela_index,
+        index_entries=index_entries,
+        include_tahqiqat=include_tahqiqat,
+        max_books=max_books,
+    )
+
+
+author_books_lookup = discover_author_books_in_shamela
 
 
 def match_series_to_shamela_index(
@@ -2299,7 +3000,7 @@ def discover_person_books(
     books_map: dict[str, dict[str, Any]] = {}
 
     # 1. Check catalog and Shamela4 index for books authored directly by the person
-    shamela_authored = find_shamela_authored_books(
+    shamela_authored = discover_author_books_in_shamela(
         sheikh_name=sheikh_name, person_id=pid_slug, shamela_db_dir=shamela_db_dir
     )
     all_candidates = list(MATN_KNOWLEDGE_BASE) + list(extra_books or []) + shamela_authored
@@ -2314,16 +3015,21 @@ def discover_person_books(
             or _is_author_match(sheikh_name, b_author, person_id=pid_slug)
         )
         if is_authored:
-            books_map[b_id] = {
+            entry_out: dict[str, Any] = {
                 "book_id": b_id,
                 "title": b_title,
                 "author": b_author,
                 "science": b.get("science") or "علوم شرعية",
                 "source": b.get("source") or "books_catalog",
+                "role": b.get("role") or ("muhaqqiq" if b.get("is_tahqiq_by_person") else "author"),
                 "is_authored_by_person": True,
+                "is_tahqiq_by_person": bool(b.get("is_tahqiq_by_person", False)),
                 "is_explained_by_person": False,
                 "matched_playlists": [],
             }
+            if b.get("shamela_id") is not None:
+                entry_out["shamela_id"] = b["shamela_id"]
+            books_map[b_id] = entry_out
 
     # 2. Match playlists / series to books (excluding unclassified catch-all buckets)
     for pl in playlists:
@@ -3148,7 +3854,14 @@ def ingest_offline_fixture(
 
     # 4. PDF links in fixture
     if "pdf_extracted_links" in fixture_data:
-        pdf_links.extend(fixture_data["pdf_extracted_links"])
+        raw_pdf_links = fixture_data["pdf_extracted_links"]
+        if isinstance(raw_pdf_links, dict):
+            for k in PDF_LINK_CATEGORIES:
+                for item in raw_pdf_links.get(k) or []:
+                    if isinstance(item, dict):
+                        pdf_links.append(item)
+        elif isinstance(raw_pdf_links, list):
+            pdf_links.extend(raw_pdf_links)
 
     return channels, playlists, archive_items, pdf_links
 
@@ -3570,9 +4283,11 @@ def build_canonical_raw_json(
     )
     total_dur_s = sum(v.get("dur_s") or 0 for v in videos_list)
     matched_series_count = sum(1 for pl in cleaned_playlists if pl.get("matched_book") is not None)
-    pdf_playlists_count = sum(
-        1 for lnk in pdf_extracted_links if lnk.get("link_type") == "youtube_playlist"
-    )
+    pdf_extracted_links = PDFExtractedLinks(pdf_extracted_links)
+    pdf_playlists_count = len(pdf_extracted_links.youtube_playlists)
+    pdf_telegram_count = len(pdf_extracted_links.telegram_links)
+    pdf_gdrive_count = len(pdf_extracted_links.gdrive_links)
+    pdf_soundcloud_count = len(pdf_extracted_links.soundcloud_links)
     archive_audio_count = sum(item.get("audio_files_count", 0) for item in archive_items)
 
     stats = {
@@ -3589,6 +4304,9 @@ def build_canonical_raw_json(
         "archive_recovered_missing_episodes_count": cross_source_stats["archive_recovered_missing_episodes_count"],
         "pdf_links_count": len(pdf_extracted_links),
         "pdf_playlists_count": pdf_playlists_count,
+        "pdf_telegram_links_count": pdf_telegram_count,
+        "pdf_gdrive_links_count": pdf_gdrive_count,
+        "pdf_soundcloud_links_count": pdf_soundcloud_count,
         "books_count": len(books),
         "matched_series_to_books_count": matched_series_count,
         "total_duration_s": total_dur_s,
@@ -3616,6 +4334,7 @@ def build_canonical_raw_json(
         "videos": videos_list,
         "archive_items": archive_items,
         "pdf_extracted_links": pdf_extracted_links,
+        "pdf_extracted_links_by_platform": pdf_extracted_links.to_structured_dict(),
         "books": books,
         "stats": stats,
         "raw_playlists_count": official_playlists_count,
@@ -3635,6 +4354,7 @@ def discover_person(
     youtube_urls: list[str] | None = None,
     archive_ids: list[str] | None = None,
     index_pdfs: list[str | Path] | None = None,
+    pdf_paths: list[str | Path] | None = None,
     books_json: str | Path | None = None,
     offline_fixture: str | Path | dict[str, Any] | list[str | Path | dict[str, Any]] | None = None,
     shamela_db_dir: str | Path | None = None,
@@ -3687,7 +4407,8 @@ def discover_person(
                 extra_books.extend(b_data["books"])
 
     # 3. Extract links from index PDFs (e.g. Jamharat A'mal)
-    for pdf_file in index_pdfs or []:
+    all_pdf_inputs = list(index_pdfs or []) + list(pdf_paths or [])
+    for pdf_file in all_pdf_inputs:
         extracted = extract_links_from_pdf(pdf_file, resolve_redirects=resolve_redirects)
         pdf_links.extend(extracted)
         for lnk in extracted:
