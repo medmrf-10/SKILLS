@@ -263,7 +263,8 @@ def build_prompt(audio_filename, sheikh='', series='', title='', part_idx=None, 
         f"اقرأ الملف الصوتي @{audio_filename} مباشرة عبر أداة view_file فقط "
         "(يُمنع منعاً باتاً استخدام run_command أو read_url أو search_web أو بايثون أو whisper)."
         f"{chunk_note} "
-        "هذا تسجيل صوتي لمحاضرة علمية عربية. اكتب التفريغ النصي الكامل والحرفي بالعربية "
+        "سياق أكاديمي بحثي: هذا تسجيل صوتي لمحاضرة علمية/تاريخية/تراثية عربية لأغراض الأرشفة والفهرسة النصية الحرفية فقط. "
+        "اكتب التفريغ النصي الكامل والحرفي بالعربية "
         "مع علامات الترقيم وفواصل الفقرات من أول ثانية إلى آخر ثانية في الملف. "
         "أخرج النص العربي فقط بلا أي تعليق أو مقدمة أو خاتمة. "
         "لا تلخّص، ولا تعيد أي جملة مرتين، ولا تكتب حواراً وهمياً."
@@ -439,7 +440,14 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
     if stagger_s > 0:
         time.sleep(stagger_s)
     cur_model = model or 'gemini-3.8-flash-high'
-    audio_fallbacks = ['gemini-3.8-flash-high', 'gemini-3-flash-preview', 'gemini-2.5-flash']
+    audio_fallbacks = [
+        'gemini-3.8-flash-high',
+        'gemini-4-argon-high',
+        'gemini-3.8-flash-medium',
+        'gemini-4-argon-medium',
+        'gemini-3.8-flash-low',
+    ]
+    tried_models = {cur_model}
     for attempt in range(1, retries + 1):
         if sem is not None:
             sem.acquire()
@@ -488,7 +496,7 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                     if not has_rep_loop and 'use-policy' not in raw_out.lower() and words <= max_words_cap and (
                         (ar_chars >= min_ar and words >= min_words)
                         or (attempt >= 2 and res.returncode == 0 and ar_chars >= 60 and words >= 15)
-                        or (dur_s > 0 and dur_s < 60.0 and attempt >= 2 and res.returncode == 0 and ar_chars >= 25 and words >= 6)
+                        or (dur_s > 0 and dur_s < 60.0 and res.returncode == 0 and ar_chars >= 20 and words >= 5)
                     ):
                         return cleaned.strip(), elapsed
                     sample = (cleaned[:180] if cleaned else ((res.stderr or '') + ' ' + (res.stdout or ''))[-240:]).replace('\n', ' ')
@@ -496,11 +504,12 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                         attempt, retries, cur_model, res.returncode, words, min_words, max_words_cap, has_rep_loop, ar_chars, sample
                     ), flush=True)
                     err_low = (raw_out + ' ' + (res.stderr or '') + ' ' + (res.stdout or '')).lower()
-                    if any(k in err_low for k in ('unsupported mime type', 'use-policy', 'policies.google.com', 'cannot fulfill')) or (res.returncode == 0 and words == 0):
+                    if any(k in err_low for k in ('unsupported mime type', 'use-policy', 'policies.google.com', 'cannot fulfill', 'invalid model')) or (res.returncode == 0 and words == 0):
                         for fb in audio_fallbacks:
-                            if fb != cur_model:
+                            if fb not in tried_models:
                                 print('  [تبديل تلقائي للنموذج] تعثر/رفض سياسة في %s ⇒ التحويل إلى %s' % (cur_model, fb), flush=True)
                                 cur_model = fb
+                                tried_models.add(fb)
                                 break
                 except subprocess.TimeoutExpired:
                     print('  [محاولة %d/%d] انتهت مهلة agy (%dث)' % (attempt, retries, timeout_s), flush=True)
