@@ -243,4 +243,29 @@
 6. **ترقية `test_curation_v2_gates.py` إلى `5-Layer Quality Gate` (`v2.3`):**
    - إضافة `Gate 5: Multi-Part Same-Episode Grouping, Scholar-Token Isolation & Category Inference Gate` والتحقق من اجتياز البوابات الخمس جميعاً بنجاح **`PASS (0 errors)`**.
 
+---
 
+## الدورة 14 (`2026-10-18 20:21 +02:00`) — فحص وتطوير `person-to-knowledge-orchestrator` (الجولة الثانية `v2.1`: الفهرسة التزايدية الذكية `Incremental Delta Ingestion` وإبطال التخزين المؤقت الانتقائي، وإعادة استخدام استخراجات الدروس وتضمينات `Gemma-2`، والتقرير الشامل للتغطية والتثليث المتني)
+
+### 1. حالة خط الإنتاج الحي (`Mac + VPS`)
+- **محاذاة الصوت والنص (`Mac M1 Pro`):** `660` درس مكتمل (`458.05` ساعة صوتية، `3,059,113` كلمة محاذاة) بسرعة `44.8x` من الزمن الحقيقي (`avg_rtf: 0.0223`)، آخر درس مكتمل: `ahmed-alsayed__s064__005_sKBwC3pncjs`.
+- **التفريغ الصوتي (`hermes-vps`):** خدمة `transcribe-smallest-first.service` نشطة (`15` سلسلة مكتملة في هذه الدفعة من أصل `71`، والذاكرة المتاحة `5,408 MB`، والسلاسل النشطة: `ayman__s004`، `dedew__sharh_jami_adab`، `shaarawy__s018`، `samarrai__s060`).
+
+### 2. البيانات الحقيقية التي جُرِّبت عليها مهارة `person-to-knowledge-orchestrator`
+- جرد الشيخ محمد الحسن الددو (`/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/dedew_raw.json`) مع المزامنة الحية لسلسلة `daddo/sharh_manzouma_adoudiya` من خادم `hermes-vps` بعد اكتمال تفريغ الدرسين الجديدين (`002_mD2uoA578qo.txt` و`003_Bd3kSlIS-RY.txt`) لترتفع السلسلة من `3` دروس (`004..006`) إلى `5` دروس (`002..006`)، بالإضافة إلى الربط التلقائي مع كتاب الشاملة (`book:7699` «سلسلة الأسماء والصفات»).
+
+### 3. العلل الواقعية المكتشفة والمُعالجة جذرياً (5 علل)
+1. **عمى وضع الاستئناف (`--resume`) عن اكتشاف الدروس المفرغة حديثاً أو ملفات المحاذاة الحقيقية `.align.json` أو الكتب المضافة (`Resume Delta Blindness`):**
+   - **العلة:** كانت `_should_run(stage_num, artifact_path)` تتخطى المراحل `3` و`4` و`5` متى كانت حالتها `"PASS"` في `pipeline_state.json`، كما كانت المرحلة `3A` تتجاهل نسخ ملف `.align.json` الحقيقي القادم من المفرغ الصوتي إذا كان قد وُلِّد سابقاً ملف محاذاة اصطناعي احتياطي (`synthetic`).
+   - **العلاج:** بناء `detect_corpus_delta` و`_inspect_align_file` لمقارنة الدروس المتاحة على القرص وملفات `.align.json` والكتب المكتشفة مقابل قاعدة البيانات `<person_id>_objects.sqlite` وسجل `lesson_manifest` في `.stage3_complete.json`، وإبطال التخزين المؤقت للمراحل `3..5` تلقائياً عند وجود أي فرق (`has_delta == True`) مع ترقية ملفات `.align.json` الاصطناعية إلى محاذاة `CTC` الحقيقية فور توفرها.
+2. **إعادة استخراج وتضمين كامل الدروس والفقرات السابقة عند إضافة درس جديد واحد:**
+   - **العلة:** عند إعادة تشغيل المراحل `4` و`5` لإدراج الدروس الجديدة، كان النظام يعيد حساب التضمينات المتجهية (`768-dim Gemma-2`) لجميع الفقرات والفوائد من الصفر ولا يتحقق من نظافة ملفات `deep_lecture_*_{part_num:03d}.json` للدروس المعدلة.
+   - **العلاج:** بناء `_snapshot_existing_sqlite_embeddings` و`_embed_sqlite_corpus_with_cache` للاحتفاظ بالتضمينات المتجهية الموثقة للفقرات والفوائد غير المتغيرة وإعادة استخدام `deep_lecture_*_{part_num:03d}.json` للدروس الثابتة فقط؛ وفي تجربة الددو الحقيقية (`3 -> 5` دروس) أُعيد استخدام `3` استخراجات دروس و`82` تضمين فقرة و`16` تضمين فائدة علمية بينما اقتصرت المعالجة الجديدة على الدرسين المضافين (`002` و`003`) مع تحقيق `0% char loss` (`199,264 / 199,264` حرفاً).
+3. **ضياع العنوان الأصلي للدرس عند وجود ملف `.meta.json` قادم من خادم التفريغ (`hermes-vps`):**
+   - **العلة:** تحتوي ملفات `<NNN>_<vid>.meta.json` المولدة على `hermes-vps` على إحصاءات التفريغ (`dur_s`, `chars`, `words`, `wpm`, `model`) دون حقول `title` و`video_id` و`part_number`؛ وبسبب شرط `if not target_meta.exists():` بعد نسخ الملف، كان عنوان الدرس الأصلي يسقط من `target_meta` فتظهر الدروس في `SQLite` بعناوين عامة.
+   - **العلاج:** بناء `_merge_canonical_meta` لدمج البيانات المعيارية للدرس (`video_id`, `title`, `part_number`, `series_id`, `speaker`) داخل `target_meta` مع الحفاظ الكامل على إحصاءات `hermes-vps`.
+4. **فشل تحديث `curated.db` بصمت بسبب اختلاف اسم عمود المفتاح الأساسي في جدول `series` وتلوث `base_matn_override` بين السلاسل:**
+   - **العلة:** (أ) في `02_curated/curated.db` يستخدم جدول `series` العمود `id` (`f"{pid}__{sid}"`) وليس `series_id` ولا يضم عمودي `transcribed_count` و`aligned_count`، فكان استعلام `UPDATE series` يرمي `OperationalError` ويمنع تحديث `lessons.has_transcript = 1`؛ (ب) كانت المرحلة `4B` تمرر `shared_base_matn_override` من أول كتاب مستورد لجميع السلاسل بلا تمييز فتطمس أبيات المتن المقتبسة (`«وليس مثله علا شيء ولا»`) في `dedew/s029`.
+   - **العلاج:** ترقية مخطط `curated.db` تلقائياً بعمودي `transcribed_count` و`aligned_count` وتحديث الجدولين `series` و`lessons` بدقة، وربط `selected_matn_override` بكل سلسلة بناءً على التطابق النصي الفعلي مع فقرات الكتاب (`matn_triangulation_count = 102` في تجربة الددو: `48` في الكتاب و`54` في السلسلة الصوتية).
+5. **بناء التقرير الشامل (`_build_comprehensive_coverage_stats`) وإضافة البوابة الخامسة (`Gate 5`) في `test_orchestrator_gates.py`:**
+   - إغناء `orchestration_audit_report.json` و`05_reports/ORCHESTRATION_REPORT.md` بإحصاءات `delta_ingestion` و`comprehensive_coverage` (عدد كتب الشاملة المستوردة، عدد السلاسل المرتبطة بـ `matched_book`، عدد روابط التثليث المتني `matn_triangulation_count`، ونتائج الاسترجاع الهجين الحية من `science_gems`)، وإضافة `Gate 5: Incremental Delta Lesson Ingestion & Resume Cache Invalidation` واجتياز البوابات الخمس جميعاً بنجاح **`PASS (0 errors)`**.

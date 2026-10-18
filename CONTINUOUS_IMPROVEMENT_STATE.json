@@ -1,9 +1,9 @@
 {
   "loop_version": "2.0-subagent-driven",
-  "updated_at": "2026-10-18T19:08:30+02:00",
-  "cycle_count": 10,
-  "next_skill_index": 3,
-  "last_improved_skill": "sheikh-curation",
+  "updated_at": "2026-10-18T20:21:00+02:00",
+  "cycle_count": 14,
+  "next_skill_index": 7,
+  "last_improved_skill": "person-to-knowledge-orchestrator",
   "priority_backlog": [
     {
       "skill": "sheikh-series-pipeline",
@@ -24,14 +24,14 @@
     "agy-lean-cli"
   ],
   "last_completed_cycle": {
-    "cycle": 10,
+    "cycle": 14,
     "skills_tested": [
-      "sheikh-curation"
+      "person-to-knowledge-orchestrator"
     ],
     "real_datasets_used": [
-      "All 17 curated sheikh raw JSON inventories in /Users/macm1pro/REPOS/cheikh/data/curated_sheikhs (*_raw.json, 560+ series, end-to-end discover_person -> auto_curate_person)"
+      "dedew_raw.json + real VPS-synced daddo/sharh_manzouma_adoudiya (incremental 3 -> 5 lessons with newly transcribed 002_mD2uoA578qo.txt & 003_Bd3kSlIS-RY.txt) + Shamela4_Full_DB book 7699"
     ],
-    "bugs_fixed": 6,
+    "bugs_fixed": 5,
     "gate_status": "PASS (0 errors)"
   }
 }

@@ -804,12 +804,381 @@ def test_multi_format_series_and_shamela_jsonl_ingestion(errors: List[str]) -> N
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def test_incremental_delta_ingestion_and_cache_invalidation(errors: List[str]) -> None:
+    """
+    Gate 5: Verifies Incremental / Delta Lesson Ingestion & Resume Cache Invalidation:
+      1. Initial run with 3 lessons (004, 005, 006) + Shamela4 book auto-ingestion.
+      2. No-op resume (`resume=True, incremental=True`) when no files changed skips Stages 3..5.
+      3. Incremental delta run (`resume=True, incremental=True, force=False`) when 2 new lessons
+         (002, 003 with Arabic AI preambles & VPS .meta.json) and 1 real CTC .align.json (upgrading
+         006 from synthetic to real alignment) arrive on disk:
+         - Automatically invalidates and re-runs Stages 3, 4, and 5 while keeping Stages 0..2 cached.
+         - Reuses cached `deep_lecture_*.json` extractions for unchanged lessons (004, 005).
+         - Reuses cached 768-dim L2-normalized embeddings for unchanged passages and science_gems.
+         - Upgrades SQLite from 3 -> 5 lecture lessons with 0% char loss, canonical episode titles,
+           updated `curated.db` `transcribed_count`/`has_transcript`, and enriched `comprehensive_coverage`.
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="test_orchestrator_gate5_"))
+    try:
+        # 1. Create Shamela4 book dir (shamela:7026 - المنظومة العضدية / العقيدة)
+        shamela_db = tmp_dir / "Shamela4_Full_DB"
+        book_dir = shamela_db / "001_العقيدة" / "0007026__شرح_المنظومة_العضدية"
+        book_dir.mkdir(parents=True, exist_ok=True)
+        (book_dir / "book_metadata.json").write_text(
+            json.dumps(
+                {
+                    "shamela_id": 7026,
+                    "title": "شرح المنظومة العضدية",
+                    "author": "الشيخ محمد الحسن الددو",
+                    "category_name": "العقيدة",
+                    "pages_count": 2,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        shamela_pages = [
+            {
+                "id": 1,
+                "vol": "1",
+                "page": 1,
+                "text": (
+                    "بسم الله الرحمن الرحيم. باب تنزيه الباري سبحانه: "
+                    "«وليس مثله علا شيء ولا يشبهه شيء تعالى ذو العلا». "
+                    "القاعدة الكلية أن كل ما خطر ببالك فالله بخلاف ذلك، والضابط العقدي إثبات الصفات بلا تكييف ولا تمثيل."
+                ),
+                "footnote": "",
+            },
+            {
+                "id": 2,
+                "vol": "1",
+                "page": 2,
+                "text": (
+                    "فصل في دلالة الآيات: «وكل نص أوهم التشبيها تأويله أو فوضن تنزيها». "
+                    "الأصل الشرعي عند أهل السنة الجمع بين الإثبات والتنزيه على وفق لسان العرب."
+                ),
+                "footnote": "",
+            },
+        ]
+        (book_dir / "pages.jsonl").write_text(
+            "\n".join(json.dumps(p, ensure_ascii=False) for p in shamela_pages) + "\n",
+            encoding="utf-8",
+        )
+
+        # 2. Create discovery fixture with 5 episodes in playlist (initially only 004, 005, 006 exist on disk)
+        disc_fixture = {
+            "channels": [{"channel_id": "UC_DEDEW_G5", "title": "قناة الشيخ الددو", "url": "https://youtube.com/@dedew"}],
+            "playlists": [
+                {
+                    "id": "PL_ADOUD_G5",
+                    "playlist_id": "PL_ADOUD_G5",
+                    "title": "سلسلة شرح المنظومة العضدية",
+                    "videos": [
+                        {
+                            "vid": "vid_001_init",
+                            "yt_id": "vid_001_init",
+                            "video_id": "vid_001_init",
+                            "title": "شرح المنظومة العضدية - الدرس 1",
+                            "dur_s": 1800,
+                            "duration": 1800,
+                        },
+                        {
+                            "vid": "mD2uoA578qo",
+                            "yt_id": "mD2uoA578qo",
+                            "video_id": "mD2uoA578qo",
+                            "title": "شرح المنظومة العضدية - الدرس 2",
+                            "dur_s": 1950,
+                            "duration": 1950,
+                        },
+                        {
+                            "vid": "Bd3kSlIS-RY",
+                            "yt_id": "Bd3kSlIS-RY",
+                            "video_id": "Bd3kSlIS-RY",
+                            "title": "شرح المنظومة العضدية - الدرس 3",
+                            "dur_s": 2100,
+                            "duration": 2100,
+                        },
+                        {
+                            "vid": "a7X1z6W9qYp",
+                            "yt_id": "a7X1z6W9qYp",
+                            "video_id": "a7X1z6W9qYp",
+                            "title": "شرح المنظومة العضدية - الدرس 4",
+                            "dur_s": 2200,
+                            "duration": 2200,
+                        },
+                        {
+                            "vid": "b8Y2x7V8rZq",
+                            "yt_id": "b8Y2x7V8rZq",
+                            "video_id": "b8Y2x7V8rZq",
+                            "title": "شرح المنظومة العضدية - الدرس 5",
+                            "dur_s": 2300,
+                            "duration": 2300,
+                        },
+                        {
+                            "vid": "c9Z3y8U7sAr",
+                            "yt_id": "c9Z3y8U7sAr",
+                            "video_id": "c9Z3y8U7sAr",
+                            "title": "شرح المنظومة العضدية - الدرس 6",
+                            "dur_s": 2400,
+                            "duration": 2400,
+                        },
+                    ],
+                }
+            ],
+            "videos": [],
+            "archive_items": [],
+            "books": [
+                {
+                    "book_id": "shamela:7026",
+                    "title": "شرح المنظومة العضدية",
+                    "author": "الشيخ محمد الحسن الددو",
+                    "science": "العقيدة",
+                }
+            ],
+        }
+        disc_path = tmp_dir / "dedew_g5_disc.json"
+        disc_path.write_text(json.dumps(disc_fixture, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        ext_series_root = tmp_dir / "ytb_daddo"
+        s_dir = ext_series_root / "sharh_manzouma_adoudiya"
+        s_dir.mkdir(parents=True, exist_ok=True)
+        (s_dir / "_meta.json").write_text(
+            json.dumps({"series_name": "شرح المنظومة العضدية", "playlist_id": "PL_ADOUD_G5"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        # Initial 3 lessons: 004 and 005 have real CTC .align.json + VPS .meta.json (without title); 006 has only .txt
+        txt_004 = (
+            "بسم الله الرحمن الرحيم، الحمد لله رب العالمين، وصلى الله وسلم على نبينا محمد. "
+            "في هذا الدرس الرابع من شرح المنظومة العضدية نشرح قول الناظم رحمه الله: "
+            "«وليس مثله علا شيء ولا يشبهه شيء تعالى ذو العلا». "
+            "قال الإمام مالك والشافعي في المدينة المنورة: القاعدة الكلية أن كل ما خطر ببالك فالله بخلاف ذلك، والضابط العقدي إثبات الصفات بلا تكييف ولا تمثيل. "
+            "قال الله تعالى: ﴿لَيْسَ كَمِثْلِهِ شَيْءٌ وَهُوَ السَّمِيعُ الْبَصِيرُ﴾.\n"
+        )
+        txt_005 = (
+            "بسم الله الرحمن الرحيم، الحمد لله والصلاة والسلام على رسول الله. "
+            "في هذا الدرس الخامس من شرح المنظومة العضدية نشرح قول المصنف رحمه الله: "
+            "«وكل نص أوهم التشبيها تأويله أو فوضن تنزيها». "
+            "قال الإمام مالك بن أنس والشافعي وأحمد بن حنبل: الأصل الشرعي عند أهل السنة الجمع بين الإثبات والتنزيه على وفق لسان العرب. "
+            "قال الله تعالى: ﴿وَمَا آتَاكُمُ الرَّسُولُ فَخُذُوهُ وَمَا نَهَاكُمْ عَنْهُ فَانْتَهُوا﴾.\n"
+        )
+        txt_006 = (
+            "بسم الله الرحمن الرحيم، الحمد لله رب العالمين. "
+            "في هذا الدرس السادس من شرح المنظومة العضدية نختم شرح قول المصنف: "
+            "«وليس مثله علا شيء ولا يشبهه شيء تعالى ذو العلا» "
+            "وبيان أنه المحكم الذي ترد إليه سائر المتشابهات في باب الأسماء والصفات عند الإمام مالك والشافعي في المدينة المنورة. "
+            "قال الله تعالى: ﴿وَأَقِيمُوا الصَّلَاةَ وَآتُوا الزَّكَاةَ﴾.\n"
+        )
+        (s_dir / "004_a7X1z6W9qYp.txt").write_text(txt_004, encoding="utf-8")
+        (s_dir / "004_a7X1z6W9qYp.align.json").write_text(
+            json.dumps({"w": [[w, idx * 0.5, idx * 0.5 + 0.4] for idx, w in enumerate(txt_004.split(), 1)]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (s_dir / "004_a7X1z6W9qYp.meta.json").write_text(
+            json.dumps({"dur_s": 2200, "chars": len(txt_004), "words": len(txt_004.split()), "ok": True}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        (s_dir / "005_b8Y2x7V8rZq.txt").write_text(txt_005, encoding="utf-8")
+        (s_dir / "005_b8Y2x7V8rZq.align.json").write_text(
+            json.dumps({"w": [[w, idx * 0.5, idx * 0.5 + 0.4] for idx, w in enumerate(txt_005.split(), 1)]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (s_dir / "005_b8Y2x7V8rZq.meta.json").write_text(
+            json.dumps({"dur_s": 2300, "chars": len(txt_005), "words": len(txt_005.split()), "ok": True}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        (s_dir / "006_c9Z3y8U7sAr.txt").write_text(txt_006, encoding="utf-8")
+
+        quota_mock = {
+            "models": [
+                {
+                    "label": "Gemini 3.8 Flash (High)",
+                    "remainingPercentage": 0.92,
+                    "timeUntilResetMs": 3600000,
+                    "isExhausted": False,
+                }
+            ]
+        }
+        work_dir = tmp_dir / "work"
+
+        # --- RUN 1: Initial 3-lesson orchestration ---
+        rep1 = orch.orchestrate_person(
+            name="الشيخ محمد الحسن الددو",
+            person_id="dedew_gate5",
+            work_dir=work_dir,
+            offline_fixture=str(disc_path),
+            series_transcripts_dir=ext_series_root,
+            shamela_db_dir=shamela_db,
+            auto_ingest_shamela_books=True,
+            quota_override=quota_mock,
+            embedding_backend="deterministic-arabic-mps",
+            embedding_dim=768,
+            resume=True,
+            incremental=True,
+        )
+        if rep1.get("overall_status") != "PASS":
+            errors.append(f"[Gate5] Run 1 expected PASS, got {rep1.get('overall_status')}")
+
+        s2_ts_run1 = rep1["stages"]["2"]["completed_at"]
+        s3_ts_run1 = rep1["stages"]["3"]["completed_at"]
+        s4_ts_run1 = rep1["stages"]["4"]["completed_at"]
+
+        # Verify canonical episode title was merged into 004_a7X1z6W9qYp.meta.json despite VPS .meta.json
+        ext_meta_004 = json.loads(
+            (work_dir / "dedew_gate5" / "03_extracted" / "series" / "dedew_gate5" / "s001" / "004_a7X1z6W9qYp.meta.json").read_text(encoding="utf-8")
+        )
+        if ext_meta_004.get("title") != "شرح المنظومة العضدية - الدرس 4" or ext_meta_004.get("dur_s") != 2200:
+            errors.append(f"[Gate5] Expected merged canonical title + VPS dur_s in 004.meta.json, got {ext_meta_004}")
+
+        # Verify 006 initially received a synthetic .align.json
+        align_006_path = work_dir / "dedew_gate5" / "03_extracted" / "series" / "dedew_gate5" / "s001" / "006_c9Z3y8U7sAr.align.json"
+        _, is_real_006_run1, _ = orch._inspect_align_file(align_006_path)
+        if is_real_006_run1:
+            errors.append("[Gate5] Expected 006.align.json in Run 1 to be synthetic before real CTC alignment arrives")
+
+        # --- RUN 2: No-op resume when nothing changed on disk ---
+        rep2 = orch.orchestrate_person(
+            name="الشيخ محمد الحسن الددو",
+            person_id="dedew_gate5",
+            work_dir=work_dir,
+            offline_fixture=str(disc_path),
+            series_transcripts_dir=ext_series_root,
+            shamela_db_dir=shamela_db,
+            auto_ingest_shamela_books=True,
+            quota_override=quota_mock,
+            embedding_backend="deterministic-arabic-mps",
+            embedding_dim=768,
+            resume=True,
+            incremental=True,
+        )
+        if rep2.get("delta_ingestion", {}).get("has_delta") is not False:
+            errors.append(f"[Gate5] Run 2 (no-op) expected has_delta == False, got {rep2.get('delta_ingestion')}")
+        if rep2["stages"]["3"]["completed_at"] != s3_ts_run1 or rep2["stages"]["4"]["completed_at"] != s4_ts_run1:
+            errors.append("[Gate5] Run 2 (no-op) unexpectedly re-ran Stage 3 or Stage 4")
+
+        # --- RUN 3: Incremental Delta Arrival (2 new lessons 002, 003 + 1 real CTC alignment for 006) ---
+        txt_002_raw = (
+            "تفضل، إليك تفريغ النص المسموع كاملاً كما ورد دون اختصار:\n"
+            "بسم الله الرحمن الرحيم، الحمد لله رب العالمين. في هذا المجلس الثاني نشرح قول المصنف رحمه الله: "
+            "«وليس مثله علا شيء ولا يشبهه شيء تعالى ذو العلا». "
+            "قال الإمام مالك والشافعي في المدينة المنورة: القاعدة الأصولية أن الكلام في الصفات فرع عن الكلام في الذات. "
+            "قال الله تعالى: ﴿لَيْسَ كَمِثْلِهِ شَيْءٌ وَهُوَ السَّمِيعُ الْبَصِيرُ﴾.\n"
+            "آمل أن يكون هذا التفريغ مفيداً وواضحاً."
+        )
+        txt_003_raw = (
+            "إليك النص المفرغ بدقة:\n"
+            "بسم الله الرحمن الرحيم، الحمد لله رب العالمين. في الدرس الثالث نبين قول المصنف: "
+            "«وكل نص أوهم التشبيها تأويله أو فوضن تنزيها». "
+            "قال الإمام مالك بن أنس والشافعي: الضابط عند المحققين أن التنزيه مقدم على كل وهم تمثيلي. "
+            "قال الله تعالى: ﴿وَأَقِيمُوا الصَّلَاةَ وَآتُوا الزَّكَاةَ﴾.\n"
+        )
+        (s_dir / "002_mD2uoA578qo.txt").write_text(txt_002_raw, encoding="utf-8")
+        (s_dir / "002_mD2uoA578qo.meta.json").write_text(
+            json.dumps({"dur_s": 1950, "chars": len(txt_002_raw), "ok": True}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (s_dir / "003_Bd3kSlIS-RY.txt").write_text(txt_003_raw, encoding="utf-8")
+        (s_dir / "003_Bd3kSlIS-RY.meta.json").write_text(
+            json.dumps({"dur_s": 2100, "chars": len(txt_003_raw), "ok": True}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        # Real CTC alignment arrives for 006 (no "synthetic" flag)
+        (s_dir / "006_c9Z3y8U7sAr.align.json").write_text(
+            json.dumps({"w": [[w, idx * 0.45, idx * 0.45 + 0.35] for idx, w in enumerate(txt_006.split(), 1)]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        rep3 = orch.orchestrate_person(
+            name="الشيخ محمد الحسن الددو",
+            person_id="dedew_gate5",
+            work_dir=work_dir,
+            offline_fixture=str(disc_path),
+            series_transcripts_dir=ext_series_root,
+            shamela_db_dir=shamela_db,
+            auto_ingest_shamela_books=True,
+            quota_override=quota_mock,
+            embedding_backend="deterministic-arabic-mps",
+            embedding_dim=768,
+            resume=True,
+            incremental=True,
+            force=False,
+        )
+        delta3 = rep3.get("delta_ingestion", {})
+        if not delta3.get("has_delta") or not delta3.get("is_incremental_update"):
+            errors.append(f"[Gate5] Run 3 expected has_delta=True & is_incremental_update=True, got {delta3}")
+        if int(delta3.get("new_lessons_count", 0)) != 2:
+            errors.append(f"[Gate5] Run 3 expected new_lessons_count == 2, got {delta3.get('new_lessons_count')}")
+        if int(delta3.get("updated_alignments_count", 0)) != 1:
+            errors.append(f"[Gate5] Run 3 expected updated_alignments_count == 1, got {delta3.get('updated_alignments_count')}")
+
+        # Stage 2 should remain cached from Run 1, while Stages 3 & 4 must have re-run
+        if rep3["stages"]["2"]["completed_at"] != s2_ts_run1:
+            errors.append("[Gate5] Run 3 should have kept Stage 2 cached")
+        stage4_metrics = rep3["stages"]["4"]["metrics"]
+        if int(stage4_metrics.get("reused_cached_lecture_extractions", 0)) != 2:
+            errors.append(
+                f"[Gate5] Run 3 expected reused_cached_lecture_extractions == 2 (for 004 & 005), got {stage4_metrics.get('reused_cached_lecture_extractions')}"
+            )
+        if int(stage4_metrics.get("newly_extracted_lectures", 0)) != 3:
+            errors.append(
+                f"[Gate5] Run 3 expected newly_extracted_lectures == 3 (002, 003, and re-aligned 006), got {stage4_metrics.get('newly_extracted_lectures')}"
+            )
+
+        embed_stats3 = rep3["stages"]["5"]["metrics"].get("embed_stats", {})
+        if int(embed_stats3.get("reused_cached_passages", 0)) < 3 or int(embed_stats3.get("newly_embedded_passages", 0)) < 2:
+            errors.append(f"[Gate5] Run 3 expected embedding cache reuse + delta embedding, got {embed_stats3}")
+
+        # Verify 006.align.json in 03_extracted is now real (not synthetic)
+        _, is_real_006_run3, _ = orch._inspect_align_file(align_006_path)
+        if not is_real_006_run3:
+            errors.append("[Gate5] Expected 006.align.json in 03_extracted to be upgraded to real CTC alignment in Run 3")
+
+        # Verify SQLite has 5 lecture lessons, 0% char loss, and curated.db has transcribed_count == 5
+        db_path = work_dir / "dedew_gate5" / "04_knowledge_db" / "dedew_gate5_objects.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.cursor()
+            lec_parts = cur.execute(
+                "SELECT lp.part_number, lp.title FROM lessons_or_parts lp "
+                "JOIN sources s ON lp.source_id = s.source_id "
+                "WHERE s.source_type = 'lecture_series' ORDER BY lp.part_number"
+            ).fetchall()
+            if len(lec_parts) != 5 or [r[0] for r in lec_parts] != [2, 3, 4, 5, 6]:
+                errors.append(f"[Gate5] Expected 5 lecture parts [2,3,4,5,6] in SQLite after delta, got {lec_parts}")
+        finally:
+            conn.close()
+
+        cur_db_path = work_dir / "dedew_gate5" / "02_curated" / "curated.db"
+        c_conn = sqlite3.connect(str(cur_db_path))
+        try:
+            tc_val = c_conn.execute("SELECT transcribed_count FROM series WHERE id = 'dedew_gate5__s001'").fetchone()
+            ht_cnt = c_conn.execute("SELECT COUNT(*) FROM lessons WHERE has_transcript = 1").fetchone()[0]
+            if not tc_val or int(tc_val[0]) != 5 or int(ht_cnt) != 5:
+                errors.append(f"[Gate5] Expected curated.db series.transcribed_count=5 and 5 lessons with has_transcript=1, got tc={tc_val}, ht={ht_cnt}")
+        finally:
+            c_conn.close()
+
+        cov3 = rep3.get("comprehensive_coverage", {})
+        if (
+            int(cov3.get("shamela_books_imported_count", 0)) < 1
+            or int(cov3.get("matn_triangulation_count", 0)) < 3
+            or len(cov3.get("science_gems_retrieval_results", [])) < 1
+        ):
+            errors.append(f"[Gate5] Expected comprehensive_coverage with Shamela books, matn_triangulation >= 3, and gem retrieval hits, got {cov3}")
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def main() -> int:
     errors: List[str] = []
     print("=== Running person-to-knowledge-orchestrator End-to-End & Gate Tests ===")
     test_e2e_full_6_stage_pipeline(errors)
     test_hard_gates_block_corrupt_inputs(errors)
     test_multi_format_series_and_shamela_jsonl_ingestion(errors)
+    test_incremental_delta_ingestion_and_cache_invalidation(errors)
 
     if errors:
         print(f"FAIL ({len(errors)} errors):")
@@ -825,6 +1194,7 @@ def main() -> int:
     print("  [PASS] Stage 5 (Gate G5): Dual-vector 768-dim Gemma-2 embeddings & HybridSearchEngine verified")
     print("  [PASS] Hard Gate Blocking (G0..G5 negative corruption rejection) & Checkpoint Resume verified")
     print("  [PASS] Gate 4: Multi-Format Real Series & Shamela4 JSONL Book Auto-Ingestion verified")
+    print("  [PASS] Gate 5: Incremental Delta Lesson Ingestion & Resume Cache Invalidation verified")
     print("PASS (0 errors)")
     return 0
 

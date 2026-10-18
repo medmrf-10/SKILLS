@@ -128,13 +128,14 @@ python3 /Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/or
   --book-input "/path/to/extracted_book_dir_or_json" \
   --embedding-backend "deterministic"
 
-# Resume from a specific stage (or automatically skip already-passed stages)
+# Resume from a specific stage (or automatically detect delta lessons/alignments/books and re-index)
 python3 /Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/orchestrate_person.py \
-  --name "الشيخ سعيد الكملي" \
-  --person-id "kamali" \
+  --name "الشيخ محمد الحسن الددو" \
+  --person-id "dedew" \
   --work-dir "/tmp/orchestrator_workspace" \
-  --from-stage 4 \
-  --to-stage 5
+  --offline-fixture "/path/to/dedew_raw.json" \
+  --series-transcripts-dir "/path/to/ytb/daddo" \
+  --resume --incremental
 ```
 
 ### Key CLI Flags
@@ -146,8 +147,13 @@ python3 /Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/or
 - `--book-input`: Repeatable path(s) to PDF extraction outputs, Shamela4 book directories (`pages.jsonl`), standalone `.jsonl` files, or `.json` payloads to process in Stage 3B.
 - `--shamela-db-dir` / `--no-auto-shamela-books` / `--max-auto-books`: Configure automatic resolution and ingestion of discovered Shamela4 books from `/Users/macm1pro/REPOS/swe/Shamela4_Full_DB`.
 - `--from-stage` / `--to-stage`: Run a specific slice of stages (`0`..`5`).
-- `--resume` / `--force`: `--resume` (default) skips stages already marked `"PASS"` in `pipeline_state.json`; `--force` re-runs all requested stages from scratch.
-- `--embedding-backend`: `"auto"`, `"sentence-transformers"`, or `"deterministic"`.
+- `--resume` / `--incremental` / `--no-incremental` / `--force`: `--resume` (default) skips stages already marked `"PASS"` in `pipeline_state.json`, except when `--incremental` (default) detects newly added/modified lesson `.txt` files, newly arrived real CTC `.align.json` files (replacing synthetic fallbacks), or newly added books compared against `<person_id>_objects.sqlite` and `.stage3_complete.json`. When a delta is detected, Stages 3, 4, and 5 are automatically invalidated and re-run while reusing cached `deep_lecture_*.json` extractions and cached 768-dim embeddings (`passage_embeddings`, `gem_embeddings`) for unchanged items.
+- `--embedding-backend`: `"auto"`, `"sentence-transformers"`, `"deterministic"`, or `"deterministic-arabic-mps"`.
+
+### Comprehensive Audit & Coverage Reporting (`05_reports/`)
+Both `orchestration_audit_report.json` and `05_reports/ORCHESTRATION_REPORT.md` include:
+1. **`delta_ingestion`**: `has_delta`, `is_incremental_update`, `db_lessons_count`, `available_txt_count`, `available_real_align_count`, `new_lessons`, `modified_lessons`, `updated_alignments`, and `new_books`.
+2. **`comprehensive_coverage`**: `shamela_books_imported_count`, `imported_books_details`, `matched_book_series_count`, `transcribed_matched_book_series_count`, `matn_triangulation_count`, `matn_triangulation_by_source_type`, `science_gems_count`, and live `science_gems_retrieval_results`.
 
 ---
 
