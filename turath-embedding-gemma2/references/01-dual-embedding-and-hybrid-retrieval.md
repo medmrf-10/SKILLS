@@ -48,9 +48,9 @@
 
 ---
 
-## 3. أوزان الدمج الهجين ومعادلة `Reciprocal Rank Fusion (RRF)`
+## 3. أوزان الدمج الهجين وتعزيز القواعد العلمية (`Gem Boost`) ومعادلة `Reciprocal Rank Fusion (RRF)`
 
-يحسب محرك `HybridSearchEngine` في `scripts/hybrid_search.py` ثلاث درجات أولية لكل مقطع مرشح $d$ بعد تطبيق الفلاتر العلائقية:
+يحسب محرك `HybridSearchEngine` في `scripts/hybrid_search.py` أربع درجات أولية لكل مقطع مرشح $d$ بعد تطبيق الفلاتر العلائقية:
 
 1. **درجة تشابه المتن (`score_matn`):**
    $$S_{\text{matn}}(q, d) = \max\left(0, \langle \hat{v}_{\text{query}}(q), \hat{v}_{\text{matn}}(d) \rangle\right)$$
@@ -59,27 +59,30 @@
 3. **درجة المطابقة المعجمية (`score_fts`):**
    تُستخرج من `bm25(passages_fts)` مع التطبيع على المجال $[0, 1]$ عبر:
    $$S_{\text{fts}}(q, d) = \frac{|\text{bm25}(d)|}{\max_{d'} |\text{bm25}(d')| + \epsilon}$$
+4. **درجة تشابه القواعد العلمية المستخرجة (`max_gem_sim` / `score_gem`):**
+   تُحسب من جدول `gem_embeddings` بأخذ أعلى تشابه بين متجه الاستعلام ومتجهات القواعد العلمية $g \in \text{Gems}(d)$ المستخرجة من المقطع $d$:
+   $$S_{\text{gem}}(q, d) = \max_{g \in \text{Gems}(d)} \text{Sim}_{\text{mode}}(q, g)$$
 
-ثم تُدمج القنوات الثلاث باستخدام مزيج متوازن من **المجموع الموزون للدرجات (`Weighted Score`)** و**دمج الرتب المتبادلة (`Reciprocal Rank Fusion — RRF`)**:
+ثم تُدمج القنوات باستخدام مزيج متوازن من **المجموع الموزون للدرجات (`Weighted Score`)** و**دمج الرتب المتبادلة (`Reciprocal Rank Fusion — RRF`)** و**تعزيز القواعد العلمية (`Gem Vector Boost`, افتراضياً $\beta_{\text{gem}} = 0.28$)**:
 
 $$\text{RRF}(q, d) = \sum_{c \in \{\text{matn}, \text{concept}, \text{fts}\}} \frac{\alpha_c}{k + \text{rank}_c(d)} \quad (k = 60)$$
 
-$$\text{HybridScore}(q, d) = 0.70 \times \left(\alpha_{\text{matn}} S_{\text{matn}} + \alpha_{\text{concept}} S_{\text{concept}} + \alpha_{\text{fts}} S_{\text{fts}}\right) + 0.30 \times k \times \text{RRF}(q, d)$$
+$$\text{HybridScore}(q, d) = 0.70 \times \left(\alpha_{\text{matn}} S_{\text{matn}} + \alpha_{\text{concept}} S_{\text{concept}} + \alpha_{\text{fts}} S_{\text{fts}}\right) + 0.30 \times k \times \text{RRF}(q, d) + \beta_{\text{gem}} S_{\text{gem}}(q, d) + \frac{0.08 \times k}{k + \text{rank}_{\text{gem}}(d)}$$
 
 ### جدول أوضاع الأوزان القياسية (`Weight Profiles`):
 
 | وضع الاسترجاع (`Search Mode`) | `--alpha-matn` | `--alpha-concept` | `--alpha-fts` | الاستخدام الأمثل |
 | :--- | :---: | :---: | :---: | :--- |
-| **الوضع الهجين المتوازن (`hybrid` — الافتراضي)** | `0.35` | `0.45` | `0.20` | البحث العام الذي يجمع بين الفهم المفهومي والدقة الحرفية. |
+| **الوضع الهجين المتوازن (`hybrid` — الافتراضي)** | `0.35` | `0.45` | `0.20` | البحث العام الذي يجمع بين الفهم المفهومي والدقة الحرفية وتعزيز القواعد. |
 | **وضع المتن الصرف (`matn`)** | `1.00` | `0.00` | `0.00` | البحث بعبارة تراثية، نص حديث، أو اقتباس مباشر من المتن. |
 | **وضع المفهوم الصرف (`concept`)** | `0.00` | `1.00` | `0.00` | البحث بسؤال معاصر، مسألة تحليلية، أو مصطلح فقهي/عقدي حديث. |
 | **وضع المطابقة النصية الدلالية (`lexical-heavy`)** | `0.40` | `0.20` | `0.40` | التحقق من ورود ألفاظ معينة مع مراعاة السياق الدلالي للمتن. |
 
 ---
 
-## 4. جداول الفلترة العلائقية بالكيانات (`Relational Entity Filter Matrix`)
+## 4. جداول الفلترة العلائقية بالكيانات وتثليث الشروح (`Relational Entity Filter & Triangulation Matrix`)
 
-تُنفَّذ الفلاتر العلائقية في `scripts/hybrid_search.py` كشروط `SQL` حتمية تقيد مجموعة المقاطع المرشحة (`Candidate Passages`) قبل حساب الترتيب النهائي:
+تُنفَّذ الفلاتر العلائقية في `scripts/hybrid_search.py` كشروط حتمية تقيد مجموعة المقاطع أو القواعد المرشحة (`Candidate Passages / Gems`) قبل حساب الترتيب النهائي:
 
 | خيار الفلتر (`CLI / API`) | الجدول العلائقي المستهدف | الشرط العلائقي الدقيق (`SQL Predicate`) | الغاية المعرفية |
 | :--- | :--- | :--- | :--- |
@@ -89,7 +92,7 @@ $$\text{HybridScore}(q, d) = 0.70 \times \left(\alpha_{\text{matn}} S_{\text{mat
 | `--year-min <H>`<br/>`--year-max <H>` | `events_chronology` | `ec.event_layer = 'historical' AND ec.year_hijri >= ? AND ec.year_hijri <= ?` | الفلترة الزمنية الدقيقة بالقرون والسنوات الهجرية مع عزل تواريخ نسخ المخطوطات (`transmission`). |
 | `--surah <N>`<br/>`--ayah <S:A>` | `evidences` | `ev.surah_number = ?` أو `(ev.surah_ayah_key = ? OR (ev.surah_number = ? AND ev.ayah_start <= ? AND ev.ayah_end >= ?))` | استرجاع جميع المقاطع والشروح التي تستدل بآية قرآنية محددة. |
 | `--science <science>`<br/>`--source-type <type>` | `sources` | `s.science = ? AND s.source_type = ?` | حصر البحث في علم محدد (`maliki`, `akida`, `ossoul`...) أو نوع مصدر (`book`, `lecture`, `course`). |
-| `--matn-clause <id>` | `matn_triangulation` | `mt.explained_matn_clause_id = ?` | استرجاع جميع شروح فقرة متن معينة (مثل `"UB:2"` في أم البراهين أو `"AKH:1"` في الأخضري) عبر الكتب والدروس الصوتية. |
+| `--matn-clause <id_or_text>`<br/>`--target cross_commentary` | `matn_triangulation` + `passages` | `LOWER(mt.explained_matn_clause_id) = ?` أو تطابق `NORM_AR(mt.explained_matn_verbatim)` | استرجاع جميع شروح فقرة متن معينة (مثل `"UB:2"` أو `"AKH:2"` أو نص المتن نفسه) عبر الكتب (`page_num`) والدروس الصوتية (`start_sec`, `youtube_timestamp_url`) وإرجاع نظائرها في `related_commentaries`. |
 
 ---
 

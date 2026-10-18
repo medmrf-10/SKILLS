@@ -663,6 +663,273 @@ def build_gate4_real_lecture_db(db_path: Path) -> None:
         conn.close()
 
 
+def build_gate5_gems_and_triangulation_db(db_path: Path) -> None:
+    """
+    يبني قاعدة بيانات Gate 5 لاختبار:
+    1. البحث المباشر في القواعد العلمية (search_gems) وتعزيز المقاطع بتشابه القواعد (gem_embeddings boost / max_gem_sim).
+    2. التثليث متعدد المصادر عبر الشروح (Cross-Source Matn Triangulation: كتاب محقق + درسان صوتيان لشيخين مختلفين
+       يشرحان نفس فقرة المتن AKH:2 عبر explained_matn_clause_id وعبر تطابق نص المتن explained_matn_verbatim).
+    3. فلترة الحقبة التاريخية (--year-min / --year-max) مع عزل تواريخ النسخ (event_layer='transmission') وفلترة العلم (--science).
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(SCHEMA_DDL)
+        conn.executemany(
+            "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("book_akhdari_sharh", "book", "منح الجليل وتقريب مختصر الأخضري", "الشيخ محمد عليش المالكي", "maliki", "normative", "{}"),
+                ("lec_mubarak_akhdari", "lecture", "شرح متن الأخضري في الفقه المالكي", "الشيخ عبد الحميد آل مبارك", "maliki", "spoken_lecture", "{}"),
+                ("lec_sariri_akhdari", "lecture", "الدرس التأصيلي في شرح مختصر الأخضري", "الشيخ مولود السريري", "maliki", "spoken_lecture", "{}"),
+                ("lec_usool_dharai", "lecture", "شرح القواعد الأصولية ومقاصد الشريعة", "محمد الحسن الددو", "ossoul", "spoken_lecture", "{}"),
+            ],
+        )
+
+        # لاحظ: المقطعان P5_DECOY_NO_GEM و P5_GEM_BOOST_TARGET لهما نفس متن الافتتاحية العام تقريباً،
+        # لكن P5_GEM_BOOST_TARGET ينفرد بقاعدة علمية دقيقة في science_gems (مراعاة الخلاف عند المالكية).
+        shared_general_matn = (
+            "فصل في المباحث الكلية في أحكام العقود والتصرفات المختلف فيها بين الأئمة والفقهاء في الأمصار."
+        )
+        shared_general_summary = (
+            "مقدمة منهجية في النظر الفقهي في مسائل الخلاف العالي وأثره في الفتوى والقضاء."
+        )
+
+        passages_rows = [
+            (
+                "P5_BOOK_AKH2",
+                "book_akhdari_sharh",
+                None,
+                "part_akh_book_1",
+                1,
+                1,
+                "فصل في فرائض الوضوء السبع وحكم الدلك والفور",
+                "قال المصنف رحمه الله: (فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور). الشرح: الدلك هو إمرار اليد على العضو مع صب الماء أو بعده قبل جفافه، والفور هو الموالاة بين الأعضاء في الزمن المعتدل.",
+                "فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور. الدلك هو إمرار اليد على العضو مع صب الماء أو بعده قبل جفافه، والفور هو الموالاة بين الأعضاء في الزمن المعتدل.",
+                "",
+                "تحرير فرائض الوضوء السبع في المذهب المالكي وبيان حقيقة الدلك والفور ومحل وجوبهما.",
+                json.dumps(["فرائض الوضوء السبع", "الدلك والفور", "طهارة المالكية"], ensure_ascii=False),
+                json.dumps(["ما هي فرائض الوضوء السبع وما ضابط الدلك والفور؟"], ensure_ascii=False),
+                None,
+                None,
+                None,
+                48,
+                "",
+                "",
+            ),
+            (
+                "P5_LEC1_AKH2",
+                "lec_mubarak_akhdari",
+                None,
+                "part_akh_lec1_3",
+                3,
+                1,
+                "شرح فرائض الوضوء السبع: الدلك والفور والنية",
+                "نقف في هذا الدرس عند قول الأخضري: فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور. والمراد بالدلك عند المالكية إمرار باطن اليد على العضو المغسول، والمراد بالفور موالاة غسل الأعضاء بلا تفريق طويل.",
+                "نقف في هذا الدرس عند قول الأخضري: فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور. والمراد بالدلك عند المالكية إمرار باطن اليد على العضو المغسول، والمراد بالفور موالاة غسل الأعضاء بلا تفريق طويل.",
+                "",
+                "شرح صوتي مفصل لفقرة فرائض الوضوء السبع من متن الأخضري وتحرير فرضية الدلك والفور عند الشيخ عبد الحميد آل مبارك.",
+                json.dumps(["شرح فرائض الوضوء", "فرضية الدلك والفور"], ensure_ascii=False),
+                json.dumps(["كيف شرح الشيخ عبد الحميد آل مبارك الدلك والفور في الوضوء؟"], ensure_ascii=False),
+                615.0,
+                740.0,
+                "https://www.youtube.com/watch?v=akh_sh_a&t=615s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "P5_LEC2_AKH2",
+                "lec_sariri_akhdari",
+                None,
+                "part_akh_lec2_4",
+                4,
+                2,
+                "المبحث الثاني: تحقيق الفرائض السبع للوضوء واشتراط الموالاة مع الذكر والقدرة",
+                "قول المؤلف: فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور. اعلم أن الفور أي الموالاة واجب مع الذكر والقدرة، فإن فرق ناسياً أو عاجزاً بنى على وضوئه ما لم يطل جداً.",
+                "قول المؤلف: فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور. اعلم أن الفور أي الموالاة واجب مع الذكر والقدرة، فإن فرق ناسياً أو عاجزاً بنى على وضوئه.",
+                "",
+                "تحقيق الشيخ مولود السريري لشروط وجوب الفور والدلك في فرائض الوضوء السبع وحكم العجز والنسيان.",
+                json.dumps(["الفور والموالاة في الوضوء", "الذكر والقدرة في الوضوء"], ensure_ascii=False),
+                json.dumps(["ما شرط وجوب الفور والموالاة في فرائض الوضوء عند المالكية؟"], ensure_ascii=False),
+                1120.5,
+                1285.0,
+                "https://www.youtube.com/watch?v=akh_sh_b&t=1120s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "P5_DECOY_NO_GEM",
+                "book_akhdari_sharh",
+                None,
+                "part_akh_book_2",
+                2,
+                1,
+                "مقدمة في أحكام العقود والتصرفات المختلف فيها",
+                shared_general_matn,
+                shared_general_matn,
+                "",
+                shared_general_summary,
+                json.dumps(["أحكام العقود", "مسائل الخلاف"], ensure_ascii=False),
+                json.dumps(["ما منهج النظر في العقود المختلف فيها؟"], ensure_ascii=False),
+                None,
+                None,
+                None,
+                90,
+                "",
+                "",
+            ),
+            (
+                "P5_GEM_BOOST_TARGET",
+                "book_akhdari_sharh",
+                None,
+                "part_akh_book_2",
+                2,
+                2,
+                "مقدمة في أحكام العقود والتصرفات المختلف فيها",
+                shared_general_matn,
+                shared_general_matn,
+                "",
+                shared_general_summary,
+                json.dumps(["أحكام العقود", "مسائل الخلاف"], ensure_ascii=False),
+                json.dumps(["ما منهج النظر في العقود المختلف فيها؟"], ensure_ascii=False),
+                None,
+                None,
+                None,
+                92,
+                "",
+                "",
+            ),
+            (
+                "P5_USOOL_SADD_DHARAI",
+                "lec_usool_dharai",
+                None,
+                "part_usool_1",
+                1,
+                1,
+                "قاعدة سد الذرائع وضابط المنع من المباح المفضي إلى المفسدة",
+                "إن قاعدة سد الذرائع من أعظم أصول الشريعة، وضابطها أن الفعل المباح في أصله إذا صار وسيلة وذريعة تفضي غالباً إلى مفسدة راجحة فإنه يمنع شرعاً، لأن وسيلة المحرم محرمة.",
+                "إن قاعدة سد الذرائع من أعظم أصول الشريعة، وضابطها أن الفعل المباح في أصله إذا صار وسيلة وذريعة تفضي غالباً إلى مفسدة راجحة فإنه يمنع شرعاً، لأن وسيلة المحرم محرمة.",
+                "",
+                "تأصيل قاعدة سد الذرائع في أصول الفقه وبيان متى يمنع الفعل المباح إذا أفضى إلى مفسدة راجحة.",
+                json.dumps(["سد الذرائع", "وسيلة المحرم", "المفاسد والمصالح"], ensure_ascii=False),
+                json.dumps(["ما ضابط قاعدة سد الذرائع في أصول الفقه؟"], ensure_ascii=False),
+                305.0,
+                410.0,
+                "https://www.youtube.com/watch?v=usool_dharai_01&t=305s",
+                None,
+                "",
+                "",
+            ),
+        ]
+        conn.executemany(
+            "INSERT INTO passages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            passages_rows,
+        )
+
+        for p in passages_rows:
+            pid, _, _, _, _, _, sub_h, raw_t, clean_m, _, summ, top_j, sq_j, *_ = p
+            conn.execute(
+                "INSERT INTO passages_fts VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (pid, sub_h, raw_t, clean_m, summ, " ".join(json.loads(top_j)), " ".join(json.loads(sq_j))),
+            )
+
+        # التواريخ الهجرية: تاريخ تأليف تاريخي (1270 هـ، historical) وتاريخ نسخ مخطوط (1315 هـ، transmission)
+        conn.executemany(
+            "INSERT INTO events_chronology VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("ev_g5_1270_hist", "P5_BOOK_AKH2", "book_akhdari_sharh", 1270, "سنة سبعين ومائتين وألف", 0, "إتمام شرح منح الجليل وتقريب الأخضري بمصر", "historical"),
+                ("ev_g5_1315_trans", "P5_BOOK_AKH2", "book_akhdari_sharh", 1315, "سنة خمس عشرة وثلاثمائة وألف", 0, "نسخ النسخة الطباعية بفاس", "transmission"),
+                ("ev_g5_1435_hist", "P5_USOOL_SADD_DHARAI", "lec_usool_dharai", 1435, "سنة خمس وثلاثين وأربعمائة وألف", 0, "إلقاء دورة القواعد الأصولية", "historical"),
+            ],
+        )
+
+        # القواعد العلمية (science_gems)
+        conn.executemany(
+            "INSERT INTO science_gems VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "G5_1_DALAK_FAWR",
+                    "P5_LEC1_AKH2",
+                    "lec_mubarak_akhdari",
+                    3,
+                    "ضابط الدلك والفور في فرائض الوضوء السبع",
+                    "ضابط فقهي مالكي",
+                    "الدلك إمرار باطن اليد على العضو مع صب الماء أو بعده قبل جفافه، والفور موالاة غسل الأعضاء بلا تفريق طويل",
+                    "يجب في الوضوء عند المالكية دلك الأعضاء باليد وموالاة غسلها فوراً في الزمن المعتدل مع الذكر والقدرة.",
+                    "تحرير حقيقة الدلك والفور في متن الأخضري.",
+                    630.0,
+                    710.0,
+                    "https://www.youtube.com/watch?v=akh_sh_a&t=630s",
+                ),
+                (
+                    "G5_2_SADD_DHARAI",
+                    "P5_USOOL_SADD_DHARAI",
+                    "lec_usool_dharai",
+                    1,
+                    "قاعدة سد الذرائع ومنع الوسيلة المفضية إلى المفسدة",
+                    "قاعدة أصولية",
+                    "وسيلة المحرم محرمة، وما أدى إلى المفسدة الراجحة منع شرعاً وإن كان أصله الإباحة",
+                    "قاعدة سد الذرائع تقضي بمنع الفعل المباح إذا صار ذريعة مفضية غالباً إلى مفسدة شرعية راجحة.",
+                    "بيان ارتباط الوسائل بالمقاصد في سد الذرائع.",
+                    320.0,
+                    395.0,
+                    "https://www.youtube.com/watch?v=usool_dharai_01&t=320s",
+                ),
+                (
+                    "G5_3_MURAAT_KHILAF",
+                    "P5_GEM_BOOST_TARGET",
+                    "book_akhdari_sharh",
+                    2,
+                    "قاعدة مراعاة الخلاف عند المالكية",
+                    "قاعدة أصولية وفقهية",
+                    "مراعاة الخلاف إعمال دليل الخصم القوي في اللازم بعد الوقوع درءاً لمفسدة النقض والفسخ",
+                    "ضابط مراعاة الخلاف عند المالكية تصحيح العقد المختلف فيه بعد وقوعه إذا تقوى دليل المخالف.",
+                    "تطبيق أصل مراعاة الخلاف في العقود والأنكحة بعد الوقوع.",
+                    None,
+                    None,
+                    None,
+                ),
+            ],
+        )
+
+        # تثليث المتون (matn_triangulation):
+        # لاحظ أن P5_BOOK_AKH2 هو مقطع الكتاب الأصلي (غير مسجل في matn_triangulation أو يرتبط عبر نص المتن)،
+        # و P5_LEC1_AKH2 مسجل بمعرف الفقرة AKH:2،
+        # و P5_LEC2_AKH2 مسجل بنفس نص المتن المشروح (explained_matn_verbatim) لاختبار الربط بالمعرف وبالنص معاً!
+        matn_akh2_verbatim = (
+            "فرائض الوضوء سبع وهي النية عند غسل الوجه وغسل الوجه وغسل اليدين إلى المرفقين ومسح جميع الرأس وغسل الرجلين إلى الكعبين والدلك والفور"
+        )
+        conn.executemany(
+            "INSERT INTO matn_triangulation VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "tri_g5_lec1_akh2",
+                    "P5_LEC1_AKH2",
+                    "lec_mubarak_akhdari",
+                    "book_akhdari_sharh",
+                    "AKH:2",
+                    matn_akh2_verbatim,
+                    615.0,
+                    740.0,
+                ),
+                (
+                    "tri_g5_lec2_akh2",
+                    "P5_LEC2_AKH2",
+                    "lec_sariri_akhdari",
+                    "book_akhdari_sharh",
+                    "",
+                    matn_akh2_verbatim,
+                    1120.5,
+                    1285.0,
+                ),
+            ],
+        )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def run_quality_gates() -> int:
     errors: List[str] = []
 
@@ -979,6 +1246,173 @@ def run_quality_gates() -> int:
                     errors.append("[Gate 4 Live DB] ayah='البقرة:255' returned 0 on dedew_objects.sqlite")
 
         # ===================================================================
+        # Gate 5: Science Gems Vector Boost & Cross-Source Matn Triangulation Retrieval Gate
+        # ===================================================================
+        gate5_db = Path(tmpdir) / "gate5_gems_triangulation.sqlite"
+        build_gate5_gems_and_triangulation_db(gate5_db)
+        g5_stats = embed_sqlite_corpus(db_path=gate5_db, backend="deterministic-arabic-mps", dim=768, use_mps=True)
+        if g5_stats["passages_embedded"] != 6 or g5_stats["gems_embedded"] != 3:
+            errors.append(f"[Gate 5] Unexpected embedded counts in gate5_db: {g5_stats}")
+
+        with HybridSearchEngine(db_path=gate5_db, backend="deterministic-arabic-mps") as g5_eng:
+            # 5.A: البحث المباشر في القواعد العلمية (search_gems) بالمتن والمفهوم والـ FTS والفلاتر العلائقية
+            gems_matn = g5_eng.search_gems(
+                query="وسيلة المحرم محرمة وما أدى إلى المفسدة الراجحة منع شرعاً",
+                mode="matn",
+                top_k=3,
+            )
+            if not gems_matn or gems_matn[0]["gem_id"] != "G5_2_SADD_DHARAI":
+                errors.append(f"[Gate 5] search_gems (matn) failed to rank G5_2_SADD_DHARAI #1: {gems_matn[:1]}")
+            elif gems_matn[0].get("youtube_timestamp_url") != "https://www.youtube.com/watch?v=usool_dharai_01&t=320s":
+                errors.append(f"[Gate 5] search_gems missing timestamp URL on G5_2_SADD_DHARAI: {gems_matn[0]}")
+
+            gems_conc = g5_eng.search_gems(
+                query="متى يصحح العقد المختلف فيه بعد وقوعه مراعاة لدليل المخالف؟",
+                mode="concept",
+                science="maliki",
+                top_k=3,
+            )
+            if not gems_conc or gems_conc[0]["gem_id"] != "G5_3_MURAAT_KHILAF":
+                errors.append(f"[Gate 5] search_gems (concept + science='maliki') failed for G5_3_MURAAT_KHILAF: {gems_conc[:1]}")
+
+            gems_clause = g5_eng.search_gems(
+                query="إمرار اليد على العضو وموالاة غسل الأعضاء",
+                matn_clause="AKH:2",
+                top_k=3,
+            )
+            if not gems_clause or gems_clause[0]["gem_id"] != "G5_1_DALAK_FAWR":
+                errors.append(f"[Gate 5] search_gems with matn_clause='AKH:2' failed: {gems_clause}")
+
+            # 5.B: تعزيز المقطع بتشابه القاعدة العلمية المستخرجة منه (gem_embeddings boost / max_gem_sim)
+            # لاحظ أن P5_DECOY_NO_GEM و P5_GEM_BOOST_TARGET لهما نفس clean_matn بالضبط،
+            # فعند البحث في وضع matn (أو hybrid) بعبارة القاعدة، يتفوق P5_GEM_BOOST_TARGET بفضل gem_boost!
+            boost_query = "مراعاة الخلاف إعمال دليل الخصم القوي في اللازم بعد الوقوع درءاً لمفسدة النقض"
+            boosted_hits = g5_eng.search(
+                query=boost_query,
+                mode="matn",
+                gem_boost=0.28,
+                top_k=3,
+            )
+            unboosted_hits = g5_eng.search(
+                query=boost_query,
+                mode="matn",
+                gem_boost=0.0,
+                top_k=3,
+            )
+            if not boosted_hits or boosted_hits[0]["passage_id"] != "P5_GEM_BOOST_TARGET":
+                errors.append(
+                    f"[Gate 5] Gem Vector Boost failed to rank P5_GEM_BOOST_TARGET #1: "
+                    f"got {[h['passage_id'] for h in boosted_hits]}"
+                )
+            else:
+                top_b = boosted_hits[0]
+                if top_b.get("max_gem_sim", 0.0) <= 0.50:
+                    errors.append(f"[Gate 5] Expected max_gem_sim > 0.50 on P5_GEM_BOOST_TARGET, got {top_b.get('max_gem_sim')}")
+                best_g = top_b.get("best_matching_gem") or {}
+                if best_g.get("gem_id") != "G5_3_MURAAT_KHILAF":
+                    errors.append(f"[Gate 5] Expected best_matching_gem='G5_3_MURAAT_KHILAF', got {best_g}")
+                unb_map = {h["passage_id"]: h["hybrid_score"] for h in unboosted_hits}
+                if top_b["hybrid_score"] <= unb_map.get("P5_GEM_BOOST_TARGET", 0.0):
+                    errors.append(
+                        f"[Gate 5] Expected gem_boost to increase hybrid_score: "
+                        f"boosted={top_b['hybrid_score']} vs unboosted={unb_map.get('P5_GEM_BOOST_TARGET')}"
+                    )
+
+            # 5.C: التثليث متعدد المصادر عبر الشروح (Cross-Source Matn Triangulation & related_commentaries)
+            # 1) استرجاع مقطع الكتاب فقط -> يجب أن يحتوي حقل related_commentaries على الدرسين الصوتيين بالثانية!
+            book_only_hits = g5_eng.search(
+                query="فرائض الوضوء السبع الدلك والفور",
+                source_type="book",
+                matn_clause="AKH:2",
+                top_k=3,
+            )
+            if len(book_only_hits) != 1 or book_only_hits[0]["passage_id"] != "P5_BOOK_AKH2":
+                errors.append(f"[Gate 5] Book retrieval for AKH:2 failed: {[h['passage_id'] for h in book_only_hits]}")
+            else:
+                bh = book_only_hits[0]
+                if bh["page_num"] != 48:
+                    errors.append(f"[Gate 5] Expected page_num=48 on P5_BOOK_AKH2, got {bh['page_num']}")
+                rel_comms = bh.get("related_commentaries") or []
+                rel_pids = {rc["passage_id"]: rc for rc in rel_comms}
+                if not {"P5_LEC1_AKH2", "P5_LEC2_AKH2"}.issubset(set(rel_pids.keys())):
+                    errors.append(
+                        f"[Gate 5] Book P5_BOOK_AKH2 missing audio commentaries in related_commentaries: {list(rel_pids.keys())}"
+                    )
+                else:
+                    if rel_pids["P5_LEC1_AKH2"]["start_sec"] != 615.0 or rel_pids["P5_LEC1_AKH2"]["youtube_timestamp_url"] != "https://www.youtube.com/watch?v=akh_sh_a&t=615s":
+                        errors.append(f"[Gate 5] Misaligned audio timestamp for P5_LEC1_AKH2 in related_commentaries: {rel_pids['P5_LEC1_AKH2']}")
+                    if rel_pids["P5_LEC2_AKH2"]["start_sec"] != 1120.5 or rel_pids["P5_LEC2_AKH2"]["youtube_timestamp_url"] != "https://www.youtube.com/watch?v=akh_sh_b&t=1120s":
+                        errors.append(f"[Gate 5] Misaligned audio timestamp for P5_LEC2_AKH2 in related_commentaries: {rel_pids['P5_LEC2_AKH2']}")
+
+            # 2) البحث المقارن الشامل عبر cross_commentary_search
+            comp_groups = g5_eng.cross_commentary_search(
+                query="الدلك والفور والموالاة في فرائض الوضوء السبع",
+                matn_clause="AKH:2",
+                top_k=3,
+            )
+            if len(comp_groups) != 1:
+                errors.append(f"[Gate 5] cross_commentary_search expected 1 group for AKH:2, got {len(comp_groups)}")
+            else:
+                cg = comp_groups[0]
+                if cg["total_sources"] != 3 or len(cg["book_passages"]) != 1 or len(cg["lecture_passages"]) != 2:
+                    errors.append(
+                        f"[Gate 5] cross_commentary_search source breakdown mismatch: "
+                        f"total={cg['total_sources']}, books={len(cg['book_passages'])}, lectures={len(cg['lecture_passages'])}"
+                    )
+                if len(cg["sheikhs_or_authors"]) < 3:
+                    errors.append(f"[Gate 5] Expected 3 distinct authors/sheikhs in AKH:2 group, got {cg['sheikhs_or_authors']}")
+
+            # 3) البحث بجزء حرفي من نص المتن في --matn-clause (بدون رمز الفقرة)
+            verbatim_clause_hits = g5_eng.search(
+                query="الدلك والفور",
+                matn_clause="فرائض الوضوء سبع وهي النية عند غسل الوجه",
+                top_k=5,
+            )
+            if {h["passage_id"] for h in verbatim_clause_hits} != {"P5_BOOK_AKH2", "P5_LEC1_AKH2", "P5_LEC2_AKH2"}:
+                errors.append(
+                    f"[Gate 5] Verbatim --matn-clause matching failed: got {[h['passage_id'] for h in verbatim_clause_hits]}"
+                )
+
+            # 5.D: فلترة الحقبة التاريخية (--year-min / --year-max) مع عزل طبقة الرواية (transmission) وفلترة العلم (--science)
+            hist_13th_cent = g5_eng.search(
+                query="فرائض الوضوء",
+                science="maliki",
+                year_min=1200,
+                year_max=1300,
+                top_k=5,
+            )
+            if [h["passage_id"] for h in hist_13th_cent] != ["P5_BOOK_AKH2"]:
+                errors.append(f"[Gate 5] Historical era filter (1200..1300 AH, maliki) failed: {[h['passage_id'] for h in hist_13th_cent]}")
+
+            trans_leak_check = g5_eng.search(
+                query="فرائض الوضوء",
+                science="maliki",
+                year_min=1310,
+                year_max=1330,
+                top_k=5,
+            )
+            if trans_leak_check:
+                errors.append(f"[Gate 5] Manuscript copying year 1315 AH leaked into historical era filter: {trans_leak_check}")
+
+            # 5.E: فحص استرجاع القواعد العلمية الحي على dedew_objects.sqlite إن وجد
+            if real_prod_db.exists():
+                with HybridSearchEngine(db_path=real_prod_db, backend="deterministic-arabic-mps") as prod_eng5:
+                    live_gems = prod_eng5.search_gems(
+                        query="لا يخلق بالمعالجة والمكابدة وإنما يأمر فيخلق الخلائق بأمره",
+                        mode="hybrid",
+                        top_k=3,
+                    )
+                    if not live_gems or live_gems[0]["gem_id"] != "dedew__s029_004:G2":
+                        errors.append(f"[Gate 5 Live DB] Live search_gems failed for dedew__s029_004:G2: {live_gems[:1]}")
+                    live_p_boost = prod_eng5.search(
+                        query="لا يخلق بالمعالجة والمكابدة وإنما يأمر فيخلق الخلائق بأمره",
+                        mode="hybrid",
+                        top_k=3,
+                    )
+                    if not live_p_boost or live_p_boost[0]["passage_id"] != "dedew__s029_004:P4" or live_p_boost[0].get("max_gem_sim", 0.0) <= 0.4:
+                        errors.append(f"[Gate 5 Live DB] Live passage gem boost failed for dedew__s029_004:P4: {live_p_boost[:1]}")
+
+        # ===================================================================
         # تكامل عابر للمهارات مع build_objects_sqlite.py في turath-deep-indexing
         # ===================================================================
         deep_idx_scripts = SCRIPT_DIR.parent.parent / "turath-deep-indexing" / "scripts"
@@ -1010,10 +1444,12 @@ def run_quality_gates() -> int:
                 qaanabi_matn = real_eng.search(query="الطهارة", person="القعنبي", person_layer="matn")
                 if qaanabi_matn:
                     errors.append(f"[Cross-Skill Gate] Isnad narrator القعنبي leaked into matn search: {qaanabi_matn}")
-                # استرجاع شروح فقرة المتن AKH:1 عبر الكتب والدروس الصوتية معاً
+                # استرجاع شروح فقرة المتن AKH:1 عبر الكتب والدروس الصوتية معاً والتحقق من related_commentaries
                 akh1_hits = real_eng.search(query="تصحيح إيمانه ومعرفة فرض عينه", matn_clause="AKH:1", top_k=5)
                 if len(akh1_hits) < 2:
                     errors.append(f"[Cross-Skill Gate] Expected >=2 passages for matn_clause='AKH:1', got {len(akh1_hits)}")
+                elif not akh1_hits[0].get("related_commentaries"):
+                    errors.append(f"[Cross-Skill Gate] Expected non-empty related_commentaries on AKH:1 result: {akh1_hits[0]}")
 
     if errors:
         print(f"FAIL ({len(errors)} errors):")
@@ -1026,6 +1462,7 @@ def run_quality_gates() -> int:
         "Gate 2 (Dual Semantic Retrieval — Matn vs Concept): OK\n"
         "Gate 3 (Hybrid FTS5 + Vector + Entity Filtering & Isnad Isolation): OK\n"
         "Gate 4 (Real Lecture Corpus & Orthographic/Stopword-Resilient Hybrid Search): OK\n"
+        "Gate 5 (Science Gems Vector Boost & Cross-Source Matn Triangulation Retrieval): OK\n"
         "PASS (0 errors)"
     )
     return 0

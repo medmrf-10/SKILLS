@@ -487,24 +487,65 @@ class HybridSearchEngine:
             matched = {str(r["passage_id"]) for r in self.conn.execute(sql, [st_norm])}
             candidates &= matched
 
-        # و. فلتر فقرة المتن المشروح (--matn-clause)
+        # و. فلتر فقرة المتن المشروح (--matn-clause: يدعم معرف الفقرة مثل UB:2 أو جزءاً من نص المتن المشروح)
         if matn_clause and matn_clause.strip():
             mc = matn_clause.strip()
-            sql = """
-                SELECT DISTINCT passage_id
-                FROM matn_triangulation
-                WHERE LOWER(explained_matn_clause_id) = LOWER(?)
-                UNION
-                SELECT DISTINCT p_book.passage_id
-                FROM matn_triangulation mt
-                JOIN passages p_book ON p_book.source_id = mt.explained_matn_book_id
-                WHERE LOWER(mt.explained_matn_clause_id) = LOWER(?)
-                  AND mt.explained_matn_verbatim IS NOT NULL
-                  AND LENGTH(TRIM(mt.explained_matn_verbatim)) > 0
-                  AND NORM_AR(p_book.raw_text) LIKE '%' || NORM_AR(mt.explained_matn_verbatim) || '%'
-            """
-            matched = {str(r[0]) for r in self.conn.execute(sql, [mc, mc])}
-            candidates &= matched
+            mc_norm = normalize_arabic_for_match(mc)
+            matched_tri_pids: Set[str] = set()
+            clause_ids: Set[str] = set()
+            verbatims_norm: Set[str] = set()
+
+            try:
+                all_tri_rows = self.conn.execute(
+                    """
+                    SELECT passage_id, explained_matn_book_id, explained_matn_clause_id, explained_matn_verbatim
+                    FROM matn_triangulation
+                    """
+                ).fetchall()
+            except sqlite3.OperationalError:
+                all_tri_rows = []
+
+            for r in all_tri_rows:
+                cid = str(r["explained_matn_clause_id"] or "").strip().lower()
+                verb_norm = normalize_arabic_for_match(str(r["explained_matn_verbatim"] or ""))
+                if cid and cid == mc.lower():
+                    matched_tri_pids.add(str(r["passage_id"]))
+                    clause_ids.add(cid)
+                    if len(verb_norm) >= 6:
+                        verbatims_norm.add(verb_norm)
+                elif len(mc_norm) >= 6 and verb_norm and (mc_norm in verb_norm or verb_norm in mc_norm):
+                    matched_tri_pids.add(str(r["passage_id"]))
+                    if cid:
+                        clause_ids.add(cid)
+                    if len(verb_norm) >= 6:
+                        verbatims_norm.add(verb_norm)
+
+            # توسيع المطابقة لتشمل جميع الشروح المشتركة في نفس clause_id أو نفس جملة المتن (explained_matn_verbatim)
+            if clause_ids or verbatims_norm:
+                for r in all_tri_rows:
+                    cid = str(r["explained_matn_clause_id"] or "").strip().lower()
+                    verb_norm = normalize_arabic_for_match(str(r["explained_matn_verbatim"] or ""))
+                    if (cid and cid in clause_ids) or (
+                        len(verb_norm) >= 6
+                        and any((verb_norm in vn or vn in verb_norm) for vn in verbatims_norm)
+                    ):
+                        matched_tri_pids.add(str(r["passage_id"]))
+                        if len(verb_norm) >= 6:
+                            verbatims_norm.add(verb_norm)
+
+            if len(mc_norm) >= 10:
+                verbatims_norm.add(mc_norm)
+
+            # ضم مقاطع الكتب والشروح التي يحتوي متنها على نص الفقرة المشروحة
+            if verbatims_norm:
+                for p_row in self.conn.execute("SELECT passage_id, raw_text, clean_matn FROM passages"):
+                    p_txt_norm = normalize_arabic_for_match(
+                        f"{p_row['clean_matn'] or ''} {p_row['raw_text'] or ''}"
+                    )
+                    if p_txt_norm and any(vn in p_txt_norm for vn in verbatims_norm if len(vn) >= 6):
+                        matched_tri_pids.add(str(p_row["passage_id"]))
+
+            candidates &= matched_tri_pids
 
         return candidates
 
@@ -653,8 +694,194 @@ class HybridSearchEngine:
             return {k: 0.0 for k in raw_scores}
         return {k: float(v / max_s) for k, v in raw_scores.items()}
 
+    def _score_gems_lexical(self, query: str, gem_rows: Sequence[Any]) -> Dict[str, float]:
+        """يحسب درجة التطابق المعجمي والجذعي المطبّع للقواعد العلمية (science_gems)."""
+        if not query or not query.strip() or not gem_rows:
+            return {}
+
+        all_query_tokens = [
+            tok for tok in re.findall(r"[\u0621-\u064A0-9A-Za-z]+", query)
+            if len(tok) >= 2 and normalize_arabic_for_match(tok) not in ARABIC_STOPWORDS_NORM
+        ]
+        if not all_query_tokens:
+            all_query_tokens = [
+                tok for tok in re.findall(r"[\u0621-\u064A0-9A-Za-z]+", query) if len(tok) >= 2
+            ]
+        if not all_query_tokens:
+            return {}
+
+        core_tokens = [
+            tok for tok in all_query_tokens
+            if normalize_arabic_for_match(tok) not in QUERY_FRAMING_STOPWORDS_NORM
+        ] or all_query_tokens
+
+        q_norm = normalize_arabic_for_match(query)
+        norm_core_tokens = [
+            normalize_arabic_for_match(t) for t in core_tokens
+            if len(normalize_arabic_for_match(t)) >= 2
+        ]
+        if not norm_core_tokens:
+            return {}
+
+        core_stems = [arabic_light_stem(nt) for nt in norm_core_tokens]
+        core_skels = [arabic_consonant_skeleton(st) for st in core_stems]
+
+        q_tok_set = set(norm_core_tokens) | set(core_stems)
+        active_cluster_kws: Set[str] = set()
+        for _, kws in CONCEPT_SYNONYM_CLUSTERS:
+            kws_norm = [normalize_arabic_for_match(k) for k in kws]
+            if any((kn in q_tok_set or arabic_light_stem(kn) in q_tok_set) for kn in kws_norm if " " not in kn):
+                for kn in kws_norm:
+                    if " " not in kn:
+                        active_cluster_kws.add(arabic_light_stem(kn))
+
+        raw_scores: Dict[str, float] = {}
+        for r in gem_rows:
+            gid = str(r["gem_id"])
+            primary_raw = " ".join(str(r[k] or "") for k in ("title", "verbatim_rule"))
+            secondary_raw = " ".join(str(r[k] or "") for k in ("polished_rule", "explanation", "category"))
+            for bp_re in BOILERPLATE_CLEAN_RES:
+                primary_raw = bp_re.sub(" ", primary_raw)
+                secondary_raw = bp_re.sub(" ", secondary_raw)
+
+            prim_norm = normalize_arabic_for_match(primary_raw)
+            sec_norm = normalize_arabic_for_match(secondary_raw)
+            doc_norm = f"{prim_norm} {sec_norm}".strip()
+
+            prim_words = set(re.findall(r"[\u0621-\u064A0-9]+", prim_norm))
+            all_words = prim_words | set(re.findall(r"[\u0621-\u064A0-9]+", sec_norm))
+            prim_stems = {arabic_light_stem(w) for w in prim_words}
+            all_stems = prim_stems | {arabic_light_stem(w) for w in all_words}
+            all_skels = {arabic_consonant_skeleton(st) for st in all_stems if len(st) >= 3}
+
+            matched_weight = 0.0
+            matched_tokens_count = 0
+            for idx_t, nt in enumerate(norm_core_tokens):
+                st = core_stems[idx_t]
+                sk = core_skels[idx_t]
+                if nt in prim_words or nt in prim_norm:
+                    matched_weight += 3.2
+                    matched_tokens_count += 1
+                elif len(st) >= 3 and st in prim_stems:
+                    matched_weight += 2.7
+                    matched_tokens_count += 1
+                elif nt in all_words or nt in doc_norm:
+                    matched_weight += 2.2
+                    matched_tokens_count += 1
+                elif len(st) >= 3 and st in all_stems:
+                    matched_weight += 1.8
+                    matched_tokens_count += 1
+                elif len(sk) >= 3 and sk in all_skels:
+                    matched_weight += 1.1
+                    matched_tokens_count += 1
+
+            if matched_tokens_count > 0:
+                coverage_ratio = matched_tokens_count / len(norm_core_tokens)
+                phrase_bonus = 3.5 if (len(q_norm) >= 6 and q_norm in doc_norm) else 0.0
+                all_match_bonus = 3.0 if matched_tokens_count == len(norm_core_tokens) and len(norm_core_tokens) >= 2 else 0.0
+                syn_bonus = 1.2 if (active_cluster_kws and (all_stems & active_cluster_kws)) else 0.0
+                raw_scores[gid] = (matched_weight * (0.6 + 0.8 * coverage_ratio)) + phrase_bonus + all_match_bonus + syn_bonus
+
+        if not raw_scores:
+            return {}
+        max_s = max(raw_scores.values())
+        if max_s <= 1e-12:
+            return {k: 0.0 for k in raw_scores}
+        return {k: float(v / max_s) for k, v in raw_scores.items()}
+
+    def _score_gems_for_passages(
+        self,
+        query: str,
+        q_vec: np.ndarray,
+        candidate_pids: Set[str],
+        mode: str = "hybrid",
+    ) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]], Dict[str, Dict[str, float]]]:
+        """
+        يحسب درجات تشابه القواعد العلمية (gem_embeddings) للمقاطع المرشحة ويعيد:
+        1. max_gem_sim_by_pid: أعلى درجة تشابه قاعدة علمية لكل مقطع (لتعزيز المقطع الذي يحوي قاعدة مطابقة).
+        2. best_gem_by_pid: بيانات القاعدة العلمية الأعلى تطابقاً في كل مقطع.
+        3. gem_scores_by_id: درجات كل قاعدة علمية لإثراء قائمة science_gems داخل المقطع.
+        """
+        if not candidate_pids:
+            return {}, {}, {}
+
+        placeholders = ",".join("?" for _ in candidate_pids)
+        try:
+            rows = self.conn.execute(
+                f"""
+                SELECT ge.gem_id, ge.passage_id, ge.dim, ge.vec_matn_blob, ge.vec_concept_blob,
+                       sg.title, sg.category, sg.verbatim_rule, sg.polished_rule, sg.explanation,
+                       sg.start_sec, sg.end_sec, sg.youtube_timestamp_url
+                FROM gem_embeddings ge
+                JOIN science_gems sg ON ge.gem_id = sg.gem_id
+                WHERE ge.passage_id IN ({placeholders})
+                ORDER BY ge.gem_id
+                """,
+                list(candidate_pids),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}, {}, {}
+
+        if not rows:
+            return {}, {}, {}
+
+        matn_mat = np.stack([blob_to_vector(r["vec_matn_blob"], self.dim) for r in rows], axis=0)
+        concept_mat = np.stack([blob_to_vector(r["vec_concept_blob"], self.dim) for r in rows], axis=0)
+
+        s_matn = _compute_cosine_scores(matn_mat, q_vec, use_mps=self.use_mps)
+        s_conc = _compute_cosine_scores(concept_mat, q_vec, use_mps=self.use_mps)
+        s_lex_map = self._score_gems_lexical(query, rows)
+
+        m_clean = (mode or "hybrid").strip().lower()
+        max_gem_sim_by_pid: Dict[str, float] = {}
+        best_gem_by_pid: Dict[str, Dict[str, Any]] = {}
+        gem_scores_by_id: Dict[str, Dict[str, float]] = {}
+
+        for idx, r in enumerate(rows):
+            gid = str(r["gem_id"])
+            pid = str(r["passage_id"])
+            sm = float(max(0.0, s_matn[idx]))
+            sc = float(max(0.0, s_conc[idx]))
+            sf = float(s_lex_map.get(gid, 0.0))
+
+            if m_clean == "matn":
+                g_score = sm
+            elif m_clean == "concept":
+                g_score = sc
+            elif m_clean == "fts":
+                g_score = sf
+            else:
+                vec_peak = max(sm, sc, 0.45 * sm + 0.55 * sc)
+                g_score = (0.82 * vec_peak) + (0.18 * sf) if sf > 0 else vec_peak
+
+            gem_scores_by_id[gid] = {
+                "score_matn": round(sm, 6),
+                "score_concept": round(sc, 6),
+                "score_fts": round(sf, 6),
+                "score_gem": round(g_score, 6),
+            }
+
+            if g_score > max_gem_sim_by_pid.get(pid, -1.0):
+                max_gem_sim_by_pid[pid] = g_score
+                best_gem_by_pid[pid] = {
+                    "gem_id": gid,
+                    "title": r["title"],
+                    "category": r["category"],
+                    "verbatim_rule": r["verbatim_rule"],
+                    "polished_rule": r["polished_rule"],
+                    "start_sec": r["start_sec"],
+                    "end_sec": r["end_sec"],
+                    "youtube_timestamp_url": r["youtube_timestamp_url"],
+                    "score_matn": round(sm, 6),
+                    "score_concept": round(sc, 6),
+                    "score_fts": round(sf, 6),
+                    "score_gem": round(g_score, 6),
+                }
+
+        return max_gem_sim_by_pid, best_gem_by_pid, gem_scores_by_id
+
     # -----------------------------------------------------------------------
-    # 3. البحث الهجين المزدوج + RRF + إثراء النتائج
+    # 3. البحث الهجين المزدوج + تعزيز القواعد العلمية + RRF + إثراء النتائج
     # -----------------------------------------------------------------------
     def search(
         self,
@@ -664,6 +891,7 @@ class HybridSearchEngine:
         alpha_matn: Optional[float] = None,
         alpha_concept: Optional[float] = None,
         alpha_fts: Optional[float] = None,
+        gem_boost: float = 0.28,
         rrf_k: int = 60,
         person: Optional[str] = None,
         person_layer: str = "matn",
@@ -678,7 +906,8 @@ class HybridSearchEngine:
         matn_clause: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        ينفذ الاسترجاع الهجين الكامل ويعيد قائمة النتائج المثرية بجميع البيانات والتوقيتات والكيانات.
+        ينفذ الاسترجاع الهجين الكامل ويعيد قائمة النتائج المثرية بجميع البيانات والتوقيتات والكيانات
+        ودرجات القواعد العلمية (max_gem_sim) ونظائر المتن المشروح (related_commentaries).
         """
         # تحديد أوزان الدمج حسب الوضع أو الخيارات الصريحة
         mode_clean = (mode or "hybrid").strip().lower()
@@ -730,6 +959,8 @@ class HybridSearchEngine:
         if not pid_list:
             return []
 
+        gem_scores_by_id: Dict[str, Dict[str, float]] = {}
+
         if query and query.strip():
             q_vec = self.embedder.embed_query(query)
             matn_mat = np.stack([blob_to_vector(r["vec_matn_blob"], self.dim) for r in emb_rows], axis=0)
@@ -742,7 +973,14 @@ class HybridSearchEngine:
             scores_concept = {pid: float(max(0.0, raw_sim_concept[i])) for i, pid in enumerate(pid_list)}
             scores_fts = self._score_fts5(query, candidate_pids)
 
-            # حساب رتب القنوات الثلاث لدمج RRF
+            max_gem_sim_by_pid, best_gem_by_pid, gem_scores_by_id = self._score_gems_for_passages(
+                query=query,
+                q_vec=q_vec,
+                candidate_pids=candidate_pids,
+                mode=mode_clean,
+            )
+
+            # حساب رتب القنوات الأربع (المتن، المفهوم، FTS5، والقواعد العلمية) لدمج RRF
             sorted_by_matn = sorted(pid_list, key=lambda p: scores_matn.get(p, 0.0), reverse=True)
             sorted_by_concept = sorted(pid_list, key=lambda p: scores_concept.get(p, 0.0), reverse=True)
             sorted_by_fts = sorted(
@@ -750,30 +988,47 @@ class HybridSearchEngine:
                 key=lambda p: scores_fts.get(p, 0.0),
                 reverse=True,
             )
+            sorted_by_gem = sorted(
+                [p for p in pid_list if max_gem_sim_by_pid.get(p, 0.0) > 0.0],
+                key=lambda p: max_gem_sim_by_pid.get(p, 0.0),
+                reverse=True,
+            )
 
             rank_matn = {p: idx + 1 for idx, p in enumerate(sorted_by_matn)}
             rank_concept = {p: idx + 1 for idx, p in enumerate(sorted_by_concept)}
             rank_fts = {p: idx + 1 for idx, p in enumerate(sorted_by_fts)}
+            rank_gem = {p: idx + 1 for idx, p in enumerate(sorted_by_gem)}
 
             scored_items: List[Tuple[str, float, Dict[str, Any]]] = []
             for pid in pid_list:
                 s_m = scores_matn.get(pid, 0.0)
                 s_c = scores_concept.get(pid, 0.0)
                 s_f = scores_fts.get(pid, 0.0)
+                s_g = max_gem_sim_by_pid.get(pid, 0.0)
 
                 r_m = rank_matn[pid]
                 r_c = rank_concept[pid]
                 r_f = rank_fts.get(pid)
+                r_g = rank_gem.get(pid)
 
                 rrf_m = 1.0 / (rrf_k + r_m) if s_m > 0 else 0.0
                 rrf_c = 1.0 / (rrf_k + r_c) if s_c > 0 else 0.0
                 rrf_f = (1.0 / (rrf_k + r_f)) if (r_f is not None and s_f > 0) else 0.0
+                rrf_g = (1.0 / (rrf_k + r_g)) if (r_g is not None and s_g > 0) else 0.0
 
                 rrf_total = (w_matn * rrf_m) + (w_concept * rrf_c) + (w_fts * rrf_f)
                 weighted_linear = (w_matn * s_m) + (w_concept * s_c) + (w_fts * s_f)
-                hybrid_score = (0.70 * weighted_linear) + (0.30 * rrf_k * rrf_total)
+
+                gem_boost_val = 0.0
+                if float(gem_boost) > 0.0 and s_g > 0.0:
+                    gem_boost_val = (float(gem_boost) * s_g) + (0.08 * rrf_k * rrf_g)
+
+                hybrid_score = (0.70 * weighted_linear) + (0.30 * rrf_k * rrf_total) + gem_boost_val
 
                 dominant_channel = "matn" if s_m >= s_c else "concept"
+                if s_g > max(s_m, s_c) and float(gem_boost) > 0.0:
+                    dominant_channel = "gem"
+
                 scored_items.append(
                     (
                         pid,
@@ -783,10 +1038,14 @@ class HybridSearchEngine:
                             "score_matn": round(float(s_m), 6),
                             "score_concept": round(float(s_c), 6),
                             "score_fts": round(float(s_f), 6),
+                            "max_gem_sim": round(float(s_g), 6),
+                            "score_gem": round(float(s_g), 6),
                             "rrf_score": round(float(rrf_total), 6),
                             "rank_matn": r_m,
                             "rank_concept": r_c,
                             "rank_fts": r_f,
+                            "rank_gem": r_g,
+                            "best_matching_gem": best_gem_by_pid.get(pid),
                             "dominant_channel": dominant_channel,
                         },
                     )
@@ -805,75 +1064,494 @@ class HybridSearchEngine:
                         "score_matn": 0.0,
                         "score_concept": 0.0,
                         "score_fts": 0.0,
+                        "max_gem_sim": 0.0,
+                        "score_gem": 0.0,
                         "rrf_score": 0.0,
                         "rank_matn": idx + 1,
                         "rank_concept": idx + 1,
                         "rank_fts": None,
+                        "rank_gem": None,
+                        "best_matching_gem": None,
                         "dominant_channel": "entity_filter",
                     },
                 )
                 for idx, pid in enumerate(pid_list[: max(1, int(top_k))])
             ]
 
-        return [self._hydrate_passage_result(pid, score_meta) for pid, _, score_meta in top_items]
+        return [
+            self._hydrate_passage_result(pid, score_meta, gem_scores_by_id=gem_scores_by_id)
+            for pid, _, score_meta in top_items
+        ]
 
     def search_gems(
         self,
-        query: str,
+        query: str = "",
         top_k: int = 5,
         mode: str = "hybrid",
-        alpha_matn: float = 0.45,
-        alpha_concept: float = 0.55,
+        alpha_matn: float = 0.40,
+        alpha_concept: float = 0.45,
+        alpha_fts: float = 0.15,
+        rrf_k: int = 60,
+        category: Optional[str] = None,
+        person: Optional[str] = None,
+        person_layer: str = "matn",
+        place: Optional[str] = None,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        event_layer: str = "historical",
+        surah: Optional[int] = None,
+        ayah: Optional[str] = None,
+        science: Optional[str] = None,
+        source_type: Optional[str] = None,
+        matn_clause: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """يبحث مباشرة في جدول gem_embeddings (متجه لفظ القاعدة التراثي + متجه القاعدة المصقولة)."""
-        rows = self.conn.execute(
-            """
+        """
+        يبحث مباشرة في جدول gem_embeddings (متجه لفظ القاعدة التراثي + متجه القاعدة المصقولة + التطابق المعجمي)
+        مع دعم كامل لجميع الفلاتر العلائقية (العلم، المكان، الحقبة التاريخية مع عزل الرواية، الآية، العلم الشرعي، المتن المشروح).
+        """
+        candidate_pids = self.resolve_candidate_passage_ids(
+            person=person,
+            person_layer=person_layer,
+            place=place,
+            year_min=year_min,
+            year_max=year_max,
+            event_layer=event_layer,
+            surah=surah,
+            ayah=ayah,
+            science=science,
+            source_type=source_type,
+            matn_clause=matn_clause,
+        )
+        if not candidate_pids:
+            return []
+
+        placeholders = ",".join("?" for _ in candidate_pids)
+        sql = f"""
             SELECT ge.gem_id, ge.passage_id, ge.dim, ge.vec_matn_blob, ge.vec_concept_blob,
                    sg.source_id, sg.part_number, sg.title, sg.category,
                    sg.verbatim_rule, sg.polished_rule, sg.explanation,
-                   sg.start_sec, sg.end_sec, sg.youtube_timestamp_url
+                   sg.start_sec, sg.end_sec, sg.youtube_timestamp_url,
+                   p.sub_heading, p.page_num, p.start_sec AS p_start_sec, p.end_sec AS p_end_sec,
+                   p.youtube_timestamp_url AS p_youtube_url,
+                   s.source_type, s.title AS source_title, s.author_or_sheikh, s.science
             FROM gem_embeddings ge
             JOIN science_gems sg ON ge.gem_id = sg.gem_id
-            ORDER BY ge.gem_id
-            """
-        ).fetchall()
+            LEFT JOIN passages p ON sg.passage_id = p.passage_id
+            LEFT JOIN sources s ON sg.source_id = s.source_id
+            WHERE ge.passage_id IN ({placeholders})
+        """
+        params: List[Any] = list(candidate_pids)
+        if category and category.strip():
+            sql += " AND NORM_AR(COALESCE(sg.category, '')) LIKE '%' || NORM_AR(?) || '%'"
+            params.append(category.strip())
+        sql += " ORDER BY ge.gem_id"
+
+        rows = self.conn.execute(sql, params).fetchall()
         if not rows:
             return []
+
+        if not query or not query.strip():
+            results: List[Dict[str, Any]] = []
+            for idx, r in enumerate(rows[: max(1, int(top_k))]):
+                item = dict(r)
+                item.pop("vec_matn_blob", None)
+                item.pop("vec_concept_blob", None)
+                if item.get("start_sec") is None:
+                    item["start_sec"] = item.pop("p_start_sec", None)
+                else:
+                    item.pop("p_start_sec", None)
+                if item.get("end_sec") is None:
+                    item["end_sec"] = item.pop("p_end_sec", None)
+                else:
+                    item.pop("p_end_sec", None)
+                if not item.get("youtube_timestamp_url"):
+                    item["youtube_timestamp_url"] = item.pop("p_youtube_url", None)
+                else:
+                    item.pop("p_youtube_url", None)
+                item["score_matn"] = 0.0
+                item["score_concept"] = 0.0
+                item["score_fts"] = 0.0
+                item["hybrid_score"] = 1.0
+                item["dominant_channel"] = "entity_filter"
+                results.append(item)
+            return results
 
         q_vec = self.embedder.embed_query(query)
         matn_mat = np.stack([blob_to_vector(r["vec_matn_blob"], self.dim) for r in rows], axis=0)
         concept_mat = np.stack([blob_to_vector(r["vec_concept_blob"], self.dim) for r in rows], axis=0)
 
-        s_matn = _compute_cosine_scores(matn_mat, q_vec, use_mps=self.use_mps)
-        s_conc = _compute_cosine_scores(concept_mat, q_vec, use_mps=self.use_mps)
+        s_matn_arr = _compute_cosine_scores(matn_mat, q_vec, use_mps=self.use_mps)
+        s_conc_arr = _compute_cosine_scores(concept_mat, q_vec, use_mps=self.use_mps)
+        s_lex_map = self._score_gems_lexical(query, rows)
 
         m_clean = (mode or "hybrid").strip().lower()
         if m_clean == "matn":
-            w_m, w_c = 1.0, 0.0
+            w_m, w_c, w_f = 1.0, 0.0, 0.0
         elif m_clean == "concept":
-            w_m, w_c = 0.0, 1.0
+            w_m, w_c, w_f = 0.0, 1.0, 0.0
+        elif m_clean == "fts":
+            w_m, w_c, w_f = 0.0, 0.0, 1.0
         else:
-            w_m, w_c = float(alpha_matn), float(alpha_concept)
+            w_m, w_c, w_f = float(alpha_matn), float(alpha_concept), float(alpha_fts)
 
-        results: List[Dict[str, Any]] = []
-        for idx, r in enumerate(rows):
-            sm = float(max(0.0, s_matn[idx]))
-            sc = float(max(0.0, s_conc[idx]))
-            comb = w_m * sm + w_c * sc
+        gids = [str(r["gem_id"]) for r in rows]
+        scores_m = {gids[i]: float(max(0.0, s_matn_arr[i])) for i in range(len(rows))}
+        scores_c = {gids[i]: float(max(0.0, s_conc_arr[i])) for i in range(len(rows))}
+        scores_f = {gids[i]: float(s_lex_map.get(gids[i], 0.0)) for i in range(len(rows))}
+
+        rank_m = {
+            g: idx + 1
+            for idx, g in enumerate(sorted(gids, key=lambda x: scores_m[x], reverse=True))
+        }
+        rank_c = {
+            g: idx + 1
+            for idx, g in enumerate(sorted(gids, key=lambda x: scores_c[x], reverse=True))
+        }
+        rank_f = {
+            g: idx + 1
+            for idx, g in enumerate(
+                sorted([x for x in gids if scores_f[x] > 0.0], key=lambda x: scores_f[x], reverse=True)
+            )
+        }
+
+        results = []
+        for r in rows:
+            gid = str(r["gem_id"])
+            sm = scores_m[gid]
+            sc = scores_c[gid]
+            sf = scores_f[gid]
+
+            rm = rank_m[gid]
+            rc = rank_c[gid]
+            rf = rank_f.get(gid)
+
+            rrf_m = 1.0 / (rrf_k + rm) if sm > 0 else 0.0
+            rrf_c = 1.0 / (rrf_k + rc) if sc > 0 else 0.0
+            rrf_f = (1.0 / (rrf_k + rf)) if (rf is not None and sf > 0) else 0.0
+            rrf_tot = (w_m * rrf_m) + (w_c * rrf_c) + (w_f * rrf_f)
+            linear = (w_m * sm) + (w_c * sc) + (w_f * sf)
+            comb = (0.75 * linear) + (0.25 * rrf_k * rrf_tot)
+
             item = dict(r)
             item.pop("vec_matn_blob", None)
             item.pop("vec_concept_blob", None)
+            if item.get("start_sec") is None:
+                item["start_sec"] = item.pop("p_start_sec", None)
+            else:
+                item.pop("p_start_sec", None)
+            if item.get("end_sec") is None:
+                item["end_sec"] = item.pop("p_end_sec", None)
+            else:
+                item.pop("p_end_sec", None)
+            if not item.get("youtube_timestamp_url"):
+                item["youtube_timestamp_url"] = item.pop("p_youtube_url", None)
+            else:
+                item.pop("p_youtube_url", None)
+
             item["score_matn"] = round(sm, 6)
             item["score_concept"] = round(sc, 6)
-            item["hybrid_score"] = round(comb, 6)
+            item["score_fts"] = round(sf, 6)
+            item["hybrid_score"] = round(float(comb), 6)
             item["dominant_channel"] = "matn" if sm >= sc else "concept"
             results.append(item)
 
         results.sort(key=lambda x: x["hybrid_score"], reverse=True)
         return results[: max(1, int(top_k))]
 
-    def _hydrate_passage_result(self, passage_id: str, score_meta: Dict[str, Any]) -> Dict[str, Any]:
-        """يجمع كافة بيانات المقطع، المصدر، القواعد، التوقيتات، والكيانات المطابقة."""
+    def _resolve_related_commentaries(
+        self,
+        passage_id: str,
+        p_dict: Dict[str, Any],
+        triangulations: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        يسترجع جميع المقاطع المناظرة (من الكتب أو الدروس الصوتية المشروحة بالثانية)
+        التي تشرح نفس فقرة المتن (explained_matn_clause_id أو تطابق explained_matn_verbatim).
+        """
+        clause_ids: Set[str] = set()
+        verbatims_norm: Set[str] = set()
+        clause_meta_map: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+
+        for tr in triangulations:
+            cid = str(tr.get("explained_matn_clause_id") or "").strip()
+            bid = str(tr.get("explained_matn_book_id") or "").strip() or None
+            verb = str(tr.get("explained_matn_verbatim") or "").strip() or None
+            verb_n = normalize_arabic_for_match(verb or "")
+            if cid:
+                clause_ids.add(cid.lower())
+                clause_meta_map[cid.lower()] = (bid, cid, verb)
+            if len(verb_n) >= 6:
+                verbatims_norm.add(verb_n)
+                if not cid:
+                    clause_meta_map[verb_n] = (bid, None, verb)
+
+        try:
+            all_tri_rows = self.conn.execute(
+                """
+                SELECT triangulation_id, passage_id, source_id, explained_matn_book_id,
+                       explained_matn_clause_id, explained_matn_verbatim, start_sec, end_sec
+                FROM matn_triangulation
+                ORDER BY triangulation_id
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            all_tri_rows = []
+
+        # ربط عكسي: إذا كان المقطع الحالي مقطع كتاب متن أصلي يحتوي على نص الفقرة المشروحة في matn_triangulation
+        p_text_norm = normalize_arabic_for_match(
+            f"{p_dict.get('clean_matn') or ''} {p_dict.get('raw_text') or ''}"
+        )
+        if p_text_norm:
+            for r in all_tri_rows:
+                if str(r["passage_id"]) == passage_id:
+                    continue
+                verb_raw = str(r["explained_matn_verbatim"] or "").strip()
+                verb_n = normalize_arabic_for_match(verb_raw)
+                if len(verb_n) >= 6 and verb_n in p_text_norm:
+                    cid = str(r["explained_matn_clause_id"] or "").strip()
+                    bid = str(r["explained_matn_book_id"] or "").strip() or None
+                    if cid:
+                        clause_ids.add(cid.lower())
+                        clause_meta_map.setdefault(cid.lower(), (bid, cid, verb_raw))
+                    verbatims_norm.add(verb_n)
+
+        if not clause_ids and not verbatims_norm:
+            return []
+
+        # توسيع المجموعة لتشمل أي سجل في matn_triangulation يشترك في clause_id أو نص المتن المشروح
+        matched_other_pids: Dict[str, Dict[str, Any]] = {}
+        for r in all_tri_rows:
+            other_pid = str(r["passage_id"])
+            cid = str(r["explained_matn_clause_id"] or "").strip()
+            cid_low = cid.lower()
+            verb_raw = str(r["explained_matn_verbatim"] or "").strip()
+            verb_n = normalize_arabic_for_match(verb_raw)
+
+            is_match = False
+            if cid_low and cid_low in clause_ids:
+                is_match = True
+            elif len(verb_n) >= 6 and any((verb_n in vn or vn in verb_n) for vn in verbatims_norm):
+                is_match = True
+
+            if is_match:
+                if len(verb_n) >= 6:
+                    verbatims_norm.add(verb_n)
+                if other_pid != passage_id and other_pid not in matched_other_pids:
+                    matched_other_pids[other_pid] = {
+                        "explained_matn_book_id": r["explained_matn_book_id"],
+                        "explained_matn_clause_id": r["explained_matn_clause_id"],
+                        "explained_matn_verbatim": r["explained_matn_verbatim"],
+                        "tri_start_sec": r["start_sec"],
+                        "tri_end_sec": r["end_sec"],
+                    }
+
+        # البحث عن مقاطع الكتب أو الشروح الأخرى التي تتضمن نص المتن المشروح حتى لو لم تسجل في matn_triangulation
+        default_meta = next(iter(clause_meta_map.values()), (None, None, None))
+        if verbatims_norm:
+            for p_row in self.conn.execute(
+                "SELECT passage_id, clean_matn, raw_text FROM passages WHERE passage_id != ?",
+                (passage_id,),
+            ):
+                opid = str(p_row["passage_id"])
+                if opid in matched_other_pids:
+                    continue
+                op_norm = normalize_arabic_for_match(
+                    f"{p_row['clean_matn'] or ''} {p_row['raw_text'] or ''}"
+                )
+                if op_norm and any(vn in op_norm for vn in verbatims_norm if len(vn) >= 6):
+                    matched_other_pids[opid] = {
+                        "explained_matn_book_id": default_meta[0],
+                        "explained_matn_clause_id": default_meta[1],
+                        "explained_matn_verbatim": default_meta[2],
+                        "tri_start_sec": None,
+                        "tri_end_sec": None,
+                    }
+
+        if not matched_other_pids:
+            return []
+
+        placeholders = ",".join("?" for _ in matched_other_pids)
+        p_rows = self.conn.execute(
+            f"""
+            SELECT p.passage_id, p.source_id, p.series_id, p.part_id, p.part_number,
+                   p.sub_heading, p.clean_matn, p.summary, p.start_sec, p.end_sec,
+                   p.youtube_timestamp_url, p.page_num,
+                   s.source_type, s.title AS source_title, s.author_or_sheikh, s.science
+            FROM passages p
+            LEFT JOIN sources s ON p.source_id = s.source_id
+            WHERE p.passage_id IN ({placeholders})
+            ORDER BY CASE WHEN s.source_type = 'book' THEN 0 ELSE 1 END, p.passage_id
+            """,
+            list(matched_other_pids.keys()),
+        ).fetchall()
+
+        related_list: List[Dict[str, Any]] = []
+        for pr in p_rows:
+            opid = str(pr["passage_id"])
+            t_meta = matched_other_pids.get(opid, {})
+            start_s = t_meta.get("tri_start_sec") if t_meta.get("tri_start_sec") is not None else pr["start_sec"]
+            end_s = t_meta.get("tri_end_sec") if t_meta.get("tri_end_sec") is not None else pr["end_sec"]
+            related_list.append(
+                {
+                    "passage_id": opid,
+                    "source_id": pr["source_id"],
+                    "source_type": pr["source_type"],
+                    "source_title": pr["source_title"],
+                    "author_or_sheikh": pr["author_or_sheikh"],
+                    "science": pr["science"],
+                    "part_number": pr["part_number"],
+                    "sub_heading": pr["sub_heading"],
+                    "clean_matn": pr["clean_matn"],
+                    "summary": pr["summary"],
+                    "explained_matn_book_id": t_meta.get("explained_matn_book_id"),
+                    "explained_matn_clause_id": t_meta.get("explained_matn_clause_id"),
+                    "explained_matn_verbatim": t_meta.get("explained_matn_verbatim"),
+                    "start_sec": start_s,
+                    "end_sec": end_s,
+                    "youtube_timestamp_url": pr["youtube_timestamp_url"],
+                    "page_num": pr["page_num"],
+                }
+            )
+        return related_list
+
+    def cross_commentary_search(
+        self,
+        query: str = "",
+        matn_clause: Optional[str] = None,
+        science: Optional[str] = None,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        event_layer: str = "historical",
+        top_k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        البحث المقارن عبر الشروح (Cross-Source Matn Triangulation Search):
+        يجمع لكل فقرة متن مشروحة (explained_matn_clause_id / explained_matn_verbatim)
+        مقطع الكتاب المحقق (برقم الصفحة) مع نظائره من الدروس الصوتية وشروح الشيوخ المتعددة المحاذاة بالثانية.
+        """
+        try:
+            tri_rows = self.conn.execute(
+                """
+                SELECT triangulation_id, passage_id, source_id, explained_matn_book_id,
+                       explained_matn_clause_id, explained_matn_verbatim, start_sec, end_sec
+                FROM matn_triangulation
+                ORDER BY triangulation_id
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+        if not tri_rows:
+            return []
+
+        # تجميع الفقرات المشروحة حسب معرف الفقرة أو النص المطبّع
+        clause_groups: List[Dict[str, Any]] = []
+        for r in tri_rows:
+            cid = str(r["explained_matn_clause_id"] or "").strip()
+            bid = str(r["explained_matn_book_id"] or "").strip()
+            verb = str(r["explained_matn_verbatim"] or "").strip()
+            verb_n = normalize_arabic_for_match(verb)
+
+            matched_group: Optional[Dict[str, Any]] = None
+            for grp in clause_groups:
+                if cid and grp["clause_id_low"] == cid.lower():
+                    matched_group = grp
+                    break
+                if len(verb_n) >= 6 and any(
+                    (verb_n in vn or vn in verb_n) for vn in grp["verbatims_norm"]
+                ):
+                    matched_group = grp
+                    break
+
+            if matched_group is None:
+                matched_group = {
+                    "clause_id": cid or f"CLAUSE_{len(clause_groups) + 1}",
+                    "clause_id_low": cid.lower() if cid else "",
+                    "book_id": bid or None,
+                    "verbatim": verb,
+                    "verbatims_norm": {verb_n} if len(verb_n) >= 6 else set(),
+                }
+                clause_groups.append(matched_group)
+            else:
+                if not matched_group["clause_id_low"] and cid:
+                    matched_group["clause_id"] = cid
+                    matched_group["clause_id_low"] = cid.lower()
+                if not matched_group["book_id"] and bid:
+                    matched_group["book_id"] = bid
+                if len(verb) > len(matched_group["verbatim"] or ""):
+                    matched_group["verbatim"] = verb
+                if len(verb_n) >= 6:
+                    matched_group["verbatims_norm"].add(verb_n)
+
+        if matn_clause and matn_clause.strip():
+            mc = matn_clause.strip()
+            mc_low = mc.lower()
+            mc_norm = normalize_arabic_for_match(mc)
+            clause_groups = [
+                g
+                for g in clause_groups
+                if g["clause_id_low"] == mc_low
+                or (
+                    len(mc_norm) >= 4
+                    and any((mc_norm in vn or vn in mc_norm) for vn in g["verbatims_norm"])
+                )
+            ]
+
+        comparative_results: List[Dict[str, Any]] = []
+        for grp in clause_groups:
+            clause_selector = grp["clause_id"] if grp["clause_id_low"] else grp["verbatim"]
+            passages_in_group = self.search(
+                query=query,
+                top_k=50,
+                mode="hybrid",
+                science=science,
+                year_min=year_min,
+                year_max=year_max,
+                event_layer=event_layer,
+                matn_clause=clause_selector,
+            )
+            if not passages_in_group:
+                continue
+
+            group_score = max(float(p.get("hybrid_score", 0.0)) for p in passages_in_group)
+            book_passages = [p for p in passages_in_group if p.get("source_type") == "book"]
+            lecture_passages = [
+                p for p in passages_in_group if p.get("source_type") in ("lecture", "course")
+            ]
+            sheikhs_or_authors: List[str] = []
+            for p in passages_in_group:
+                auth = str(p.get("author_or_sheikh") or "").strip()
+                if auth and auth not in sheikhs_or_authors:
+                    sheikhs_or_authors.append(auth)
+
+            comparative_results.append(
+                {
+                    "explained_matn_clause_id": grp["clause_id"],
+                    "explained_matn_book_id": grp["book_id"],
+                    "explained_matn_verbatim": grp["verbatim"],
+                    "group_score": round(group_score, 6),
+                    "total_sources": len(passages_in_group),
+                    "source_types": sorted(
+                        list({str(p.get("source_type")) for p in passages_in_group if p.get("source_type")})
+                    ),
+                    "sheikhs_or_authors": sheikhs_or_authors,
+                    "book_passages": book_passages,
+                    "lecture_passages": lecture_passages,
+                    "passages": passages_in_group,
+                }
+            )
+
+        comparative_results.sort(key=lambda x: x["group_score"], reverse=True)
+        return comparative_results[: max(1, int(top_k))]
+
+    def _hydrate_passage_result(
+        self,
+        passage_id: str,
+        score_meta: Dict[str, Any],
+        gem_scores_by_id: Optional[Dict[str, Dict[str, float]]] = None,
+        include_related: bool = True,
+    ) -> Dict[str, Any]:
+        """يجمع كافة بيانات المقطع، المصدر، القواعد، التوقيتات، الكيانات المطابقة، ونظائر المتن المشروح."""
         p_row = self.conn.execute(
             """
             SELECT p.*,
@@ -895,20 +1573,22 @@ class HybridSearchEngine:
             except Exception:
                 p_dict[out_col] = []
 
-        # القواعد المستخرجة (science_gems)
-        gems = [
-            dict(r)
-            for r in self.conn.execute(
-                """
-                SELECT gem_id, title, category, verbatim_rule, polished_rule,
-                       explanation, start_sec, end_sec, youtube_timestamp_url
-                FROM science_gems
-                WHERE passage_id = ?
-                ORDER BY gem_id
-                """,
-                (passage_id,),
-            )
-        ]
+        # القواعد المستخرجة (science_gems) مع إثرائها بدرجات التشابه إن وجدت
+        gems: List[Dict[str, Any]] = []
+        for r in self.conn.execute(
+            """
+            SELECT gem_id, title, category, verbatim_rule, polished_rule,
+                   explanation, start_sec, end_sec, youtube_timestamp_url
+            FROM science_gems
+            WHERE passage_id = ?
+            ORDER BY gem_id
+            """,
+            (passage_id,),
+        ):
+            gd = dict(r)
+            if gem_scores_by_id and str(gd["gem_id"]) in gem_scores_by_id:
+                gd.update(gem_scores_by_id[str(gd["gem_id"])])
+            gems.append(gd)
 
         # الأعلام (passage_persons)
         persons = [
@@ -982,6 +1662,12 @@ class HybridSearchEngine:
             )
         ]
 
+        related_commentaries = (
+            self._resolve_related_commentaries(passage_id, p_dict, triangulations)
+            if include_related
+            else []
+        )
+
         return {
             "passage_id": p_dict["passage_id"],
             "source_id": p_dict.get("source_id"),
@@ -1010,17 +1696,24 @@ class HybridSearchEngine:
             "events_chronology": events,
             "evidences": evidences,
             "matn_triangulation": triangulations,
+            "related_commentaries": related_commentaries,
             **score_meta,
         }
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="محرك الاسترجاع الهجين العلائقي (FTS5 BM25 + Dual EmbeddingGemma 2 + RRF + Entity Filters)."
+        description="محرك الاسترجاع الهجين العلائقي (FTS5 BM25 + Dual EmbeddingGemma 2 + Gem Boost + Matn Triangulation + RRF)."
     )
     parser.add_argument("--db", "--db-path", dest="db", required=True, help="مسار ملف قاعدة بيانات SQLite")
     parser.add_argument("--query", default="", help="نص البحث (عبارة تراثية أو سؤال مفهومي)")
     parser.add_argument("--top-k", type=int, default=5, help="عدد النتائج المسترجعة")
+    parser.add_argument(
+        "--target",
+        default="passages",
+        choices=["passages", "gems", "both", "cross_commentary"],
+        help="هدف الاسترجاع: المقاطع (passages) أو القواعد العلمية (gems) أو كلاهما (both) أو المقارنة عبر الشروح (cross_commentary)",
+    )
     parser.add_argument(
         "--mode",
         default="hybrid",
@@ -1030,6 +1723,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--alpha-matn", type=float, default=None, help="وزن متجه المتن vec_matn")
     parser.add_argument("--alpha-concept", type=float, default=None, help="وزن متجه المفهوم vec_concept")
     parser.add_argument("--alpha-fts", type=float, default=None, help="وزن البحث المعجمي FTS5 BM25")
+    parser.add_argument(
+        "--gem-boost",
+        type=float,
+        default=0.28,
+        help="معامل تعزيز المقطع بتشابه القواعد العلمية المستخرجة منه (gem_embeddings)",
+    )
+    parser.add_argument("--category", default=None, help="فلترة بتصنيف القاعدة العلمية عند البحث في gems")
     parser.add_argument("--person", default=None, help="فلترة باسم العلم")
     parser.add_argument(
         "--person-layer",
@@ -1040,11 +1740,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--place", default=None, help="فلترة باسم المكان")
     parser.add_argument("--year-min", type=int, default=None, help="الحد الأدنى للسنة الهجرية")
     parser.add_argument("--year-max", type=int, default=None, help="الحد الأعلى للسنة الهجرية")
+    parser.add_argument(
+        "--event-layer",
+        default="historical",
+        choices=["historical", "transmission", "any"],
+        help="طبقة الحدث التاريخي (الافتراضي: historical لعزل تواريخ نسخ المخطوطات)",
+    )
     parser.add_argument("--surah", type=int, default=None, help="فلترة برقم السورة القرآنية")
     parser.add_argument("--ayah", default=None, help="فلترة بمفتاح الآية (مثل 2:255)")
     parser.add_argument("--science", default=None, help="فلترة بالعلم (مثل maliki, akida, ossoul)")
     parser.add_argument("--source-type", default=None, help="فلترة بنوع المصدر (book, lecture, course)")
-    parser.add_argument("--matn-clause", default=None, help="فلترة بمعرف فقرة المتن المشروح (مثل UB:2)")
+    parser.add_argument("--matn-clause", default=None, help="فلترة بمعرف فقرة المتن المشروح (مثل UB:2) أو نصها")
     parser.add_argument(
         "--backend",
         default="auto",
@@ -1053,26 +1759,105 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    target = (args.target or "passages").strip().lower()
+
     with HybridSearchEngine(db_path=args.db, backend=args.backend) as engine:
-        results = engine.search(
-            query=args.query,
-            top_k=args.top_k,
-            mode=args.mode,
-            alpha_matn=args.alpha_matn,
-            alpha_concept=args.alpha_concept,
-            alpha_fts=args.alpha_fts,
-            person=args.person,
-            person_layer=args.person_layer,
-            place=args.place,
-            year_min=args.year_min,
-            year_max=args.year_max,
-            surah=args.surah,
-            ayah=args.ayah,
-            science=args.science,
-            source_type=args.source_type,
-            matn_clause=args.matn_clause,
-        )
-    print(json.dumps(results, ensure_ascii=False, indent=2))
+        if target == "gems":
+            output: Any = engine.search_gems(
+                query=args.query,
+                top_k=args.top_k,
+                mode=args.mode,
+                alpha_matn=0.40 if args.alpha_matn is None else args.alpha_matn,
+                alpha_concept=0.45 if args.alpha_concept is None else args.alpha_concept,
+                alpha_fts=0.15 if args.alpha_fts is None else args.alpha_fts,
+                category=args.category,
+                person=args.person,
+                person_layer=args.person_layer,
+                place=args.place,
+                year_min=args.year_min,
+                year_max=args.year_max,
+                event_layer=args.event_layer,
+                surah=args.surah,
+                ayah=args.ayah,
+                science=args.science,
+                source_type=args.source_type,
+                matn_clause=args.matn_clause,
+            )
+        elif target == "both":
+            output = {
+                "passages": engine.search(
+                    query=args.query,
+                    top_k=args.top_k,
+                    mode=args.mode,
+                    alpha_matn=args.alpha_matn,
+                    alpha_concept=args.alpha_concept,
+                    alpha_fts=args.alpha_fts,
+                    gem_boost=args.gem_boost,
+                    person=args.person,
+                    person_layer=args.person_layer,
+                    place=args.place,
+                    year_min=args.year_min,
+                    year_max=args.year_max,
+                    event_layer=args.event_layer,
+                    surah=args.surah,
+                    ayah=args.ayah,
+                    science=args.science,
+                    source_type=args.source_type,
+                    matn_clause=args.matn_clause,
+                ),
+                "gems": engine.search_gems(
+                    query=args.query,
+                    top_k=args.top_k,
+                    mode=args.mode,
+                    alpha_matn=0.40 if args.alpha_matn is None else args.alpha_matn,
+                    alpha_concept=0.45 if args.alpha_concept is None else args.alpha_concept,
+                    alpha_fts=0.15 if args.alpha_fts is None else args.alpha_fts,
+                    category=args.category,
+                    person=args.person,
+                    person_layer=args.person_layer,
+                    place=args.place,
+                    year_min=args.year_min,
+                    year_max=args.year_max,
+                    event_layer=args.event_layer,
+                    surah=args.surah,
+                    ayah=args.ayah,
+                    science=args.science,
+                    source_type=args.source_type,
+                    matn_clause=args.matn_clause,
+                ),
+            }
+        elif target == "cross_commentary":
+            output = engine.cross_commentary_search(
+                query=args.query,
+                matn_clause=args.matn_clause,
+                science=args.science,
+                year_min=args.year_min,
+                year_max=args.year_max,
+                event_layer=args.event_layer,
+                top_k=args.top_k,
+            )
+        else:
+            output = engine.search(
+                query=args.query,
+                top_k=args.top_k,
+                mode=args.mode,
+                alpha_matn=args.alpha_matn,
+                alpha_concept=args.alpha_concept,
+                alpha_fts=args.alpha_fts,
+                gem_boost=args.gem_boost,
+                person=args.person,
+                person_layer=args.person_layer,
+                place=args.place,
+                year_min=args.year_min,
+                year_max=args.year_max,
+                event_layer=args.event_layer,
+                surah=args.surah,
+                ayah=args.ayah,
+                science=args.science,
+                source_type=args.source_type,
+                matn_clause=args.matn_clause,
+            )
+    print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 
 

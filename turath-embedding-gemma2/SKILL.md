@@ -76,35 +76,38 @@ CREATE TABLE IF NOT EXISTS gem_embeddings (
 
 ---
 
-## 3. معمارية البحث الهجين (`Hybrid Search + RRF + Entity Filters`)
+## 3. معمارية البحث الهجين (`Hybrid Search + Gem Boost + Matn Triangulation + RRF`)
 
-يدمج محرك `scripts/hybrid_search.py` أربع طبقات استرجاع في خط أنابيب واحد:
+يدمج محرك `scripts/hybrid_search.py` خمس طبقات استرجاع وتثليث في خط أنابيب واحد:
 
 ```mermaid
 flowchart TD
-    Q["استعلام الباحث + فلاتر الكيانات الاختيارية"] --> EF["1. الفلترة العلائقية المسبقة (SQL Entity Filters)<br/>person (matn/isnad) | place | year_min..max | surah/ayah | science | source_type | matn_clause"]
+    Q["استعلام الباحث + فلاتر الكيانات الاختيارية"] --> EF["1. الفلترة العلائقية المسبقة (SQL Entity Filters)<br/>person (matn/isnad) | place | year_min..max (historical) | surah/ayah | science | source_type | matn_clause"]
     EF --> FTS["2. البحث المعجمي الحرفي<br/>SQLite FTS5 BM25 (passages_fts)"]
     EF --> VMATN["3. البحث الدلالي في المتن<br/>Cosine(q_vec, vec_matn)"]
     EF --> VCONC["4. البحث الدلالي في المفهوم<br/>Cosine(q_vec, vec_concept)"]
-    FTS --> FUSE["5. دمج الرتب والدرجات الهجين<br/>Weighted Score + Reciprocal Rank Fusion (RRF)<br/>(alpha_matn, alpha_concept, alpha_fts)"]
+    EF --> VGEMS["5. تعزيز القواعد العلمية<br/>gem_embeddings (max_gem_sim)"]
+    FTS --> FUSE["6. دمج الرتب والدرجات الهجين<br/>Weighted Score + Gem Boost + RRF<br/>(alpha_matn, alpha_concept, alpha_fts, gem_boost)"]
     VMATN --> FUSE
     VCONC --> FUSE
-    FUSE --> OUT["6. إثراء النتائج الكاملة<br/>المتن + الملخص + القواعد + التوقيت الصوتي ورابط يوتيوب / رقم الصفحة + الكيانات"]
+    VGEMS --> FUSE
+    FUSE --> OUT["7. إثراء النتائج وتثليث الشروح<br/>المتن + القواعد (best_matching_gem) + التوقيت الصوتي / رقم الصفحة + نظائر المتن (related_commentaries)"]
 ```
 
 1. **الطبقة الأولى — الفلترة العلائقية الصارمة والمرنة بالكيانات (`Relational Entity Filters`):**
    - `--person "<اسم العلم>"` مع `--person-layer matn|isnad|any` (**الافتراضي `'matn'`** لمنع تلوث نتائج البحث بالمقاطع التي ورد فيها العلم راوياً في السند فقط!)، مع دعم المطابقة المطبّعة المرنة للألقاب والكنى المعربة (مثل مطابقة `"الترمذي"` أو `"الإمام الترمذي"` لـ `"الإمام أبو عيسى الترمذي"`، ومطابقة `"أبا هريرة"` أو `"أبي هريرة"` لـ `"أبو هريرة رضي الله عنه"`).
    - `--place "<اسم المكان>"` عبر جدولَي `passage_places` و`places` مع تجريد الألقاب الجغرافية (`المكرمة / المنورة / الشريف`) والمطابقة ثنائية الاتجاه.
-   - `--year-min <H>` و`--year-max <H>` عبر جدول `events_chronology` مع اشتراط `event_layer = 'historical'` لاستبعاد تواريخ نسخ المخطوطات.
+   - `--year-min <H>` و`--year-max <H>` عبر جدول `events_chronology` مع اشتراط `event_layer = 'historical'` لاستبعاد تواريخ نسخ المخطوطات (`transmission`).
    - `--surah <N>` أو `--ayah <surah:ayah>` عبر جدول `evidences` (يدعم أرقام السور وأسماء السور الـ 114 والأرقام الهندية مثل `2:255` أو `البقرة:255` أو `٢:٢٥٥`).
    - `--science <science>` و`--source-type <book|lecture|course>` عبر جدول `sources`.
-   - `--matn-clause <clause_id>` عبر جدول `matn_triangulation` لاسترجاع جميع الشروح الصوتية والمكتوبة لفقرة متن محددة.
+   - `--matn-clause <clause_id_or_verbatim>` عبر جدول `matn_triangulation` (يدعم كلاً من رمز الفقرة مثل `AKH:2` أو جزءاً حرفياً من نص المتن المشروح) لاسترجاع جميع الشروح الصوتية والمكتوبة لفقرة المتن الواحدة.
 2. **الطبقة الثانية — البحث النصي الحرفي الصامد إملائياً وصرفياً (`Orthographic & Stem-Resilient FTS5 BM25`):**
    - يستعلم من جدول `passages_fts` مع عزل أدوات الاستفهام والكلمات القالبية (`هل، ما حكم، مسألة، ضابط، يجوز`)، وتوليد مجموعات البدائل الإملائية (`أ/إ/آ/ا`, `ة/ه`, `ى/ي`) وبادئات الجذوع الصرفية (`"stem"*`) وحساب درجات `BM25` المعززة بالتطابق الجذعي المطبّع.
-3. **الطبقة الثالثة — البحث الدلالي المزدوج (`Dual EmbeddingGemma 2`):**
-   - يولّد متجه الاستعلام ببادئة المهمة القياسية: `task: search query | query: {query}`، ثم يحسب `sim_matn` و`sim_concept` عبر ضرب المصفوفات المسرّع مع تغطية موسعة لمصطلحات الوضع والدلالة والمنطق وأصول الفقه والعقيدة والفقه.
-4. **الطبقة الرابعة — الدمج الهجين (`Weighted Score + Reciprocal Rank Fusion RRF`):**
-   - يجمع بين الدرجات المطبّعة ورتب `RRF` ($\sum_{c \in \{\text{matn}, \text{concept}, \text{fts}\}} \frac{\alpha_c}{k + \text{rank}_c(d)}$) مع قابلية التحكم الكامل بالأوزان (`--alpha-matn`, `--alpha-concept`, `--alpha-fts`).
+3. **الطبقة الثالثة — البحث الدلالي المزدوج وتعزيز القواعد العلمية (`Dual EmbeddingGemma 2 + Science Gems Boost`):**
+   - يولّد متجه الاستعلام ببادئة المهمة القياسية: `task: search query | query: {query}`، ثم يحسب `sim_matn` و`sim_concept` عبر ضرب المصفوفات المسرّع.
+   - يحسب في الوقت نفسه تشابه الاستعلام مع متجهات القواعد العلمية المستخرجة (`gem_embeddings`) ليمنح كل مقطع درجة `max_gem_sim` و`best_matching_gem`، ويعزز ترتيب المقطع الذي يحوي قاعدة علمية مطابقة لسؤال الباحث (`--gem-boost`)، مع إتاحة البحث المباشر في القواعد عبر `search_gems()` أو `--target gems|both`.
+4. **الطبقة الرابعة — التثليث متعدد المصادر عبر الشروح (`Cross-Source Matn Triangulation`):**
+   - يربط كل مقطع مسترجع بنظائره في المصادر الأخرى عبر حقل `related_commentaries` (سواء عبر تطابق `explained_matn_clause_id` أو تطابق نص المتن `explained_matn_verbatim`)، فيقترن مقطع الكتاب المحقق (`page_num`) آلياً بشروحه الصوتية المحاذاة بالثانية (`start_sec`, `end_sec`, `youtube_timestamp_url`)، كما تتيح دالة `cross_commentary_search()` (`--target cross_commentary`) استخراج جدول المقارنة الشامل بين الشراح.
 
 ---
 
@@ -112,9 +115,9 @@ flowchart TD
 
 | السكربت | الوظيفة الدقيقة |
 | :--- | :--- |
-| [`scripts/embed_corpus_gemma2.py`](./scripts/embed_corpus_gemma2.py) | محرك تجهيز النصوص (`prepare_embed_matn_text`, `prepare_embed_concept_text`) وتوليد المتجهات المزدوجة (`passage_embeddings`, `gem_embeddings`) بدعم `--backend auto\|ollama\|sentence-transformers\|genai\|deterministic-arabic-mps`. |
-| [`scripts/hybrid_search.py`](./scripts/hybrid_search.py) | محرك البحث الهجين (`HybridSearchEngine` + `CLI`) الذي يدمج `FTS5 BM25` + `vec_matn` + `vec_concept` + `RRF` + فلاتر الكيانات العلائقية ويعيد التوقيت الصوتي بالثانية وروابط يوتيوب وأرقام الصفحات. |
-| [`scripts/test_embedding_gemma2_gates.py`](./scripts/test_embedding_gemma2_gates.py) | بوابة الفحص الحتمية رباعية الطبقات (`Gate 1: Hygiene & L2 Norm`, `Gate 2: Matn vs Concept Retrieval`, `Gate 3: Hybrid + Entity Filters & Isnad Isolation`, `Gate 4: Real Lecture Corpus & Orthographic/Stopword-Resilient Hybrid Search`). |
+| [`scripts/embed_corpus_gemma2.py`](./scripts/embed_corpus_gemma2.py) | محرك تجهيز النصوص (`prepare_embed_matn_text`, `prepare_embed_concept_text`, `prepare_gem_embed_texts`) وتوليد المتجهات المزدوجة (`passage_embeddings`, `gem_embeddings`) بدعم `--backend auto\|ollama\|sentence-transformers\|genai\|deterministic-arabic-mps`. |
+| [`scripts/hybrid_search.py`](./scripts/hybrid_search.py) | محرك البحث الهجين (`HybridSearchEngine` + `CLI`) الذي يدمج `FTS5 BM25` + `vec_matn` + `vec_concept` + تعزيز `gem_embeddings` + تثليث الشروح (`related_commentaries` / `cross_commentary_search`) + فلاتر الكيانات العلائقية، بدعم `--target passages\|gems\|both\|cross_commentary`. |
+| [`scripts/test_embedding_gemma2_gates.py`](./scripts/test_embedding_gemma2_gates.py) | بوابة الفحص الحتمية خماسية الطبقات (`Gate 1: Hygiene & L2 Norm`, `Gate 2: Matn vs Concept Retrieval`, `Gate 3: Hybrid + Entity Filters & Isnad Isolation`, `Gate 4: Real Lecture Corpus & Orthographic/Stopword-Resilient Hybrid Search`, `Gate 5: Science Gems Vector Boost & Cross-Source Matn Triangulation Retrieval`). |
 
 ---
 
@@ -128,17 +131,32 @@ python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/embed_corpu
   --dim 768
 ```
 
-### ب. تشغيل البحث الهجين مع الفلترة العلائقية وعزل السند:
+### ب. تشغيل البحث الهجين في المقاطع أو القواعد العلمية أو المقارنة عبر الشروح:
 ```bash
+# 1. بحث هجين في المقاطع مع تعزيز القواعد العلمية وعزل السند:
 python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/hybrid_search.py \
   --db /path/to/turath_objects.sqlite \
   --query "حكم الرخص الشرعية وتغير الفتوى" \
   --person "مالك بن أنس" \
   --person-layer matn \
   --top-k 5
+
+# 2. بحث مباشر في القواعد والضوابط العلمية (gem_embeddings):
+python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/hybrid_search.py \
+  --db /path/to/turath_objects.sqlite \
+  --target gems \
+  --query "ضابط مراعاة الخلاف وسد الذرائع" \
+  --science maliki
+
+# 3. بحث مقارن عبر الشروح والكتب والدروس الصوتية لفقرة متن مشروحة:
+python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/hybrid_search.py \
+  --db /path/to/turath_objects.sqlite \
+  --target cross_commentary \
+  --matn-clause "AKH:2" \
+  --query "الدلك والفور في فرائض الوضوء"
 ```
 
-### ج. تشغيل بوابة الفحص الحتمية (`4-Layer Quality Gate`):
+### ج. تشغيل بوابة الفحص الحتمية (`5-Layer Quality Gate`):
 ```bash
 python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/test_embedding_gemma2_gates.py
 ```
@@ -147,4 +165,4 @@ python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/test_embedd
 
 ## 6. المراجع الهندسية التفصيلية
 
-- **[`references/01-dual-embedding-and-hybrid-retrieval.md`](./references/01-dual-embedding-and-hybrid-retrieval.md)** — المرجع الهندسي الكامل لبادئات المهام في `EmbeddingGemma 2`، خوارزميات التنظيف المزدوج، معادلات الدمج الهجين (`Weighted + RRF`)، وجداول الفلترة العلائقية.
+- **[`references/01-dual-embedding-and-hybrid-retrieval.md`](./references/01-dual-embedding-and-hybrid-retrieval.md)** — المرجع الهندسي الكامل لبادئات المهام في `EmbeddingGemma 2`، خوارزميات التنظيف المزدوج، معادلات الدمج الهجين وتعزيز القواعد العلمية (`Weighted + Gem Boost + RRF`)، وتثليث المتون عبر الشروح (`Cross-Source Matn Triangulation`).

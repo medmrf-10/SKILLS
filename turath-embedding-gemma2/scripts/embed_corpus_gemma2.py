@@ -459,17 +459,34 @@ def prepare_gem_embed_texts(
     isnad_persons: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Tuple[str, str]:
     """يجهز نصي التضمين المزدوج (embed_matn_text و embed_concept_text) للقاعدة العلمية في science_gems."""
-    forbidden_isnad: List[str] = []
-    for pe in (isnad_persons or []):
-        if isinstance(pe, dict) and pe.get("source_layer") == "isnad":
-            for k in ("mentioned_name", "canonical_name"):
-                if pe.get(k):
-                    forbidden_isnad.append(str(pe[k]))
+    all_persons = list(isnad_persons or []) + _parse_json_list((passage or {}).get("persons"))
+    isnad_only_names: List[str] = []
+    matn_names: List[str] = []
+    for pe in all_persons:
+        if not isinstance(pe, dict):
+            continue
+        layer = (pe.get("source_layer") or "matn").strip().lower()
+        for k in ("mentioned_name", "mentioned_in_text", "canonical_name"):
+            nm = str(pe.get(k) or "").strip()
+            if not nm:
+                continue
+            if layer == "isnad":
+                isnad_only_names.append(nm)
+            elif layer == "matn":
+                matn_names.append(nm)
+
+    matn_norm_set = {normalize_arabic_for_match(x) for x in matn_names}
+    forbidden_isnad: List[str] = [
+        nm for nm in isnad_only_names if normalize_arabic_for_match(nm) not in matn_norm_set
+    ]
+    if passage and passage.get("isnad_prefix"):
+        forbidden_isnad.append(str(passage["isnad_prefix"]))
 
     title = clean_hygienic_arabic_text(str(gem.get("title") or "قاعدة علمية"), forbidden_phrases=forbidden_isnad)
     category = clean_hygienic_arabic_text(str(gem.get("category") or "فائدة"), forbidden_phrases=forbidden_isnad)
+    raw_verbatim = str(gem.get("verbatim_rule") or gem.get("polished_rule") or "").strip()
     verbatim_rule = clean_hygienic_arabic_text(
-        str(gem.get("verbatim_rule") or ""),
+        raw_verbatim,
         strip_leading_isnad=True,
         forbidden_phrases=forbidden_isnad,
     )
@@ -582,8 +599,15 @@ CONCEPT_SYNONYM_CLUSTERS: List[Tuple[str, List[str]]] = [
         "افراد", "توحيد", "الوهيه", "ربوبيه", "شرك اصغر", "شرك اكبر", "يطاف", "ينحر", "ذبح", "قبر", "بدعه",
     ]),
     ("cluster_tahara_akhdari", [
-        "اخضري", "طهاره", "مياه", "وضوء", "فرائض", "سنن", "نواقض", "غسل", "تيمم",
+        "اخضري", "طهاره", "مياه", "ماء مطلق", "طهور", "وضوء", "فرائض", "سنن", "نواقض", "غسل", "تيمم",
+        "دلك", "امرار اليد", "موالاه", "فور", "جفاف", "فرض عين", "تصحيح ايمانه",
         "صلاه", "سهو", "سجود", "قبلي", "بعدي", "ترقيع", "عبادات", "مالكي",
+    ]),
+    ("cluster_muraat_khilaf_maliki", [
+        "مراعاه الخلاف", "دليل الخصم", "بعد الوقوع", "تصحيح العقد", "فسخ", "نقض", "مفسده النقض", "لازم",
+    ]),
+    ("cluster_sadd_dharai_usool", [
+        "سد الذرائع", "ذريعه", "ذرائع", "وسيله المحرم", "مفضيه", "مفسده راجحه", "توسل الي المحرم",
     ]),
     ("cluster_zakat_maliki", [
         "زكاه", "نصاب", "حول", "ماشيه", "عين", "حرث", "ثمار", "معادن", "ركاز", "عروض",
