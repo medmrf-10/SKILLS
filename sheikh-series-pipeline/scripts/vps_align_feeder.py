@@ -59,7 +59,7 @@ def index_ytb_txt_and_align():
             vid = parts[1]
             p = os.path.join(root, f)
             try:
-                if os.path.getsize(p) < 120:
+                if os.path.getsize(p) < 60:
                     continue
                 al_name = stem + '.align.json'
                 if al_name in files_set and os.path.getsize(os.path.join(root, al_name)) > 200:
@@ -81,7 +81,10 @@ def build_ordered_lessons():
     min_pct = float(os.environ.get('ALIGN_MIN_COMPLETION_PCT', '70.0'))
     cutoff_ts = 1792180000  # Oct 17, 2026 00:00
     for s in data.get('series', []):
-        lessons = [l for l in (s.get('lessons') or []) if l.get('yt_id')]
+        lessons = [
+            l for l in (s.get('lessons') or [])
+            if l.get('yt_id') and not (l.get('duration') is None and l.get('is_child'))
+        ]
         if not lessons:
             continue
         done_cnt = sum(1 for l in lessons if (l['yt_id'] in yt_to_txt or l['yt_id'] in aligned_vids))

@@ -90,7 +90,7 @@ def index_existing_ytb():
                 continue
             p = os.path.join(root, f)
             try:
-                if os.path.getsize(p) < 120:
+                if os.path.getsize(p) < 60:
                     continue
                 stem = f[:-4]
                 parts = stem.split('_', 1)
@@ -142,7 +142,7 @@ def cleanup_transcribed_mp3s(series_dir):
         base = os.path.splitext(mp3)[0]
         txt = base + '.txt'
         meta = base + '.meta.json'
-        if os.path.exists(txt) and os.path.getsize(txt) >= 120 and os.path.exists(meta):
+        if os.path.exists(txt) and os.path.getsize(txt) >= 60 and os.path.exists(meta):
             try:
                 md = json.load(open(meta, encoding='utf-8'))
                 if md.get('ok'):
@@ -167,6 +167,8 @@ def main():
             continue
         missing = []
         for idx, l in enumerate(lessons, 1):
+            if l.get('duration') is None and l.get('is_child'):
+                continue
             vid = l['yt_id']
             n = int(l.get('order_no') or idx)
             if vid not in yt_to_path:
