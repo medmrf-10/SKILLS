@@ -376,9 +376,12 @@ def upload_and_finalize(job, local_align_path, rep):
     }
     if rep.get('low_coverage_diagnosis'):
         align_summary['low_coverage_diagnosis'] = rep['low_coverage_diagnosis']
+    if job.get('stripped_reasons'):
+        align_summary['stripped_reasons'] = job['stripped_reasons']
 
+    cleaned_txt_b64 = job.get('cleaned_txt_b64', '')
     py_code = (
-        f'import glob, json, os, sys\n'
+        f'import base64, glob, json, os, sys\n'
         f'data = sys.stdin.buffer.read()\n'
         f'if len(data) < 200:\n'
         f'    raise RuntimeError(f"short align payload: {{len(data)}} bytes")\n'
@@ -392,6 +395,13 @@ def upload_and_finalize(job, local_align_path, rep):
         f'ap = rt[:-4] + ".align.json"\n'
         f'mp = rt[:-4] + ".meta.json"\n'
         f'os.makedirs(os.path.dirname(ap), exist_ok=True)\n'
+        f'ct_b64 = {json.dumps(cleaned_txt_b64)}\n'
+        f'if ct_b64 and rt.endswith(".txt"):\n'
+        f'    ct_bytes = base64.b64decode(ct_b64)\n'
+        f'    if len(ct_bytes) > 50:\n'
+        f'        with open(rt + ".tmp", "wb") as tf:\n'
+        f'            tf.write(ct_bytes)\n'
+        f'        os.replace(rt + ".tmp", rt)\n'
         f'with open(ap + ".tmp", "wb") as f:\n'
         f'    f.write(data)\n'
         f'os.replace(ap + ".tmp", ap)\n'
@@ -493,11 +503,14 @@ def main():
         submitted_upload = False
 
         try:
+            import base64 as _b64
             raw_txt = open(local_txt, encoding='utf-8', errors='replace').read()
             cleaned_txt, stripped_reasons = strip_preamble_and_header(raw_txt)
-            if stripped_reasons and cleaned_txt:
+            if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt:
                 with open(local_txt, 'w', encoding='utf-8') as tf:
                     tf.write(cleaned_txt)
+                job['cleaned_txt_b64'] = _b64.b64encode(cleaned_txt.encode('utf-8')).decode('ascii')
+                job['stripped_reasons'] = stripped_reasons
                 raw_txt = cleaned_txt
             words = raw_txt.split()
             if not words:

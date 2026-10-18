@@ -290,12 +290,44 @@ def interpolate(times, words, min_score, silent_set=None):
     """استيفاء خطي للكلمات ضعيفة الثقة/المفقودة بين جارتين موثوقتين مع منع ابتلاع سكتات النفس ⇒ (الأزمنة, العلامات)."""
     n = len(words)
     silent_set = silent_set or set()
+    eff_min = min(float(min_score), -4.0) if min_score <= -3.0 else float(min_score)
     flags = ['a' if (i in times and i not in silent_set) else '' for i in range(n)]
     for i in range(n):
         if i in silent_set:
             flags[i] = 'i'
-        elif i in times and (times[i][2] is None or times[i][2] < min_score):
-            flags[i] = 'i'
+        elif i in times:
+            s_i, e_i, sc_i = times[i]
+            if sc_i is None or sc_i < eff_min or (e_i - s_i) < 0.018:
+                flags[i] = 'i'
+    # إنقاذ سياقي للكلمات القصيرة/الدارجة المنفردة (1..3 كلمات) المحصورة بين مرساتين قويتين
+    # متى ما كان لها امتداد صوتي فيزيائي سليم (0.035s <= dur <= max_dur) وبدون فجوة صمت طويلة تبتلعها
+    if min_score <= -3.0:
+        idx_c = 0
+        while idx_c < n:
+            if flags[idx_c] == 'a' or idx_c in silent_set:
+                idx_c += 1
+                continue
+            j_c = idx_c
+            spoken_run = []
+            while j_c < n and flags[j_c] != 'a':
+                if j_c not in silent_set:
+                    spoken_run.append(j_c)
+                j_c += 1
+            has_prev = idx_c > 0 and any(flags[p] == 'a' for p in range(max(0, idx_c - 3), idx_c))
+            has_next = j_c < n and any(flags[q] == 'a' for q in range(j_c, min(n, j_c + 3)))
+            if has_prev and has_next and 1 <= len(spoken_run) <= 3:
+                prev_a = max(p for p in range(max(0, idx_c - 3), idx_c) if flags[p] == 'a')
+                next_a = min(q for q in range(j_c, min(n, j_c + 3)) if flags[q] == 'a')
+                anchor_gap = times[next_a][0] - times[prev_a][1]
+                if anchor_gap <= 1.25 * len(spoken_run) + 0.85:
+                    for k in spoken_run:
+                        if k in times and times[k][2] is not None:
+                            s_k, e_k, sc_k = times[k]
+                            dur_k = e_k - s_k
+                            max_k = max(0.85, 0.22 * max(1, _norm_len(words[k])))
+                            if 0.035 <= dur_k <= max_k and sc_k >= -6.5:
+                                flags[k] = 'a'
+            idx_c = j_c
     known = [i for i in range(n) if flags[i] == 'a']
     if not known:                                     # لا ثقة إطلاقًا ⇒ توزيع خطي على المدة
         return times, flags

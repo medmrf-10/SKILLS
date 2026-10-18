@@ -205,7 +205,59 @@ def deduplicate_chunk_boundary_overlap(text_or_chunks, min_overlap_words=4, max_
         if next_b:
             cleaned_blocks.append(next_b)
 
-    return '\n\n'.join(b for b in cleaned_blocks if b)
+    merged_txt = '\n\n'.join(b for b in cleaned_blocks if b)
+    return deduplicate_large_repeated_blocks(merged_txt, min_block_words=28)
+
+
+def deduplicate_large_repeated_blocks(text, min_block_words=28):
+    """إزالة الكتل النصية الكبيرة المكررة (≥28 كلمة متطابقة حرفياً في موضعين غير متجاورين) الناتجة عن إعادة تفريغ مقطع فرعي، مع استثناء الآيات القرآنية والتكرارات التعبدية."""
+    if not text or not text.strip():
+        return text
+    cur_text = text
+    anchor_len = min(14, max(6, min_block_words // 2))
+    for _pass in range(8):
+        tokens = _extract_lexical_tokens(cur_text)
+        n = len(tokens)
+        if n < min_block_words * 2:
+            break
+        seen = {}
+        found_cut = None
+        for i in range(0, n - min_block_words + 1):
+            key = tuple(tokens[k][2] for k in range(i, i + anchor_len))
+            prev_list = seen.get(key)
+            if prev_list:
+                for j0 in prev_list:
+                    if i - j0 < min_block_words:
+                        continue
+                    L = anchor_len
+                    while i + L < n and j0 + L < i and tokens[i + L][2] == tokens[j0 + L][2]:
+                        L += 1
+                    if L >= min_block_words:
+                        span_words = [tokens[k][2] for k in range(i, i + L)]
+                        if _is_devotional_span(span_words):
+                            continue
+                        raw_slice = cur_text[tokens[i][0]:tokens[i + L - 1][1]]
+                        # لا تحذف آية قرآنية بين قوسين مزهرين { ... } إلا إذا تجاوز التكرار 55 كلمة (فقرة شرح كاملة)
+                        if L < 55 and ('{' in raw_slice or '}' in raw_slice or '﴿' in raw_slice or '﴾' in raw_slice):
+                            continue
+                        c_start = tokens[i][0]
+                        c_end = _consume_trailing_punct(cur_text, tokens[i + L - 1][1])
+                        found_cut = (c_start, c_end)
+                        break
+            if found_cut:
+                break
+            seen.setdefault(key, []).append(i)
+        if not found_cut:
+            break
+        c_start, c_end = found_cut
+        head_part = cur_text[:c_start].rstrip()
+        tail_part = cur_text[c_end:].lstrip()
+        if head_part and tail_part:
+            sep = '\n\n' if ('\n\n' in cur_text[max(0, c_start - 4):min(len(cur_text), c_end + 4)]) else ' '
+            cur_text = head_part + sep + tail_part
+        else:
+            cur_text = head_part or tail_part
+    return cur_text
 
 
 def _strip_single_block_thinking(block):

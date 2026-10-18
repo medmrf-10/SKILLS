@@ -77,11 +77,19 @@ def build_ordered_lessons():
     yt_to_txt, aligned_vids = index_existing_and_aligned = index_ytb_txt_and_align()
 
     series_list = []
+    allowed_vids = set()
+    min_pct = float(os.environ.get('ALIGN_MIN_COMPLETION_PCT', '70.0'))
     cutoff_ts = 1792180000  # Oct 17, 2026 00:00
     for s in data.get('series', []):
         lessons = [l for l in (s.get('lessons') or []) if l.get('yt_id')]
         if not lessons:
             continue
+        done_cnt = sum(1 for l in lessons if (l['yt_id'] in yt_to_txt or l['yt_id'] in aligned_vids))
+        done_pct = (done_cnt * 100.0) / len(lessons)
+        if done_pct < min_pct:
+            continue
+        for l in lessons:
+            allowed_vids.add(l['yt_id'])
         tot_dur = sum(int(l.get('duration') or 0) for l in lessons)
         # Check if this series has newly transcribed lessons from the current queue run
         has_new_txt = any(
@@ -91,13 +99,11 @@ def build_ordered_lessons():
         priority_tier = 0 if has_new_txt else 1
         series_list.append((priority_tier, len(lessons), tot_dur, s, lessons))
 
-    # ترتيب تصاعدي: الطابور الجديد أولاً، ومن السلاسل الأصغر إلى الأكبر
+    # ترتيب تصاعدي: الطابور الجديد (>=70%) أولاً، ثم بقية السلاسل (>=70%)، ومن الأصغر إلى الأكبر
     series_list.sort(key=lambda x: (x[0], x[1], x[2]))
 
     pending = []
     for tier, _, _, s, lessons in series_list:
-        if tier > 0:
-            continue  # الطابور الجديد فقط كما طلب محمد
         for idx, l in enumerate(lessons, 1):
             vid = l['yt_id']
             if vid in aligned_vids:
@@ -120,17 +126,21 @@ def build_ordered_lessons():
                 'series_dir': os.path.dirname(txt_path),
                 'dur_s': int(l.get('duration') or 0),
             })
-    return pending, len(aligned_vids)
+    return pending, len(aligned_vids), allowed_vids
 
 
-def cleanup_completed_in_bridge():
+def cleanup_completed_in_bridge(allowed_vids=None):
     os.makedirs(BRIDGE_DIR, exist_ok=True)
     for jpath in glob.glob(os.path.join(BRIDGE_DIR, '*.job.json')):
         try:
             job = json.load(open(jpath, encoding='utf-8'))
             txt_p = job.get('txt_path', '')
+            vid = job.get('vid', '')
             al_p = txt_p[:-4] + '.align.json'
-            if os.path.exists(al_p) and os.path.getsize(al_p) > 200:
+            should_remove = (os.path.exists(al_p) and os.path.getsize(al_p) > 200)
+            if allowed_vids is not None and vid and vid not in allowed_vids:
+                should_remove = True
+            if should_remove:
                 opus_p = jpath[:-9] + '.opus'
                 for p in (jpath, opus_p):
                     if os.path.exists(p):
@@ -232,8 +242,8 @@ def main():
     log(f'بدء مغذي المحاذاة المضغوط (Opus 12k VoIP · WORKERS={FEEDER_WORKERS} · MAX_BUFFER={MAX_BUFFER})...')
     while True:
         try:
-            cleanup_completed_in_bridge()
-            pending, aligned_cnt = build_ordered_lessons()
+            pending, aligned_cnt, allowed_vids = build_ordered_lessons()
+            cleanup_completed_in_bridge(allowed_vids)
             ready_jobs = glob.glob(os.path.join(BRIDGE_DIR, '*.job.json'))
             state = {
                 'updated_at': datetime.now().isoformat(),
