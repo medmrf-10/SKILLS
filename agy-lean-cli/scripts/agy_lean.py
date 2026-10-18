@@ -49,8 +49,16 @@ QUOTA_BIN = os.environ.get("AGY_QUOTA_BIN") or _find_bin("antigravity-usage", [
 ])
 
 QUOTA_SNAPSHOT_PATHS = (
-    "/tmp/agy_quota_snapshot.json",
     "/root/workspace/ytb-build/live_quota.json",
+    "/tmp/agy_quota_snapshot.json",
+)
+
+DEFAULT_FALLBACK_CHAIN = (
+    "gemini-3.8-flash-high",
+    "gemini-4-argon-high",
+    "gemini-3.8-flash-medium",
+    "gemini-4-argon-medium",
+    "gemini-3.8-flash-low",
 )
 
 FORBIDDEN_LEAN_PATHS = (
@@ -67,23 +75,112 @@ FORBIDDEN_LEAN_PATHS = (
     ".gemini/GEMINI.md",
 )
 
+SESSION_SUBDIRS = (
+    "brain",
+    "conversations",
+    "annotations",
+    "presence",
+    "implicit",
+    "log",
+    "crashes",
+)
 
-def fetch_quota_data(refresh_live: bool = False, max_cache_age_s: float = 300.0) -> Optional[Dict[str, Any]]:
-    """قراءة بيانات الكوتة من اللقطة المحلية الحديثة أو استدعاء antigravity-usage مباشرة."""
-    if not refresh_live:
-        for qpath in QUOTA_SNAPSHOT_PATHS:
-            if os.path.exists(qpath):
-                try:
-                    age = time.time() - os.path.getmtime(qpath)
-                    if age <= max_cache_age_s:
-                        with open(qpath, encoding="utf-8") as f:
-                            data = json.load(f)
-                        if isinstance(data, dict) and data.get("models"):
-                            return data
-                except Exception:
-                    continue
+BLOAT_DB_PATTERNS = (
+    "conversation_summaries.db",
+    "conversation_summaries.db-wal",
+    "conversation_summaries.db-shm",
+    "jetbox_summaries_proto.pb",
+    "jetbox_summaries_proto.pb.*.tmp",
+    "cli.log",
+    "history.jsonl",
+    "agy_run_sessions.jsonl",
+    "cache/last_conversations.json",
+)
 
-    if QUOTA_BIN and os.path.exists(QUOTA_BIN) and os.access(QUOTA_BIN, os.X_OK):
+
+def _parse_iso_ts(ts_str: str) -> Optional[float]:
+    if not ts_str or not isinstance(ts_str, str):
+        return None
+    try:
+        from datetime import datetime, timezone
+        s = ts_str.strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _compute_snapshot_age(qpath: str, data: Dict[str, Any], now_ts: Optional[float] = None) -> float:
+    now = now_ts if now_ts is not None else time.time()
+    ages: List[float] = []
+    try:
+        mtime = os.path.getmtime(qpath)
+        ages.append(max(0.0, now - mtime))
+    except OSError:
+        pass
+    payload_ts = _parse_iso_ts(str(data.get("timestamp") or ""))
+    if payload_ts is not None:
+        ages.append(max(0.0, now - payload_ts))
+    return round(max(ages) if ages else 0.0, 2)
+
+
+def _load_best_snapshot(
+    paths: Tuple[str, ...] = QUOTA_SNAPSHOT_PATHS,
+    now_ts: Optional[float] = None,
+) -> Optional[Tuple[Dict[str, Any], str, float]]:
+    candidates: List[Tuple[float, int, Dict[str, Any], str]] = []
+    for priority_idx, qpath in enumerate(paths):
+        if not qpath or not os.path.exists(qpath):
+            continue
+        try:
+            with open(qpath, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("models"), list) and data["models"]:
+                age_s = _compute_snapshot_age(qpath, data, now_ts=now_ts)
+                candidates.append((age_s, priority_idx, data, qpath))
+        except Exception:
+            continue
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    best_age, _, best_data, best_path = candidates[0]
+    best_copy = dict(best_data)
+    best_copy["_source_path"] = best_path
+    best_copy["_age_seconds"] = best_age
+    return best_copy, best_path, best_age
+
+
+def _has_usable_quota_bin() -> bool:
+    return bool(QUOTA_BIN and os.path.exists(QUOTA_BIN) and os.access(QUOTA_BIN, os.X_OK))
+
+
+def fetch_quota_data(
+    refresh_live: bool = False,
+    max_cache_age_s: float = 300.0,
+    max_stale_age_s: float = 1800.0,
+    snapshot_paths: Tuple[str, ...] = QUOTA_SNAPSHOT_PATHS,
+    now_ts: Optional[float] = None,
+    allow_live_bin: Optional[bool] = None,
+) -> Optional[Dict[str, Any]]:
+    """قراءة بيانات الكوتة من اللقطة المزامَنة (/root/workspace/ytb-build/live_quota.json) أو المحلية أو استدعاء antigravity-usage مع فحص عمر الملف."""
+    best_snap = _load_best_snapshot(paths=snapshot_paths, now_ts=now_ts)
+    has_bin = _has_usable_quota_bin() if allow_live_bin is None else bool(allow_live_bin)
+
+    # 1. إذا لم يُطلب تحديث حي قسري، أو كنا على سيرفر hermes-vps حيث لا تتوفر أداة سطح المكتب محلياً،
+    # نستخدم اللقطة الأحدث فوراً إذا كانت ضمن العمر المسموح
+    if best_snap is not None:
+        snap_data, _, snap_age = best_snap
+        effective_fresh_limit = max_stale_age_s if not has_bin else max_cache_age_s
+        if (not refresh_live or not has_bin) and snap_age <= effective_fresh_limit:
+            snap_data["_is_stale"] = False
+            return snap_data
+
+    # 2. محاولة الجلب المباشر عبر antigravity-usage إن كانت متوفرة (بيئة الماك)
+    if has_bin:
         try:
             env = dict(os.environ)
             env["HOME"] = REAL_HOME
@@ -99,34 +196,86 @@ def fetch_quota_data(refresh_live: bool = False, max_cache_age_s: float = 300.0)
                             json.dump(data, f, ensure_ascii=False, indent=2)
                     except Exception:
                         pass
+                    data["_source_path"] = "live_cli"
+                    data["_age_seconds"] = 0.0
+                    data["_is_stale"] = False
                     return data
         except Exception:
             pass
 
-    for qpath in QUOTA_SNAPSHOT_PATHS:
-        if os.path.exists(qpath):
-            try:
-                with open(qpath, encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict) and data.get("models"):
-                    return data
-            except Exception:
-                continue
+    # 3. الرجوع إلى اللقطة المحلية/المزامَنة مع وسم حالتها العمرية (staleness check)
+    if best_snap is not None:
+        snap_data, _, snap_age = best_snap
+        snap_data["_is_stale"] = bool(snap_age > max_stale_age_s)
+        return snap_data
     return None
 
 
+def _classify_family(text: str) -> str:
+    t = (text or "").lower()
+    if any(k in t for k in ("claude", "opus", "sonnet", "haiku")):
+        return "claude"
+    if "gpt" in t or "openai" in t:
+        return "gpt"
+    if any(k in t for k in ("gemini", "flash", "argon", "pro")):
+        return "gemini"
+    return "other"
+
+
+def _score_model_candidate(entry: Dict[str, Any], model_hint: str) -> int:
+    if entry.get("isAutocompleteOnly"):
+        return -1
+    lbl = (entry.get("label") or "").lower()
+    mid = (entry.get("modelId") or "").lower()
+    hint = (model_hint or "gemini-3.8-flash-high").lower().replace("_", "-")
+    want_fam = _classify_family(hint)
+    entry_fam = _classify_family(lbl + " " + mid)
+
+    if want_fam != "other" and entry_fam != want_fam:
+        return -1
+
+    score = 100
+    # مطابقة الفئة الفرعية
+    for sub_tok in ("flash", "argon", "opus", "sonnet", "3.8", "4", "5.5", "120b"):
+        if sub_tok in hint:
+            if sub_tok in lbl:
+                score += 30
+            else:
+                score -= 10
+    # مطابقة مستوى الجهد/الطبقة (high / medium / low)
+    if "high" in hint:
+        score += 15 if "(high)" in lbl or "high" in lbl else -5
+    elif "medium" in hint:
+        score += 15 if "(medium)" in lbl or "medium" in lbl else -5
+    elif "low" in hint:
+        score += 15 if "(low)" in lbl or "low" in lbl else -5
+    else:
+        # تفضيل High افتراضياً ثم Medium عند تمرير اسم العائلة فقط مثل "gemini" أو "claude"
+        if "(high)" in lbl:
+            score += 10
+        elif "(medium)" in lbl:
+            score += 5
+    return score
+
+
+def _match_model_entries(models: List[Dict[str, Any]], model_hint: str) -> List[Dict[str, Any]]:
+    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    for idx, m in enumerate(models or []):
+        if not isinstance(m, dict):
+            continue
+        sc = _score_model_candidate(m, model_hint)
+        if sc >= 0:
+            scored.append((sc, -idx, m))
+    if not scored:
+        return []
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [item[2] for item in scored]
+
+
 def _match_model_entry(models: List[Dict[str, Any]], model_hint: str) -> Optional[Dict[str, Any]]:
-    hint = (model_hint or "gemini").lower()
-    want_claude = any(k in hint for k in ("claude", "opus", "sonnet"))
-    want_gpt = "gpt" in hint
-    for m in models:
-        lbl = (m.get("label") or "").lower()
-        if want_claude and any(k in lbl for k in ("claude", "opus", "sonnet")):
-            return m
-        if want_gpt and "gpt" in lbl:
-            return m
-        if not want_claude and not want_gpt and ("gemini 3.8 flash" in lbl or "gemini 4 argon" in lbl):
-            return m
+    matches = _match_model_entries(models, model_hint)
+    if matches:
+        return matches[0]
     return models[0] if models else None
 
 
@@ -139,38 +288,42 @@ def evaluate_quota_entry(
     weekly_window_threshold_h: float = 5.5,
     weekly_unlock_hours: float = 12.0,
 ) -> Dict[str, Any]:
-    """تقييم حتمي لمدى أمان استهلاك الكوتة لنموذج محدد وفق قاعدتَي الـ5 ساعات والاحتياطي الأسبوعي."""
+    """تقييم حتمي لمدى أمان استهلاك الكوتة لنموذج محدد وفق قاعدتَي الـ5 ساعات (>=15% للخلفية / >=10% للأمامي) والاحتياطي الأسبوعي (>25% إلا في آخر 12 ساعة)."""
     label = target.get("label") or "Unknown Model"
     rem = float(target.get("remainingPercentage") if target.get("remainingPercentage") is not None else 1.0)
     reset_ms = float(target.get("timeUntilResetMs") or 0.0)
-    reset_hours = reset_ms / (1000.0 * 3600.0)
+    reset_hours = max(0.0, reset_ms / (1000.0 * 3600.0))
     exhausted = bool(target.get("isExhausted", False))
     floor_5h = min_5h_bg if background else min_5h_fg
     is_weekly_window = reset_hours > weekly_window_threshold_h
+    weekly_locked = bool(is_weekly_window and reset_hours > weekly_unlock_hours)
+
+    base_info = {
+        "label": label,
+        "remaining_pct": round(rem * 100.0, 2),
+        "remaining_ratio": rem,
+        "reset_hours": round(reset_hours, 2),
+        "window_type": "weekly_or_rolling" if is_weekly_window else "5h",
+        "floor_5h_pct": round(floor_5h * 100.0, 2),
+        "weekly_reserve_pct": round(min_weekly_reserve * 100.0, 2),
+        "weekly_locked": weekly_locked,
+    }
 
     if exhausted or rem < floor_5h:
         mode_lbl = "الوكلاء الخلفيين (15%)" if background else "الوكيل الرئيسي (10%)"
         return {
+            **base_info,
             "safe": False,
-            "label": label,
-            "remaining_pct": round(rem * 100.0, 2),
-            "remaining_ratio": rem,
-            "reset_hours": round(reset_hours, 2),
-            "window_type": "weekly_or_rolling" if is_weekly_window else "5h",
             "reason": (
                 f"حظر الكوتة لـ [{label}]: المتبقي {rem*100:.2f}% أقل من حد الأمان لـ{mode_lbl} "
                 f"({floor_5h*100:.0f}%)"
             ),
         }
 
-    if is_weekly_window and reset_hours > weekly_unlock_hours and rem <= min_weekly_reserve:
+    if weekly_locked and rem <= min_weekly_reserve:
         return {
+            **base_info,
             "safe": False,
-            "label": label,
-            "remaining_pct": round(rem * 100.0, 2),
-            "remaining_ratio": rem,
-            "reset_hours": round(reset_hours, 2),
-            "window_type": "weekly_or_rolling",
             "reason": (
                 f"حظر الاحتياطي الأسبوعي لـ [{label}]: المتبقي {rem*100:.2f}% <= {min_weekly_reserve*100:.0f}% "
                 f"وباقي {reset_hours:.1f} ساعة (> {weekly_unlock_hours:.0f} ساعة) على التجديد"
@@ -178,12 +331,8 @@ def evaluate_quota_entry(
         }
 
     return {
+        **base_info,
         "safe": True,
-        "label": label,
-        "remaining_pct": round(rem * 100.0, 2),
-        "remaining_ratio": rem,
-        "reset_hours": round(reset_hours, 2),
-        "window_type": "weekly_or_rolling" if is_weekly_window else "5h",
         "reason": "OK",
     }
 
@@ -193,21 +342,50 @@ def check_quota(
     background: bool = True,
     refresh_live: bool = False,
     qdata: Optional[Dict[str, Any]] = None,
+    max_stale_age_s: float = 1800.0,
+    fail_on_stale: bool = False,
 ) -> Dict[str, Any]:
-    """فحص الكوتة الحية لنموذج محدد (gemini / claude / gpt)."""
-    data = qdata if qdata is not None else fetch_quota_data(refresh_live=refresh_live)
+    """فحص الكوتة الحية لنموذج محدد مع تطبيق الحارس المزدوج (5h + Weekly) والتحقق من عمر ملف الكوتة."""
+    data = (
+        qdata
+        if qdata is not None
+        else fetch_quota_data(refresh_live=refresh_live, max_stale_age_s=max_stale_age_s)
+    )
     if not data or not data.get("models"):
         return {
-            "safe": True,
+            "safe": not fail_on_stale,
             "label": model_hint,
-            "remaining_pct": 100.0,
-            "remaining_ratio": 1.0,
+            "remaining_pct": 100.0 if not fail_on_stale else 0.0,
+            "remaining_ratio": 1.0 if not fail_on_stale else 0.0,
             "reset_hours": 0.0,
             "window_type": "unknown",
-            "reason": "تعذر قراءة لقطة الكوتة المحلية؛ السماح الافتراضي",
+            "is_stale": True,
+            "snapshot_age_s": None,
+            "source_path": None,
+            "reason": (
+                "حظر الكوتة: تعذر العثور على لقطة كوتة صالحة"
+                if fail_on_stale
+                else "تعذر قراءة لقطة الكوتة المحلية؛ السماح الافتراضي"
+            ),
         }
-    target = _match_model_entry(data["models"], model_hint)
-    if not target:
+
+    source_path = data.get("_source_path")
+    age_s = data.get("_age_seconds")
+    if age_s is None and source_path and os.path.exists(str(source_path)):
+        age_s = _compute_snapshot_age(str(source_path), data)
+    elif age_s is None and data.get("timestamp"):
+        parsed_ts = _parse_iso_ts(str(data.get("timestamp")))
+        if parsed_ts is not None:
+            age_s = round(max(0.0, time.time() - parsed_ts), 2)
+
+    is_stale = bool(
+        data.get("_is_stale")
+        if "_is_stale" in data
+        else (age_s is not None and age_s > max_stale_age_s)
+    )
+
+    matches = _match_model_entries(data["models"], model_hint)
+    if not matches:
         return {
             "safe": True,
             "label": model_hint,
@@ -215,9 +393,44 @@ def check_quota(
             "remaining_ratio": 1.0,
             "reset_hours": 0.0,
             "window_type": "unknown",
+            "is_stale": is_stale,
+            "snapshot_age_s": age_s,
+            "source_path": source_path,
             "reason": "النموذج غير موجود في اللقطة",
         }
-    return evaluate_quota_entry(target, background=background)
+
+    primary_eval = evaluate_quota_entry(matches[0], background=background)
+
+    # فحص الحارس المزدوج عبر نافذتَي الـ5 ساعات والأسبوعية إن وُجد قيدان لنفس العائلة
+    blocking_eval = None
+    if not primary_eval["safe"]:
+        blocking_eval = primary_eval
+    else:
+        top_score = _score_model_candidate(matches[0], model_hint)
+        for m in matches[1:]:
+            # فحص النماذج المطابقة لنفس الفئة أو التي تمثل نافذة زمنية ثانية لنفس النموذج
+            if _score_model_candidate(m, model_hint) >= top_score - 15 or (
+                (m.get("label") or "").split("(")[0].strip().lower()
+                == (matches[0].get("label") or "").split("(")[0].strip().lower()
+            ):
+                ev = evaluate_quota_entry(m, background=background)
+                if not ev["safe"]:
+                    blocking_eval = ev
+                    break
+
+    chosen_eval = dict(blocking_eval if blocking_eval is not None else primary_eval)
+    chosen_eval["is_stale"] = is_stale
+    chosen_eval["snapshot_age_s"] = age_s
+    chosen_eval["source_path"] = source_path
+
+    if is_stale and fail_on_stale and chosen_eval["safe"]:
+        chosen_eval["safe"] = False
+        chosen_eval["reason"] = (
+            f"حظر الكوتة لـ [{chosen_eval['label']}]: لقطة الكوتة قديمة جداً "
+            f"(عمرها {age_s:.0f}ث > الحد المسموح {max_stale_age_s:.0f}ث)"
+        )
+
+    return chosen_eval
 
 
 def select_best_model(
@@ -225,16 +438,63 @@ def select_best_model(
     background: bool = True,
     auto_fallback: bool = True,
     qdata: Optional[Dict[str, Any]] = None,
+    fallback_chain: Tuple[str, ...] = DEFAULT_FALLBACK_CHAIN,
+    max_stale_age_s: float = 1800.0,
+    fail_on_stale: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
-    """اختيار النموذج الأنسب مع التحويل التلقائي إلى Gemini إذا كانت كوتة Claude محظورة."""
-    q_pref = check_quota(preferred_model, background=background, qdata=qdata)
+    """اختيار النموذج الأنسب وفق سياسة الحارس المزدوج (5h + Weekly) مع التحويل التلقائي عبر سلسلة البدائل الآمنة."""
+    data = (
+        qdata
+        if qdata is not None
+        else fetch_quota_data(refresh_live=False, max_stale_age_s=max_stale_age_s)
+    )
+    q_pref = check_quota(
+        preferred_model,
+        background=background,
+        qdata=data,
+        max_stale_age_s=max_stale_age_s,
+        fail_on_stale=fail_on_stale,
+    )
     if q_pref["safe"]:
         return preferred_model, q_pref
+
     if auto_fallback:
-        fallback = "gemini-3.8-flash-high"
-        q_fb = check_quota(fallback, background=background, qdata=qdata)
-        if q_fb["safe"]:
-            return fallback, q_fb
+        safe_candidates: List[Tuple[float, int, str, Dict[str, Any]]] = []
+        for idx, fb_model in enumerate(fallback_chain):
+            if fb_model.lower() == (preferred_model or "").lower():
+                continue
+            # إذا لم يكن النموذج البديل موجوداً أصلاً في قائمة النماذج، نتخطاه إلا إذا كانت القائمة فارغة
+            if data and data.get("models"):
+                fb_matches = _match_model_entries(data["models"], fb_model)
+                if not fb_matches:
+                    continue
+                # تأكد من أن البديل يطابق الفئة الفرعية المطلوبة (مثلاً argon مقابل flash) إن وُجدت في اللقطة
+                top_lbl = (fb_matches[0].get("label") or "").lower()
+                if "argon" in fb_model.lower() and "argon" not in top_lbl and any(
+                    "argon" in (m.get("label") or "").lower() for m in data["models"]
+                ):
+                    continue
+                if "flash" in fb_model.lower() and "flash" not in top_lbl and any(
+                    "flash" in (m.get("label") or "").lower() for m in data["models"]
+                ):
+                    continue
+            q_fb = check_quota(
+                fb_model,
+                background=background,
+                qdata=data,
+                max_stale_age_s=max_stale_age_s,
+                fail_on_stale=fail_on_stale,
+            )
+            if q_fb["safe"]:
+                q_fb = dict(q_fb)
+                q_fb["fallback_from"] = preferred_model
+                q_fb["fallback_reason"] = q_pref["reason"]
+                safe_candidates.append((float(q_fb.get("remaining_ratio", 0.0)), -idx, fb_model, q_fb))
+        if safe_candidates:
+            safe_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            _, _, best_fb_model, best_q_fb = safe_candidates[0]
+            return best_fb_model, best_q_fb
+
     return preferred_model, q_pref
 
 
@@ -253,6 +513,22 @@ def _safe_symlink(src: str, dst: str) -> None:
             pass
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     os.symlink(src, dst)
+
+
+def _remove_forbidden_lean_paths(lean_home_dir: str) -> int:
+    removed = 0
+    for rel_forbidden in FORBIDDEN_LEAN_PATHS:
+        target_p = os.path.join(lean_home_dir, rel_forbidden)
+        if os.path.islink(target_p) or os.path.exists(target_p):
+            try:
+                if os.path.isdir(target_p) and not os.path.islink(target_p):
+                    shutil.rmtree(target_p, ignore_errors=True)
+                else:
+                    os.remove(target_p)
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def prepare_lean_home(lean_home_dir: Optional[str] = None) -> str:
@@ -297,7 +573,7 @@ def prepare_lean_home(lean_home_dir: Optional[str] = None) -> str:
     for fname in ("antigravity-oauth-token", "installation_id", "jetski_state.pbtxt", "bin"):
         _safe_symlink(os.path.join(real_cli, fname), os.path.join(lean_cli, fname))
 
-    for sub in ("conversations", "annotations", "brain", "presence", "implicit", "log", "cache"):
+    for sub in ("conversations", "annotations", "brain", "presence", "implicit", "log", "cache", "crashes"):
         os.makedirs(os.path.join(lean_cli, sub), exist_ok=True)
 
     # 4. إعدادات antigravity-cli/settings.json النظيفة
@@ -341,16 +617,7 @@ def prepare_lean_home(lean_home_dir: Optional[str] = None) -> str:
         json.dump(lean_cfg, f, indent=2)
 
     # 6. التأكد من حذف أي مسار محظور لو كان موجوداً مسبقاً
-    for rel_forbidden in FORBIDDEN_LEAN_PATHS:
-        target_p = os.path.join(lean_home_dir, rel_forbidden)
-        if os.path.islink(target_p) or os.path.exists(target_p):
-            try:
-                if os.path.isdir(target_p) and not os.path.islink(target_p):
-                    shutil.rmtree(target_p, ignore_errors=True)
-                else:
-                    os.remove(target_p)
-            except OSError:
-                pass
+    _remove_forbidden_lean_paths(lean_home_dir)
 
     return lean_home_dir
 
@@ -369,7 +636,8 @@ def verify_lean_home_isolation(lean_home_dir: str) -> Dict[str, Any]:
     has_clean_cfg = False
     if os.path.exists(cfg_json):
         try:
-            cfg = json.load(open(cfg_json, encoding="utf-8"))
+            with open(cfg_json, encoding="utf-8") as f:
+                cfg = json.load(f)
             has_clean_cfg = cfg.get("plugins") == {}
         except Exception:
             has_clean_cfg = False
@@ -383,27 +651,105 @@ def verify_lean_home_isolation(lean_home_dir: str) -> Dict[str, Any]:
     }
 
 
-def _cleanup_lean_conv(lean_home_dir: str, conv_id: Optional[str]) -> None:
-    if not conv_id:
-        return
+def _snapshot_session_subdirs(lean_home_dir: str) -> Dict[str, set]:
     base_dir = os.path.join(lean_home_dir, ".gemini", "antigravity-cli")
-    for sub, suffixes in (
-        ("conversations", (".pb", ".db", ".db-wal", ".db-shm")),
-        ("annotations", (".pbtxt",)),
-        ("presence", (".lock",)),
-        ("implicit", (".pb",)),
-    ):
+    snap: Dict[str, set] = {}
+    for sub in SESSION_SUBDIRS:
         sub_dir = os.path.join(base_dir, sub)
-        for suffix in suffixes:
-            p = os.path.join(sub_dir, conv_id + suffix)
+        if os.path.isdir(sub_dir):
             try:
-                if os.path.exists(p):
-                    os.remove(p)
+                snap[sub] = set(os.listdir(sub_dir))
+            except OSError:
+                snap[sub] = set()
+        else:
+            snap[sub] = set()
+    return snap
+
+
+def _cleanup_lean_conv(
+    lean_home_dir: str,
+    conv_id: Optional[str] = None,
+    pre_snapshot: Optional[Dict[str, set]] = None,
+    sweep_all_idle: bool = True,
+) -> Dict[str, Any]:
+    """تنظيف شامل وحتمي لبيئة HOME المعزولة بعد كل استدعاء (brain / conversations / implicit / summaries DB / log / MCP)."""
+    base_dir = os.path.join(lean_home_dir, ".gemini", "antigravity-cli")
+    removed_items = 0
+
+    def _rm_path(p: str) -> bool:
+        try:
+            if os.path.islink(p) or os.path.isfile(p):
+                os.remove(p)
+                return True
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+                return True
+        except OSError:
+            pass
+        return False
+
+    # 1. حذف ملفات ومجلد conv_id المحدد إن وُجد
+    if conv_id:
+        for sub, suffixes in (
+            ("conversations", (".pb", ".db", ".db-wal", ".db-shm")),
+            ("annotations", (".pbtxt",)),
+            ("presence", (".lock",)),
+            ("implicit", (".pb",)),
+        ):
+            sub_dir = os.path.join(base_dir, sub)
+            for suffix in suffixes:
+                if _rm_path(os.path.join(sub_dir, conv_id + suffix)):
+                    removed_items += 1
+        if _rm_path(os.path.join(base_dir, "brain", conv_id)):
+            removed_items += 1
+
+    # 2. حذف كل العناصر التي أُنشئت خلال هذا الاستدعاء أو المتراكمة في مجلدات الجلسات المؤقتة
+    for sub in SESSION_SUBDIRS:
+        sub_dir = os.path.join(base_dir, sub)
+        if not os.path.isdir(sub_dir):
+            continue
+        before_set = (pre_snapshot or {}).get(sub, set())
+        try:
+            entries = list(os.listdir(sub_dir))
+        except OSError:
+            continue
+        for name in entries:
+            if sweep_all_idle or (pre_snapshot is not None and name not in before_set):
+                if _rm_path(os.path.join(sub_dir, name)):
+                    removed_items += 1
+
+    # 3. حذف قواعد بيانات الملخصات والسجلات المؤقتة المتضخمة
+    for pat in BLOAT_DB_PATTERNS:
+        for matched_p in glob.glob(os.path.join(base_dir, pat)):
+            if _rm_path(matched_p):
+                removed_items += 1
+
+    # 4. حذف أي ملف محظور قد ينشئه agy تلقائياً عند الإقلاع (مثل .gemini/config/mcp_config.json الفارغ على Linux)
+    removed_items += _remove_forbidden_lean_paths(lean_home_dir)
+
+    # 5. إحصاء أي بقايا للتحقق الحتمي في بوابات الجودة
+    remaining_brain = []
+    brain_root = os.path.join(base_dir, "brain")
+    if os.path.isdir(brain_root):
+        try:
+            remaining_brain = os.listdir(brain_root)
+        except OSError:
+            pass
+
+    remaining_session_files = 0
+    for sub in SESSION_SUBDIRS:
+        sub_dir = os.path.join(base_dir, sub)
+        if os.path.isdir(sub_dir):
+            try:
+                remaining_session_files += len(os.listdir(sub_dir))
             except OSError:
                 pass
-    brain_dir = os.path.join(base_dir, "brain", conv_id)
-    if os.path.isdir(brain_dir):
-        shutil.rmtree(brain_dir, ignore_errors=True)
+
+    return {
+        "removed_items": removed_items,
+        "remaining_brain_count": len(remaining_brain),
+        "remaining_session_files": remaining_session_files,
+    }
 
 
 def _extract_agy_json(stdout_text: str) -> Tuple[Optional[str], Dict[str, Any], Optional[str]]:
@@ -458,12 +804,18 @@ def run_agy_lean(
     effort: str = "",
     json_schema: str = "",
     lean_home_dir: Optional[str] = None,
+    qdata: Optional[Dict[str, Any]] = None,
+    max_stale_age_s: float = 1800.0,
+    fail_on_stale: bool = False,
 ) -> Dict[str, Any]:
-    """تشغيل agy في بيئة HOME معزولة ومجلد عمل مؤقت بعد التحقق من حارس الكوتة."""
+    """تشغيل agy في بيئة HOME معزولة ومجلد عمل مؤقت بعد التحقق من حارس الكوتة المزدوج وتنظيف الجلسة."""
     chosen_model, quota_info = select_best_model(
         preferred_model=model,
         background=background,
         auto_fallback=auto_fallback,
+        qdata=qdata,
+        max_stale_age_s=max_stale_age_s,
+        fail_on_stale=fail_on_stale,
     )
     if not quota_info["safe"]:
         return {
@@ -480,12 +832,17 @@ def run_agy_lean(
 
     with tempfile.TemporaryDirectory(prefix="agy_lean_ws_") as raw_ws:
         ws_dir = os.path.realpath(raw_ws)
-        attached_names = []
-        for fpath in (files or []):
+        attached_names: List[str] = []
+        used_names: set = set()
+        for idx, fpath in enumerate(files or [], 1):
             if not fpath or not os.path.exists(fpath):
                 raise FileNotFoundError(f"الملف المرفق غير موجود: {fpath}")
             real_f = os.path.realpath(fpath)
             bname = os.path.basename(real_f)
+            if bname in used_names:
+                stem, ext = os.path.splitext(bname)
+                bname = f"{stem}_{idx}{ext}"
+            used_names.add(bname)
             dst_f = os.path.join(ws_dir, bname)
             try:
                 os.link(real_f, dst_f)
@@ -521,29 +878,40 @@ def run_agy_lean(
         env["HOME"] = lean_home
         env["PAGER"] = "cat"
 
+        pre_snapshot = _snapshot_session_subdirs(lean_home)
+        conv_id: Optional[str] = None
         t0 = time.time()
         try:
-            res = subprocess.run(
-                cmd,
-                cwd=ws_dir,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-            )
-            elapsed_s = round(time.time() - t0, 2)
-        except subprocess.TimeoutExpired:
-            return {
-                "ok": False,
-                "error": f"انتهت مهلة الاستدعاء ({timeout_s}ث)",
-                "quota": quota_info,
-                "model": chosen_model,
-                "response": "",
-                "usage": {},
-            }
+            try:
+                res = subprocess.run(
+                    cmd,
+                    cwd=ws_dir,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_s,
+                )
+                elapsed_s = round(time.time() - t0, 2)
+            except subprocess.TimeoutExpired:
+                cleanup_info = _cleanup_lean_conv(
+                    lean_home, conv_id=None, pre_snapshot=pre_snapshot, sweep_all_idle=True
+                )
+                return {
+                    "ok": False,
+                    "error": f"انتهت مهلة الاستدعاء ({timeout_s}ث)",
+                    "quota": quota_info,
+                    "model": chosen_model,
+                    "lean_home": lean_home,
+                    "cleanup": cleanup_info,
+                    "response": "",
+                    "usage": {},
+                }
 
-        resp_txt, usage, conv_id = _extract_agy_json(res.stdout)
-        _cleanup_lean_conv(lean_home, conv_id)
+            resp_txt, usage, conv_id = _extract_agy_json(res.stdout)
+        finally:
+            cleanup_info = _cleanup_lean_conv(
+                lean_home, conv_id=conv_id, pre_snapshot=pre_snapshot, sweep_all_idle=True
+            )
 
         if resp_txt is None:
             resp_txt = (res.stdout or "").strip()
@@ -557,6 +925,7 @@ def run_agy_lean(
             "elapsed_s": elapsed_s,
             "quota": quota_info,
             "lean_home": lean_home,
+            "cleanup": cleanup_info,
             "attached_files": attached_names,
             "response": resp_txt,
             "usage": usage,
@@ -582,9 +951,10 @@ def main() -> int:
     if args.check_quota:
         qdata = fetch_quota_data(refresh_live=True)
         report = {
-            "gemini": check_quota("gemini", background=not args.foreground, qdata=qdata),
-            "claude": check_quota("claude", background=not args.foreground, qdata=qdata),
-            "gpt": check_quota("gpt", background=not args.foreground, qdata=qdata),
+            "gemini_flash": check_quota("gemini-3.8-flash-high", background=not args.foreground, qdata=qdata),
+            "gemini_argon": check_quota("gemini-4-argon-high", background=not args.foreground, qdata=qdata),
+            "claude": check_quota("claude-opus-5.5-high", background=not args.foreground, qdata=qdata),
+            "gpt": check_quota("gpt-oss-120b", background=not args.foreground, qdata=qdata),
         }
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0

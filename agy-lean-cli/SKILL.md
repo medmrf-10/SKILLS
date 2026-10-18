@@ -25,21 +25,24 @@ description: استدعاء أداة Antigravity CLI (agy) في بيئة معز�
 
 ---
 
-## ٢. قواعد محمد الصارمة لحماية الكوتة (`Strict Quota Guard`)
+## ٢. قواعد محمد الصارمة لحماية الكوتة (`Strict Dual-Window Quota Guard`)
 
 تدمج أداة [`scripts/agy_lean.py`](./scripts/agy_lean.py) فاحص الكوتة الحي المتصل بـ:
-- `/Users/macm1pro/.hermes/node/bin/antigravity-usage quota --json --all-models`
-- أو اللقطة المحدثة في `/tmp/agy_quota_snapshot.json` و`/root/workspace/ytb-build/live_quota.json`.
+- `/root/workspace/ytb-build/live_quota.json` (تلقائياً على السيرفر `hermes-vps` حيث لا تتوفر كوكيز سطح المكتب مباشرةً، مع فحص مزدوج لعمر الملف `mtime` وطابع `timestamp` الداخلي `max_stale_age_s=1800s`).
+- `/Users/macm1pro/.hermes/node/bin/antigravity-usage quota --json --all-models` (على الماك) أو اللقطة المحلية `/tmp/agy_quota_snapshot.json`.
 
-وتطبّق قاعدتين حتميتين قبل السماح بأي استدعاء:
+وتطبّق ثلاث قواعد حتمية قبل السماح بأي استدعاء:
 
 1. **قاعدة نافذة الـ 5 ساعات (`5h Window Floor`):**
    - يُحظر استهلاك آخر **`10%`** من كوتة الـ 5 ساعات (مخصصة حصرياً للوكيل التفاعلي الرئيسي).
    - تتوقف استدعاءات الخلفية (`background=True`) تلقائياً عند نزول الكوتة تحت **`15%`** (لترك هامش أمان `5%` فوق الـ `10%`).
 2. **قاعدة الاحتياطي الأسبوعي (`Weekly Reserve Rule`):**
-   - عندما يكون وقت التجديد المتبقي `timeUntilResetMs > 5.5 ساعات` (نافذة أسبوعية/متدحرجة)، يُحظر النزول تحت **`25%`** إلا إذا بقي أقل من **`12` ساعة (`< 12h`)** على موعد التجديد الأسبوعي.
-3. **التبديل التلقائي للنموذج (`Smart Model Routing`):**
-   - إذا طُلب نموذج من مجموعة `Claude Opus / Sonnet` وكانت كوتته تحت حد الأمان (مثل `4.71%` الحالية)، يرفض الحارس استدعاء `Claude` أو يحوله تلقائياً (عند تفعيل `--auto-fallback`) إلى `gemini-3.8-flash-high` أو `gemini-4-argon-high` (المتوفرة بنسبة `>80%`).
+   - عندما يكون وقت التجديد المتبقي `timeUntilResetMs > 5.5 ساعات` (نافذة أسبوعية/متدحرجة)، يُحظر النزول إلى **`<= 25%`** (يُشترط `> 25%`) إلا إذا بقي **`<= 12` ساعة** على موعد التجديد الأسبوعي (مع بقاء سقف الـ`15%`/`10%` محمياً حتى في آخر 12 ساعة).
+   - إذا وُجدت نافذتان (`5h` + `Weekly`) لنفس الفئة، يطبّق `check_quota()` و`select_best_model()` الحارس المزدوج ويمنع الاستدعاء إذا اختلّ أيٌّ من الشرطين.
+3. **التبديل التلقائي متعدد البدائل (`Multi-Hop Smart Model Routing`):**
+   - إذا طُلب نموذج محظور الكوتة (مثل `Claude Opus / Sonnet` عند `4.71%`)، يحوّله `select_best_model()` تلقائياً عبر سلسلة البدائل (`gemini-3.8-flash-high` ثم `gemini-4-argon-high` ثم `gemini-3.8-flash-medium`) إلى أعلى نموذج آمن متاح.
+4. **التنظيف الحتمي الشامل بعد كل استدعاء (`Deterministic Session & DB Cleanup`):**
+   - ينظف `_cleanup_lean_conv()` تلقائياً داخل `finally` (حتى عند حدوث `TimeoutExpired`): مجلدات `brain/*`، `conversations/*`، `annotations/*`، `presence/*`، ملفات `implicit/<uuid>.pb` ذات المعرفات المستقلة، قواعد البيانات المتضخمة (`conversation_summaries.db*` و`jetbox_summaries_proto.pb*.tmp`)، وأي ملف `.gemini/config/mcp_config.json` فارغ ينشئه `agy` تلقائياً عند الإقلاع على Linux.
 
 ---
 
@@ -71,7 +74,7 @@ python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/agy_lean.py \
 from agy_lean import check_quota, run_agy_lean
 
 # 1. التحقق من الكوتة
-q = check_quota(model_hint="gemini", background=True)
+q = check_quota(model_hint="gemini-3.8-flash-high", background=True)
 if not q["safe"]:
     raise RuntimeError(q["reason"])
 
@@ -88,9 +91,13 @@ print(res["response"])
 
 ---
 
-## ٤. بوابة الفحص الحتمية (`Quality Gate`)
+## ٤. بوابة الفحص الحتمية رباعية الطبقات (`4-Layer Quality Gate`)
 
-للتحقق من سلامة العزل (`0 MCP files`) ودقة حارس الكوتة (`5h Floor` + `Weekly Reserve`) ونجاح الاستدعاء الحي:
+للتحقق من:
+1. منطق الحارس المزدوج (`5h Floor >= 15%` + `Weekly Reserve > 25%`) والتوجيه الذكي متعدد البدائل.
+2. أولوية قراءة `/root/workspace/ytb-build/live_quota.json` وفحص تقادم اللقطة (`Staleness Check`).
+3. سلامة عزل `HOME` (`0 MCP files`) والتنظيف الحتمي الشامل لملفات `brain/*` و`implicit/*.pb` و`conversation_summaries.db*`.
+4. نجاح الاستدعاء الحي ونظافة القرص بعده (`0` بقايا):
 
 ```bash
 python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/test_agy_lean_gates.py

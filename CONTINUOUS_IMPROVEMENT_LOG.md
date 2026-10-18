@@ -122,3 +122,30 @@
    - كشف وتقليم القفز المبكر للحروف البادئة (`1–3` أحرف) عندما تفصلها فجوة `<blank>` داخلية (`>= 0.20s` أو `>= 0.10s` عند تجاوز السقف الفيزيائي) أو تمطيط ذاتي عن التجمع الفعلي لبقية حروف الكلمة في الذيل `[real_onset .. end]`، وتقليم قفز الحرف الأخير المماثل، مع فرض سقف المدة الفيزيائية `max(0.85, 0.22 * n_chars)` ثانية وحفظ أعلى درجة ثقة صوتية (`max(tight_score, orig_score)`).
 2. **تحصين `interpolate()` ضد ابتلاع السكتات:** إذا كانت الفجوة `gap > 0.8s` لكل كلمة مستوفاة، تُوضَع الكلمة المستوفاة بجوار الكلام الفعلي (`قبل nxt مباشرةً`) بمدتها الطبيعية (`0.35s – 0.60s` للكلمة) مع بقاء السكتة السابقة نظيفة.
 3. **إضافة `Gate 4 (Pre-Speech Breath Onset Tightening Gate)` في `scripts/test_pipeline_v5_gates.py`:** اجتياز كامل البوابات الأربع بنجاح **`PASS (0 errors)`**، ونسخ `ctc_pure_align.py` إلى `/Users/macm1pro/workspace/ytb-build/ctc_pure_align.py` وإعادة تشغيل `com.mohamed.mac-align-fleet`.
+
+---
+
+## الدورة 7 (`2026-10-18 17:14 +02:00`) — فحص وتطوير `agy-lean-cli` على بيئتَي الماك والسيرفر (`hermes-vps`) الحقيقيتين
+
+### 1. البيانات والبيئات الحقيقية التي جُرِّبت عليها المهارة
+- مخرجات الكوتة الحية من `/Users/macm1pro/.hermes/node/bin/antigravity-usage quota --json --all-models` على الماك وملف الكوتة المزامَن `/root/workspace/ytb-build/live_quota.json` على `hermes-vps`.
+- بيئة `HOME` المعزولة الحقيقية على الماك (`/tmp/agy_lean_home_501`) وعلى السيرفر (`/tmp/agy_lean_home_0`) ومجلد `/root/.gemini/antigravity-cli` على `hermes-vps`.
+
+### 2. العلل والحالات الحدية الواقعية المكتشفة والمُعالجة جذرياً (6 علل)
+1. **أولوية قراءة `/root/workspace/ytb-build/live_quota.json` على السيرفر وفحص تقادم اللقطة المزدوج (`Staleness Check`):**
+   - **العلة:** على `hermes-vps` لا توجد أداة `/root/.hermes/node/bin/antigravity-usage` (لأنها تعتمد على كوكيز سطح المكتب على الماك)، فكان مسار التراجع في `fetch_quota_data(refresh_live=True)` يقرأ أول ملف يصادفه دون فحص عمره (`mtime` أو حقل `timestamp` الداخلي)، كما كان `/tmp/agy_quota_snapshot.json` مقدماً على `/root/workspace/ytb-build/live_quota.json`.
+   - **العلاج:** تقديم `/root/workspace/ytb-build/live_quota.json` وبناء `_load_best_snapshot` و`_compute_snapshot_age` لاختيار اللقطة الأحدث وحساب عمرها الفعلي من `max(mtime_age, payload_timestamp_age)`، ووسم اللقطات المتقادمة (`_is_stale = age > max_stale_age_s`) مع دعم `fail_on_stale=True` في `check_quota`.
+2. **تراكم ملفات `implicit/<random_uuid>.pb` وقواعد بيانات الملخصات (`conversation_summaries.db*` و`jetbox_summaries_proto.pb*.tmp`) في `HOME` المعزول:**
+   - **العلة:** تبيّن من فحص `/tmp/agy_lean_home_501` و`/tmp/agy_lean_home_0` أن `agy` ينشئ ملفات `implicit/*.pb` بمعرّف UUID مختلف عن `conversation_id`، كما يترك `conversation_summaries.db` (`-wal`/`-shm`) و`jetbox_summaries_proto.pb*.tmp` و`log/cli-*.log` و`cli.log` و`cache/last_conversations.json`، وعند حدوث `TimeoutExpired` كان يخرج قبل استدعاء دالة التنظيف.
+   - **العلاج:** أخذ لقطة قبلية `_snapshot_session_subdirs` وتنفيذ `_cleanup_lean_conv` داخل بلوك `finally` لحذف جميع الملفات المستحدثة والمتراكمة في `brain` و`conversations` و`annotations` و`presence` و`implicit` و`log` و`crashes` وحذف جميع ملفات `BLOAT_DB_PATTERNS` (`0` بقايا).
+3. **إنشاء `agy` على Linux لملف `.gemini/config/mcp_config.json` فارغ عند الإقلاع:**
+   - **العلة:** عند تشغيل `run_agy_lean` على `hermes-vps`، ينشئ `agy` تلقائياً ملف `.gemini/config/mcp_config.json` فارغاً (`0 bytes`)، مما كان يُفشل `verify_lean_home_isolation` بعد انتهاء الاستدعاء.
+   - **العلاج:** إزالة أي مسار ضمن `FORBIDDEN_LEAN_PATHS` تلقائياً داخل `_cleanup_lean_conv` بعد كل استدعاء، فظل فحص العزل `isolated=True` قبل الاستدعاء وبعده على الماك ولينكس.
+4. **قصور مطابقة الفئة الفرعية والطبقة في `_match_model_entry` (`Flash` مقابل `Argon` و`High` مقابل `Low`):**
+   - **العلة:** كان `_match_model_entry` يعيد أول نموذج Gemini يصادفه في مصفوفة الكوتة (`Gemini 3.8 Flash (Low)`) حتى عند طلب `gemini-3.8-flash-high` أو `gemini-4-argon-high`.
+   - **العلاج:** بناء `_score_model_candidate` و`_match_model_entries` لمطابقة العائلة والفئة الفرعية (`flash` / `argon` / `opus` / `sonnet`) ومستوى الجهد (`high` / `medium` / `low`).
+5. **تطبيق الحارس المزدوج (`5h Floor` + `Weekly Reserve`) والتوجيه الذكي متعدد البدائل (`select_best_model`):**
+   - **العلة:** إذا وُجد قيدان (`5h` و`Weekly`) لنفس النموذج أو كانت كوتة البديل الأول (`gemini-3.8-flash-high`) منخفضة بينما `gemini-4-argon-high` متاح، لم يكن `select_best_model` ينتقل للبديل الثاني.
+   - **العلاج:** فحص جميع القيود المطابقة للنموذج في `check_quota` وتمرير سلسلة البدائل `DEFAULT_FALLBACK_CHAIN` في `select_best_model` لاختيار أعلى نموذج آمن متاح.
+6. **تصادم أسماء الملفات المرفقة المتشابهة في `run_agy_lean`:**
+   - **العلاج:** ترقيم الأسماء المكررة تلقائياً (`{stem}_{idx}{ext}`) عند ربطها في مجلد العمل المؤقت، وترقية `test_agy_lean_gates.py` إلى `4-Layer Quality Gate` باجتياز كامل **`PASS (0 errors)`** على الماك و`hermes-vps`.
