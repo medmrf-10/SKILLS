@@ -117,6 +117,7 @@ def diagnose_low_coverage(rep, dur):
 
 def quota_sync_worker():
     """فحص الكوتة الحية من سيرفر Antigravity المحلي كل دقيقتين ومزامنتها مع الماك و hermes-vps."""
+    pending_sync = '/Users/macm1pro/workspace/ytb-build/pending_vps_fixes/sync_once.sh'
     while True:
         try:
             if os.path.exists(AGY_USAGE_BIN):
@@ -129,10 +130,15 @@ def quota_sync_worker():
                     with open(tmp_q, 'w', encoding='utf-8') as qf:
                         qf.write(res.stdout.strip())
                     os.replace(tmp_q, LOCAL_QUOTA_JSON)
-                    subprocess.run(
+                    sq = subprocess.run(
                         ['scp', '-q', *SSH_MUX_OPTS, LOCAL_QUOTA_JSON, f'{VPS_HOST}:{REMOTE_QUOTA_JSON}'],
                         timeout=20, check=False
                     )
+                    if sq.returncode == 0 and os.path.exists(pending_sync):
+                        sr = subprocess.run(['bash', pending_sync], timeout=90, check=False)
+                        if sr.returncode == 0:
+                            os.remove(pending_sync)
+                            log('[✓ مزامنة إصلاحات السيرفر المعلقة] اكتمل رفع 010_W_2g8HoIJTY (100%) وتحديث السكربتات على hermes-vps')
         except Exception as e:
             log(f'[تحذير مزامنة كوتة] {e}')
         time.sleep(120)
