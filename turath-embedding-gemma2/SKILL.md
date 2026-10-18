@@ -92,17 +92,17 @@ flowchart TD
     FUSE --> OUT["6. إثراء النتائج الكاملة<br/>المتن + الملخص + القواعد + التوقيت الصوتي ورابط يوتيوب / رقم الصفحة + الكيانات"]
 ```
 
-1. **الطبقة الأولى — الفلترة العلائقية الصارمة بالكيانات (`Relational Entity Filters`):**
-   - `--person "<اسم العلم>"` مع `--person-layer matn|isnad|any` (**الافتراضي `'matn'`** لمنع تلوث نتائج البحث بالمقاطع التي ورد فيها العلم راوياً في السند فقط!).
-   - `--place "<اسم المكان>"` عبر جدولَي `passage_places` و`places`.
+1. **الطبقة الأولى — الفلترة العلائقية الصارمة والمرنة بالكيانات (`Relational Entity Filters`):**
+   - `--person "<اسم العلم>"` مع `--person-layer matn|isnad|any` (**الافتراضي `'matn'`** لمنع تلوث نتائج البحث بالمقاطع التي ورد فيها العلم راوياً في السند فقط!)، مع دعم المطابقة المطبّعة المرنة للألقاب والكنى المعربة (مثل مطابقة `"الترمذي"` أو `"الإمام الترمذي"` لـ `"الإمام أبو عيسى الترمذي"`، ومطابقة `"أبا هريرة"` أو `"أبي هريرة"` لـ `"أبو هريرة رضي الله عنه"`).
+   - `--place "<اسم المكان>"` عبر جدولَي `passage_places` و`places` مع تجريد الألقاب الجغرافية (`المكرمة / المنورة / الشريف`) والمطابقة ثنائية الاتجاه.
    - `--year-min <H>` و`--year-max <H>` عبر جدول `events_chronology` مع اشتراط `event_layer = 'historical'` لاستبعاد تواريخ نسخ المخطوطات.
-   - `--surah <N>` أو `--ayah <surah:ayah>` عبر جدول `evidences`.
+   - `--surah <N>` أو `--ayah <surah:ayah>` عبر جدول `evidences` (يدعم أرقام السور وأسماء السور الـ 114 والأرقام الهندية مثل `2:255` أو `البقرة:255` أو `٢:٢٥٥`).
    - `--science <science>` و`--source-type <book|lecture|course>` عبر جدول `sources`.
    - `--matn-clause <clause_id>` عبر جدول `matn_triangulation` لاسترجاع جميع الشروح الصوتية والمكتوبة لفقرة متن محددة.
-2. **الطبقة الثانية — البحث النصي الحرفي (`FTS5 BM25`):**
-   - يستعلم من جدول `passages_fts` مع تطهير آلي لعلامات الترقيم والاستفهام وبناء استعلام هجين (`Phrase / AND / OR`) وحساب درجات `BM25` المطبّعة.
+2. **الطبقة الثانية — البحث النصي الحرفي الصامد إملائياً وصرفياً (`Orthographic & Stem-Resilient FTS5 BM25`):**
+   - يستعلم من جدول `passages_fts` مع عزل أدوات الاستفهام والكلمات القالبية (`هل، ما حكم، مسألة، ضابط، يجوز`)، وتوليد مجموعات البدائل الإملائية (`أ/إ/آ/ا`, `ة/ه`, `ى/ي`) وبادئات الجذوع الصرفية (`"stem"*`) وحساب درجات `BM25` المعززة بالتطابق الجذعي المطبّع.
 3. **الطبقة الثالثة — البحث الدلالي المزدوج (`Dual EmbeddingGemma 2`):**
-   - يولّد متجه الاستعلام ببادئة المهمة القياسية: `task: search query | query: {query}`، ثم يحسب `sim_matn` و`sim_concept` عبر ضرب المصفوفات المسرّع.
+   - يولّد متجه الاستعلام ببادئة المهمة القياسية: `task: search query | query: {query}`، ثم يحسب `sim_matn` و`sim_concept` عبر ضرب المصفوفات المسرّع مع تغطية موسعة لمصطلحات الوضع والدلالة والمنطق وأصول الفقه والعقيدة والفقه.
 4. **الطبقة الرابعة — الدمج الهجين (`Weighted Score + Reciprocal Rank Fusion RRF`):**
    - يجمع بين الدرجات المطبّعة ورتب `RRF` ($\sum_{c \in \{\text{matn}, \text{concept}, \text{fts}\}} \frac{\alpha_c}{k + \text{rank}_c(d)}$) مع قابلية التحكم الكامل بالأوزان (`--alpha-matn`, `--alpha-concept`, `--alpha-fts`).
 
@@ -114,7 +114,7 @@ flowchart TD
 | :--- | :--- |
 | [`scripts/embed_corpus_gemma2.py`](./scripts/embed_corpus_gemma2.py) | محرك تجهيز النصوص (`prepare_embed_matn_text`, `prepare_embed_concept_text`) وتوليد المتجهات المزدوجة (`passage_embeddings`, `gem_embeddings`) بدعم `--backend auto\|ollama\|sentence-transformers\|genai\|deterministic-arabic-mps`. |
 | [`scripts/hybrid_search.py`](./scripts/hybrid_search.py) | محرك البحث الهجين (`HybridSearchEngine` + `CLI`) الذي يدمج `FTS5 BM25` + `vec_matn` + `vec_concept` + `RRF` + فلاتر الكيانات العلائقية ويعيد التوقيت الصوتي بالثانية وروابط يوتيوب وأرقام الصفحات. |
-| [`scripts/test_embedding_gemma2_gates.py`](./scripts/test_embedding_gemma2_gates.py) | بوابة الفحص الحتمية ثلاثية الطبقات (`Gate 1: Hygiene & L2 Norm`, `Gate 2: Matn vs Concept Retrieval`, `Gate 3: Hybrid + Entity Filters & Isnad Isolation`). |
+| [`scripts/test_embedding_gemma2_gates.py`](./scripts/test_embedding_gemma2_gates.py) | بوابة الفحص الحتمية رباعية الطبقات (`Gate 1: Hygiene & L2 Norm`, `Gate 2: Matn vs Concept Retrieval`, `Gate 3: Hybrid + Entity Filters & Isnad Isolation`, `Gate 4: Real Lecture Corpus & Orthographic/Stopword-Resilient Hybrid Search`). |
 
 ---
 
@@ -138,7 +138,7 @@ python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/hybrid_sear
   --top-k 5
 ```
 
-### ج. تشغيل بوابة الفحص الحتمية (`3-Layer Quality Gate`):
+### ج. تشغيل بوابة الفحص الحتمية (`4-Layer Quality Gate`):
 ```bash
 python3 /Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/test_embedding_gemma2_gates.py
 ```

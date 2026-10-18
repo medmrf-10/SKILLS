@@ -41,10 +41,151 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from embed_corpus_gemma2 import (  # noqa: E402
     ARABIC_STOPWORDS,
+    ARABIC_STOPWORDS_NORM,
+    BOILERPLATE_CLEAN_RES,
+    CONCEPT_SYNONYM_CLUSTERS,
+    DIGITS_MAP,
+    QUERY_FRAMING_STOPWORDS_NORM,
+    arabic_consonant_skeleton,
+    arabic_light_stem,
     blob_to_vector,
     create_embedder,
     normalize_arabic_for_match,
 )
+
+PERSON_TITLE_STOPWORDS: Set[str] = {
+    "الامام", "امام", "الشيخ", "شيخ", "الاسلام", "الحافظ", "حافظ",
+    "القاضي", "قاضي", "العلامه", "علامه", "الصحابي", "صحابي", "الجليل",
+    "الخليفه", "خليفه", "امير", "المؤمنين", "المومنين", "نبي", "رسول", "الله",
+    "فضيله", "سيدنا", "مولانا", "رضي", "عنه", "عنها", "عنهما", "عنهم", "عنهن",
+    "رحمه", "رحمهم", "عليه", "عليهم", "عليهما", "عليها", "السلام", "صلي", "وسلم",
+    "تعالي", "سبحانه", "ابو", "ابي", "ابا",
+}
+
+PLACE_EPITHET_STOPWORDS: Set[str] = {
+    "المكرمه", "مكرمه", "المنوره", "منوره", "الشريف", "شريف",
+    "المقدسه", "مقدسه", "المحروسه", "محروسه",
+}
+
+_SURAH_NAMES_ORDERED: List[str] = [
+    "الفاتحه", "البقره", "ال عمران", "النساء", "المائده", "الانعام", "الاعراف", "الانفال", "التوبه", "يونس",
+    "هود", "يوسف", "الرعد", "ابراهيم", "الحجر", "النحل", "الاسراء", "الكهف", "مريم", "طه",
+    "الانبياء", "الحج", "المؤمنون", "النور", "الفرقان", "الشعراء", "النمل", "القصص", "العنكبوت", "الروم",
+    "لقمان", "السجده", "الاحزاب", "سبا", "فاطر", "يس", "الصافات", "ص", "الزمر", "غافر",
+    "فصلت", "الشوري", "الزخرف", "الدخان", "الجاثيه", "الاحقاف", "محمد", "الفتح", "الحجرات", "ق",
+    "الذاريات", "الطور", "النجم", "القمر", "الرحمن", "الواقعه", "الحديد", "المجادله", "الحشر", "الممتحنه",
+    "الصف", "الجمعه", "المنافقون", "التغابن", "الطلاق", "التحريم", "الملك", "القلم", "الحاقه", "المعارج",
+    "نوح", "الجن", "المزمل", "المدثر", "القيامه", "الانسان", "المرسلات", "النبا", "النازعات", "عبس",
+    "التكوير", "الانفطار", "المطففين", "الانشقاق", "البروج", "الطارق", "الاعلي", "الغاشيه", "الفجر", "البلد",
+    "الشمس", "الليل", "الضحي", "الشرح", "التين", "العلق", "القدر", "البينه", "الزلزله", "العاديات",
+    "القارعه", "التكاثر", "العصر", "الهمزه", "الفيل", "قريش", "الماعون", "الكوثر", "الكافرون", "النصر",
+    "المسد", "الاخلاص", "الفلق", "الناس",
+]
+SURAH_NAME_TO_NUMBER: Dict[str, int] = {
+    normalize_arabic_for_match(nm): idx + 1 for idx, nm in enumerate(_SURAH_NAMES_ORDERED)
+}
+SURAH_NAME_TO_NUMBER.update({
+    "عمران": 3,
+    "بني اسرائيل": 17,
+    "المؤمن": 40,
+    "الدهر": 76,
+    "الانشراح": 94,
+    "اقرا": 96,
+    "لم يكن": 98,
+    "اللهب": 111,
+})
+
+
+def _canonicalize_person_text(text: str) -> str:
+    """يطبع اسم العلم ويوحد صيغ الإعراب في الكنى والأنساب (أبو/أبي/أبا -> ابو، ابن/بن -> بن)."""
+    s = normalize_arabic_for_match(text)
+    s = re.sub(r"\b(?:ابو|ابي|ابا)\b", "ابو", s)
+    s = re.sub(r"\b(?:ابن|بن)\b", "بن", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _extract_person_core_tokens(text: str) -> List[str]:
+    """يستخرج الكلمات الجوهرية المميزة لاسم العلم بعد تجريد الألقاب والترضية."""
+    canon = _canonicalize_person_text(text)
+    raw_toks = [t for t in re.findall(r"[\u0621-\u064A0-9]+", canon) if len(t) >= 2]
+    core = [t for t in raw_toks if t not in PERSON_TITLE_STOPWORDS]
+    if not core:
+        core = [t for t in raw_toks if t not in {"الامام", "الشيخ", "رضي", "الله", "عنه", "رحمه", "عليه", "السلام"}]
+    return core or raw_toks
+
+
+def _fts_orthographic_group(tok: str) -> str:
+    """
+    يبني مجموعة بدائل إملائية وصرفية آمنة لـ SQLite FTS5 MATCH لمعالجة:
+    - اختلاف الهمزات (الاجماع / الإجماع / الأجماع، مساله / مسألة، بالاباء / بآبائكم)
+    - التاء المربوطة والهاء (الصدقه / الصدقة / بالصدقة)
+    - الألف المقصورة والياء (استوي / استوى، المرضى / مرضاكم)
+    - الجذوع مع بادئات العطف والجر وأحرف المضارعة ("حلف"* / "تحلف"* / "صدق"* / "مرض"*)
+    """
+    clean_t = re.sub(r"[^\u0621-\u064A0-9A-Za-z]", "", tok).strip()
+    if not clean_t:
+        return ""
+    norm_t = normalize_arabic_for_match(clean_t)
+    stem_t = arabic_light_stem(norm_t)
+
+    variants: List[str] = []
+    for cand in (clean_t, norm_t):
+        if cand and cand not in variants:
+            variants.append(cand)
+
+    # بدائل التاء المربوطة / الهاء والألف المقصورة / الياء
+    for base in list(variants):
+        if base.endswith("ه") and len(base) >= 3:
+            variants.append(base[:-1] + "ة")
+        elif base.endswith("ة") and len(base) >= 3:
+            variants.append(base[:-1] + "ه")
+        if base.endswith("ي") and len(base) >= 3:
+            variants.append(base[:-1] + "ى")
+        elif base.endswith("ى") and len(base) >= 3:
+            variants.append(base[:-1] + "ي")
+
+    # بدائل همزة القطع بعد (ال) التعريف أو في أول الكلمة أو وسطها (مساله -> مسألة)
+    for base in list(variants):
+        if base.startswith("الا") and len(base) >= 4:
+            variants.append("الإ" + base[3:])
+            variants.append("الأ" + base[3:])
+            variants.append("الآ" + base[3:])
+        elif base.startswith("ا") and not base.startswith("ال") and len(base) >= 3:
+            variants.append("إ" + base[1:])
+            variants.append("أ" + base[1:])
+            variants.append("آ" + base[1:])
+        if "سال" in base:
+            variants.append(base.replace("سال", "سأل"))
+        if "قران" in base:
+            variants.append(base.replace("قران", "قرآن"))
+        if "ابا" in base:
+            variants.append(base.replace("ابا", "آبا"))
+
+    quoted_parts: List[str] = []
+    seen_q: Set[str] = set()
+    for v in variants:
+        q = f'"{v}"'
+        if q not in seen_q:
+            seen_q.add(q)
+            quoted_parts.append(q)
+
+    # إضافة مطابقة البادئة (Prefix Wildcard) للجذع الصرفي في FTS5
+    if len(stem_t) >= 3:
+        stem_variants = [stem_t]
+        if stem_t.startswith("ا"):
+            stem_variants.extend(["إ" + stem_t[1:], "أ" + stem_t[1:], "آ" + stem_t[1:]])
+        if "سال" in stem_t:
+            stem_variants.append(stem_t.replace("سال", "سأل"))
+        for sv in stem_variants:
+            for pref in ("", "ال", "و", "ب", "بال", "ل", "ت", "ي"):
+                cand_p = f'"{pref}{sv}"*'
+                if cand_p not in seen_q:
+                    seen_q.add(cand_p)
+                    quoted_parts.append(cand_p)
+
+    if len(quoted_parts) == 1:
+        return quoted_parts[0]
+    return "(" + " OR ".join(quoted_parts) + ")"
 
 
 def _compute_cosine_scores(
@@ -155,47 +296,80 @@ class HybridSearchEngine:
         }
         candidates = set(all_pids)
 
-        # أ. فلتر العلم (مع عزل طبقة الإسناد افتراضياً person_layer='matn')
+        # أ. فلتر العلم (مع عزل طبقة الإسناد افتراضياً person_layer='matn' ودعم المطابقة المطبّعة المرنة للألقاب والكنى)
         if person and person.strip():
-            p_norm = normalize_arabic_for_match(person)
+            q_canon = _canonicalize_person_text(person)
+            q_core_toks = _extract_person_core_tokens(person)
+            q_core_stems = [arabic_light_stem(t) for t in q_core_toks if len(arabic_light_stem(t)) >= 2]
             layer_mode = (person_layer or "matn").strip().lower()
+
             sql = """
-                SELECT DISTINCT pp.passage_id
+                SELECT pp.passage_id, pp.canonical_name AS pp_canon, pp.mentioned_name AS pp_ment,
+                       pe.canonical_name AS pe_canon, pe.aliases_json AS pe_aliases
                 FROM passage_persons pp
                 LEFT JOIN persons pe ON pp.person_id = pe.person_id
-                WHERE (
-                    NORM_AR(pp.canonical_name) LIKE '%' || ? || '%'
-                    OR NORM_AR(pp.mentioned_name) LIKE '%' || ? || '%'
-                    OR NORM_AR(pe.canonical_name) LIKE '%' || ? || '%'
-                    OR NORM_AR(pe.aliases_json) LIKE '%' || ? || '%'
-                )
             """
-            params: List[Any] = [p_norm, p_norm, p_norm, p_norm]
+            params: List[Any] = []
             if layer_mode in ("matn", "isnad"):
-                sql += " AND LOWER(COALESCE(pp.source_layer, 'matn')) = ?"
+                sql += " WHERE LOWER(COALESCE(pp.source_layer, 'matn')) = ?"
                 params.append(layer_mode)
-            matched = {str(r["passage_id"]) for r in self.conn.execute(sql, params)}
-            candidates &= matched
 
-        # ب. فلتر المكان
+            matched_person_pids: Set[str] = set()
+            for r in self.conn.execute(sql, params):
+                combined_raw = " | ".join(
+                    str(r[k] or "") for k in ("pp_canon", "pp_ment", "pe_canon", "pe_aliases")
+                )
+                rec_canon = _canonicalize_person_text(combined_raw)
+                if not rec_canon:
+                    continue
+                if q_canon and q_canon in rec_canon:
+                    matched_person_pids.add(str(r["passage_id"]))
+                    continue
+                rec_toks = set(re.findall(r"[\u0621-\u064A0-9]+", rec_canon))
+                rec_stems = {arabic_light_stem(t) for t in rec_toks}
+                if q_core_toks and all(
+                    (ct in rec_canon or ct in rec_toks or arabic_light_stem(ct) in rec_stems)
+                    for ct in q_core_toks
+                ):
+                    matched_person_pids.add(str(r["passage_id"]))
+                elif q_core_stems and all(cs in rec_stems for cs in q_core_stems):
+                    matched_person_pids.add(str(r["passage_id"]))
+
+            candidates &= matched_person_pids
+
+        # ب. فلتر المكان (مع دعم تجريد الألقاب الجغرافية مثل المكرمة/المنورة والمطابقة ثنائية الاتجاه)
         if place and place.strip():
             pl_norm = normalize_arabic_for_match(place)
+            pl_toks = [t for t in re.findall(r"[\u0621-\u064A0-9]+", pl_norm) if len(t) >= 2]
+            pl_core_toks = [t for t in pl_toks if t not in PLACE_EPITHET_STOPWORDS] or pl_toks
+            pl_core_str = " ".join(pl_core_toks)
+
             sql = """
-                SELECT DISTINCT ppl.passage_id
+                SELECT ppl.passage_id, ppl.canonical_name AS ppl_canon, ppl.mentioned_name AS ppl_ment,
+                       pl.canonical_name AS pl_canon, pl.aliases_json AS pl_aliases
                 FROM passage_places ppl
                 LEFT JOIN places pl ON ppl.place_id = pl.place_id
-                WHERE (
-                    NORM_AR(ppl.canonical_name) LIKE '%' || ? || '%'
-                    OR NORM_AR(ppl.mentioned_name) LIKE '%' || ? || '%'
-                    OR NORM_AR(pl.canonical_name) LIKE '%' || ? || '%'
-                    OR NORM_AR(pl.aliases_json) LIKE '%' || ? || '%'
-                )
             """
-            matched = {
-                str(r["passage_id"])
-                for r in self.conn.execute(sql, [pl_norm, pl_norm, pl_norm, pl_norm])
-            }
-            candidates &= matched
+            matched_place_pids: Set[str] = set()
+            for r in self.conn.execute(sql):
+                fields_norm = [
+                    normalize_arabic_for_match(str(r[k] or ""))
+                    for k in ("ppl_canon", "ppl_ment", "pl_canon", "pl_aliases")
+                ]
+                combined_pl = " | ".join(f for f in fields_norm if f)
+                if not combined_pl:
+                    continue
+                if pl_norm in combined_pl or (pl_core_str and pl_core_str in combined_pl):
+                    matched_place_pids.add(str(r["passage_id"]))
+                    continue
+                # مطابقة عكسية عندما يكون الاسم المخزن مختصراً (مثل "مكه" والفلتر "مكة المكرمة")
+                rec_canon_pl = fields_norm[0] or fields_norm[2]
+                if rec_canon_pl and len(rec_canon_pl) >= 3 and (
+                    rec_canon_pl in pl_norm or arabic_light_stem(rec_canon_pl) in {arabic_light_stem(t) for t in pl_core_toks}
+                ):
+                    matched_place_pids.add(str(r["passage_id"]))
+
+            candidates &= matched_place_pids
 
         # ج. فلتر التاريخ الهجري (مع اشتراط event_layer='historical' افتراضياً)
         if year_min is not None or year_max is not None:
@@ -213,18 +387,46 @@ class HybridSearchEngine:
             matched = {str(r["passage_id"]) for r in self.conn.execute(sql, params)}
             candidates &= matched
 
-        # د. فلتر الشواهد القرآنية (--surah أو --ayah مثل 2:255)
+        # د. فلتر الشواهد القرآنية (--surah أو --ayah مثل 2:255 أو البقرة:255 أو ٢:٢٥٥)
         if surah is not None:
             sql = "SELECT DISTINCT passage_id FROM evidences WHERE surah_number = ?"
             matched = {str(r["passage_id"]) for r in self.conn.execute(sql, [int(surah)])}
             candidates &= matched
 
         if ayah and str(ayah).strip():
-            ayah_s = str(ayah).strip()
-            if ":" in ayah_s:
-                s_part, a_part = ayah_s.split(":", 1)
-                s_num = int(s_part.strip())
-                a_num = int(a_part.strip())
+            ayah_s = str(ayah).strip().translate(DIGITS_MAP)
+            ayah_s_clean = re.sub(r"^\s*(?:سورة|سوره)\s+", "", ayah_s).strip()
+            s_num_resolved: Optional[int] = None
+            a_start_resolved: Optional[int] = None
+            a_end_resolved: Optional[int] = None
+
+            if ":" in ayah_s_clean:
+                s_part, a_part = ayah_s_clean.split(":", 1)
+                s_part_str = s_part.strip()
+                if s_part_str.isdigit():
+                    s_num_resolved = int(s_part_str)
+                else:
+                    s_norm = normalize_arabic_for_match(s_part_str)
+                    s_norm = re.sub(r"^(?:سوره|سورة)\s+", "", s_norm).strip()
+                    s_num_resolved = SURAH_NAME_TO_NUMBER.get(s_norm)
+
+                a_nums = [int(x) for x in re.findall(r"[0-9]+", a_part)]
+                if a_nums:
+                    a_start_resolved = a_nums[0]
+                    a_end_resolved = a_nums[-1]
+            else:
+                a_nums = [int(x) for x in re.findall(r"[0-9]+", ayah_s_clean)]
+                non_digit_part = normalize_arabic_for_match(re.sub(r"[0-9\-–:]+", " ", ayah_s_clean))
+                non_digit_part = re.sub(r"^(?:سوره|سورة|ايه|آية)\s+", "", non_digit_part).strip()
+                if non_digit_part and non_digit_part in SURAH_NAME_TO_NUMBER:
+                    s_num_resolved = SURAH_NAME_TO_NUMBER[non_digit_part]
+                if a_nums:
+                    a_start_resolved = a_nums[0]
+                    a_end_resolved = a_nums[-1]
+
+            if s_num_resolved is not None and a_start_resolved is not None:
+                canonical_key = f"{s_num_resolved}:{a_start_resolved}"
+                a_end_val = a_end_resolved if a_end_resolved is not None else a_start_resolved
                 sql = """
                     SELECT DISTINCT passage_id
                     FROM evidences
@@ -238,10 +440,10 @@ class HybridSearchEngine:
                 """
                 matched = {
                     str(r["passage_id"])
-                    for r in self.conn.execute(sql, [ayah_s, s_num, a_num, a_num])
+                    for r in self.conn.execute(sql, [canonical_key, s_num_resolved, a_end_val, a_start_resolved])
                 }
-            else:
-                a_num = int(ayah_s)
+                candidates &= matched
+            elif a_start_resolved is not None:
                 sql = """
                     SELECT DISTINCT passage_id
                     FROM evidences
@@ -250,9 +452,15 @@ class HybridSearchEngine:
                 """
                 matched = {
                     str(r["passage_id"])
-                    for r in self.conn.execute(sql, [a_num, a_num, str(a_num)])
+                    for r in self.conn.execute(sql, [a_start_resolved, a_start_resolved, str(a_start_resolved)])
                 }
-            candidates &= matched
+                candidates &= matched
+            elif s_num_resolved is not None:
+                sql = "SELECT DISTINCT passage_id FROM evidences WHERE surah_number = ?"
+                matched = {str(r["passage_id"]) for r in self.conn.execute(sql, [s_num_resolved])}
+                candidates &= matched
+            else:
+                candidates = set()
 
         # هـ. فلتر العلم الشرعي/المعرفي ونوع المصدر (--science و --source-type)
         if science and science.strip():
@@ -305,52 +513,78 @@ class HybridSearchEngine:
     # -----------------------------------------------------------------------
     def _score_fts5(self, query: str, candidate_pids: Set[str]) -> Dict[str, float]:
         """
-        يستعلم من جدول passages_fts باستخدام BM25 مع تطهير استعلام المستخدم،
-        ويدعم المطابقة الجزئية المطبّعة عند اختلاف الهمزات والتشكيل.
+        يستعلم من جدول passages_fts باستخدام BM25 مع:
+        1. عزل أدوات الاستفهام والكلمات القالبية العامة (مثل: هل، ما حكم، مسألة، ضابط، يجوز) عن التطابق العشوائي.
+        2. توليد مجموعات البدائل الإملائية والصرفية (الهمزات أ/إ/آ/ا، التاء المربوطة ة/ه، الياء ى/ي، وبادئات الجذوع "stem"*).
+        3. تعزيز التطابق المعجمي والجذعي المطبّع في العنوان والمتن والملخص المنقى.
         """
         if not query or not query.strip() or not candidate_pids:
             return {}
 
-        raw_tokens = [
+        all_query_tokens = [
             tok for tok in re.findall(r"[\u0621-\u064A0-9A-Za-z]+", query)
-            if len(tok) >= 2 and normalize_arabic_for_match(tok) not in ARABIC_STOPWORDS
+            if len(tok) >= 2 and normalize_arabic_for_match(tok) not in ARABIC_STOPWORDS_NORM
         ]
-        if not raw_tokens:
-            raw_tokens = re.findall(r"[\u0621-\u064A0-9A-Za-z]+", query)
-        if not raw_tokens:
+        if not all_query_tokens:
+            all_query_tokens = [
+                tok for tok in re.findall(r"[\u0621-\u064A0-9A-Za-z]+", query) if len(tok) >= 2
+            ]
+        if not all_query_tokens:
             return {}
 
+        core_tokens = [
+            tok for tok in all_query_tokens
+            if normalize_arabic_for_match(tok) not in QUERY_FRAMING_STOPWORDS_NORM
+        ]
+        if not core_tokens:
+            core_tokens = all_query_tokens
+
         raw_scores: Dict[str, float] = {}
-        try:
-            # 1. محاولة مطابقة تقاطع الكلمات (AND) ثم اتحاد الكلمات (OR) في FTS5
-            and_expr = " AND ".join(f'"{t}"' for t in raw_tokens)
-            or_expr = " OR ".join(f'"{t}"' for t in raw_tokens)
+        fts_groups = [g for g in (_fts_orthographic_group(t) for t in core_tokens) if g]
 
-            for mult, fts_expr in ((1.35, and_expr), (1.0, or_expr)):
-                rows = self.conn.execute(
-                    """
-                    SELECT passage_id, bm25(passages_fts) AS b_score
-                    FROM passages_fts
-                    WHERE passages_fts MATCH ?
-                    """,
-                    (fts_expr,),
-                ).fetchall()
-                for r in rows:
-                    pid = str(r["passage_id"])
-                    if pid in candidate_pids:
-                        val = abs(float(r["b_score"])) * mult
-                        if val > raw_scores.get(pid, 0.0):
-                            raw_scores[pid] = val
-        except sqlite3.OperationalError:
-            pass
+        if fts_groups:
+            and_expr = " AND ".join(fts_groups)
+            or_expr = " OR ".join(fts_groups)
 
-        # 2. تعزيز التطابق المعجمي المطبّع (لمعالجة اختلاف الهمزات والتشكيل في العربية)
+            for mult, fts_expr in ((1.60, and_expr), (0.85, or_expr)):
+                try:
+                    rows = self.conn.execute(
+                        """
+                        SELECT passage_id, bm25(passages_fts) AS b_score
+                        FROM passages_fts
+                        WHERE passages_fts MATCH ?
+                        """,
+                        (fts_expr,),
+                    ).fetchall()
+                    for r in rows:
+                        pid = str(r["passage_id"])
+                        if pid in candidate_pids:
+                            val = abs(float(r["b_score"])) * mult
+                            if val > raw_scores.get(pid, 0.0):
+                                raw_scores[pid] = val
+                except sqlite3.OperationalError:
+                    pass
+
+        # 2. تعزيز التطابق المعجمي والجذعي المطبّع (لمعالجة اختلاف الهمزات والتصريف والمشتقات في العربية)
         q_norm = normalize_arabic_for_match(query)
-        norm_tokens = [
-            normalize_arabic_for_match(t) for t in raw_tokens
+        norm_core_tokens = [
+            normalize_arabic_for_match(t) for t in core_tokens
             if len(normalize_arabic_for_match(t)) >= 2
         ]
-        if norm_tokens:
+        core_stems = [arabic_light_stem(nt) for nt in norm_core_tokens]
+        core_skels = [arabic_consonant_skeleton(st) for st in core_stems]
+
+        # تحديد العناقيد الدلالية النشطة في الاستعلام لدعم الترادف المباشر (مثل علاج <-> داووا)
+        q_tok_set = set(norm_core_tokens) | set(core_stems)
+        active_cluster_kws: Set[str] = set()
+        for _, kws in CONCEPT_SYNONYM_CLUSTERS:
+            kws_norm = [normalize_arabic_for_match(k) for k in kws]
+            if any((kn in q_tok_set or arabic_light_stem(kn) in q_tok_set) for kn in kws_norm if " " not in kn):
+                for kn in kws_norm:
+                    if " " not in kn:
+                        active_cluster_kws.add(arabic_light_stem(kn))
+
+        if norm_core_tokens:
             placeholders = ",".join("?" for _ in candidate_pids)
             rows = self.conn.execute(
                 f"""
@@ -360,18 +594,56 @@ class HybridSearchEngine:
                 """,
                 list(candidate_pids),
             ).fetchall()
+
             for r in rows:
                 pid = str(r["passage_id"])
-                combined = " ".join(
-                    str(r[k] or "")
-                    for k in ("sub_heading", "clean_matn", "raw_text", "summary", "topics_json", "search_queries_json")
-                )
-                doc_norm = normalize_arabic_for_match(combined)
-                hit_count = sum(1 for nt in norm_tokens if nt in doc_norm)
-                if hit_count > 0:
-                    phrase_bonus = 2.0 if (len(q_norm) >= 6 and q_norm in doc_norm) else 0.0
-                    lex_score = (hit_count / len(norm_tokens)) * 2.5 + phrase_bonus
-                    raw_scores[pid] = max(raw_scores.get(pid, 0.0), raw_scores.get(pid, 0.0) + lex_score)
+                primary_raw = " ".join(str(r[k] or "") for k in ("sub_heading", "clean_matn", "raw_text"))
+                secondary_raw = " ".join(str(r[k] or "") for k in ("summary", "topics_json", "search_queries_json"))
+                for bp_re in BOILERPLATE_CLEAN_RES:
+                    primary_raw = bp_re.sub(" ", primary_raw)
+                    secondary_raw = bp_re.sub(" ", secondary_raw)
+
+                prim_norm = normalize_arabic_for_match(primary_raw)
+                sec_norm = normalize_arabic_for_match(secondary_raw)
+                doc_norm = f"{prim_norm} {sec_norm}".strip()
+
+                prim_words = set(re.findall(r"[\u0621-\u064A0-9]+", prim_norm))
+                all_words = prim_words | set(re.findall(r"[\u0621-\u064A0-9]+", sec_norm))
+                prim_stems = {arabic_light_stem(w) for w in prim_words}
+                all_stems = prim_stems | {arabic_light_stem(w) for w in all_words}
+                all_skels = {arabic_consonant_skeleton(st) for st in all_stems if len(st) >= 3}
+
+                matched_weight = 0.0
+                matched_tokens_count = 0
+                for idx_t, nt in enumerate(norm_core_tokens):
+                    st = core_stems[idx_t]
+                    sk = core_skels[idx_t]
+                    if nt in prim_words or nt in prim_norm:
+                        matched_weight += 3.2
+                        matched_tokens_count += 1
+                    elif len(st) >= 3 and st in prim_stems:
+                        matched_weight += 2.7
+                        matched_tokens_count += 1
+                    elif nt in all_words or nt in doc_norm:
+                        matched_weight += 2.0
+                        matched_tokens_count += 1
+                    elif len(st) >= 3 and st in all_stems:
+                        matched_weight += 1.7
+                        matched_tokens_count += 1
+                    elif len(sk) >= 3 and sk in all_skels:
+                        matched_weight += 1.1
+                        matched_tokens_count += 1
+
+                if matched_tokens_count > 0:
+                    coverage_ratio = matched_tokens_count / len(norm_core_tokens)
+                    phrase_bonus = 3.5 if (len(q_norm) >= 6 and q_norm in doc_norm) else 0.0
+                    all_match_bonus = 3.0 if matched_tokens_count == len(norm_core_tokens) and len(norm_core_tokens) >= 2 else 0.0
+                    syn_bonus = 1.2 if (active_cluster_kws and (prim_stems & active_cluster_kws)) else 0.0
+                    lex_score = (matched_weight * (0.6 + 0.8 * coverage_ratio)) + phrase_bonus + all_match_bonus + syn_bonus
+                    raw_scores[pid] = raw_scores.get(pid, 0.0) + lex_score
+                else:
+                    # إذا لم يطابق المقطع أي كلمة موضوعية جوهرية، نصفر درجته المعجمية لمنع تسرب الكلمات العامة
+                    raw_scores.pop(pid, None)
 
         if not raw_scores:
             return {}

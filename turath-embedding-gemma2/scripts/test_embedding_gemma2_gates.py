@@ -463,6 +463,206 @@ def build_test_fixture_db(db_path: Path) -> None:
         conn.close()
 
 
+def build_gate4_real_lecture_db(db_path: Path) -> None:
+    """
+    يبني قاعدة بيانات Gate 4 من نصوص دروس حقيقية مفرغة (شرح المنظومة العضدية / الوضع،
+    شرح نظم الورقات للسريري، وشرح المنظومة العدودية للددو) لاختبار:
+    - التوسيع الدلالي والجذور الصرفية لمصطلحات الوضع والاستعمال والحمل والحقيقة والمجاز والمشترك والمتواطئ والكلي والجزئي.
+    - صمود FTS5 أمام اختلاف الهمزات والتاء المربوطة والياء وأدوات الاستفهام القالبية.
+    - مرونة الفلترة العلائقية بالأعلام (--person بألقاب أو كنى معربة) والأماكن والآيات.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(SCHEMA_DDL)
+        conn.executemany(
+            "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("lec_dedew_adud", "lecture", "شرح المنظومة العضدية في الوضع والدلالة", "محمد الحسن الددو", "ossoul", "spoken_lecture", "{}"),
+                ("lec_sariri_waraqat", "lecture", "شرح نظم الورقات في أصول الفقه", "مولود السريري", "ossoul", "spoken_lecture", "{}"),
+                ("lec_dedew_aqidah", "lecture", "شرح المنظومة العدودية في اعتقاد أهل السنة", "محمد الحسن الددو", "akida", "spoken_lecture", "{}"),
+            ],
+        )
+
+        passages_rows = [
+            (
+                "D1_ADUDIYYA_WAD",
+                "lec_dedew_adud",
+                None,
+                "part_adud_1",
+                1,
+                1,
+                "المبحث 1: تحرير مراتب الوضع والاستعمال والحمل والحقيقة والمجاز",
+                "إن الوضع عند الأصوليين واللغويين هو تعيين اللفظ بإزاء المعنى، ويتفرع عنه الاستعمال وهو إطلاق اللفظ وإرادة المعنى، ثم الحمل وهو اعتقاد السامع مراد المتكلم من لفظه، فإن استعمل اللفظ فيما وضع له أولاً فهو الحقيقة، وإن استعمل في غير ما وضع له لعلاقة وقرينة مانعة من إرادة المعنى الأصلي فهو المجاز كما قرره العلامة محمد الأمين الشنقيطي.",
+                "إن الوضع عند الأصوليين واللغويين هو تعيين اللفظ بإزاء المعنى، ويتفرع عنه الاستعمال وهو إطلاق اللفظ وإرادة المعنى، ثم الحمل وهو اعتقاد السامع مراد المتكلم من لفظه، فإن استعمل اللفظ فيما وضع له أولاً فهو الحقيقة، وإن استعمل في غير ما وضع له لعلاقة وقرينة مانعة من إرادة المعنى الأصلي فهو المجاز.",
+                "",
+                "يقرر محمد الحسن الددو في هذا المبحث (تحرير مراتب الوضع والاستعمال والحمل) من درس (شرح المنظومة العضدية) تحرير المسألة وتفصيل ضوابطها: الفرق بين الوضع والاستعمال والحمل وأقسام الدلالة الوضعية بين الحقيقة والمجاز.",
+                json.dumps(["الوضع والاستعمال والحمل", "الحقيقة والمجاز", "الضوابط التأصيلية في الدرس الأول"], ensure_ascii=False),
+                json.dumps(["ما حكم وضابط «الوضع والاستعمال والحمل» عند محمد الحسن الددو؟"], ensure_ascii=False),
+                120.0,
+                260.0,
+                "https://www.youtube.com/watch?v=adud_01&t=120s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "D2_SARIRI_MUSHTARAK",
+                "lec_sariri_waraqat",
+                None,
+                "part_war_1",
+                1,
+                2,
+                "المبحث 2: اللفظ المشترك والمتواطئ والكلي والجزئي وحجية الإجماع",
+                "الأصل في الألفاظ عدم الاشتراك، واللفظ المشترك إذا أطلق يتوقف فيه حتى ترد القرينة التي تبينه بناء على أن المشترك يفيد الإجمال، بخلاف المتواطئ الذي يصدق معناه الكلي على أفراده الجزئية بالتساوي، وعلم المنطق تكفل بالكليات الخمس والحدود، كما أن الإجماع حجة قطعية في أصول الفقه.",
+                "الأصل في الألفاظ عدم الاشتراك، واللفظ المشترك إذا أطلق يتوقف فيه حتى ترد القرينة التي تبينه بناء على أن المشترك يفيد الإجمال، بخلاف المتواطئ الذي يصدق معناه الكلي على أفراده الجزئية بالتساوي، وعلم المنطق تكفل بالكليات الخمس والحدود، كما أن الإجماع حجة قطعية في أصول الفقه.",
+                "",
+                "بيان حكم اللفظ المشترك والفرق بينه وبين المتواطئ وتقسيم المعاني إلى الكلي والجزئي وتقرير حجية الإجماع.",
+                json.dumps(["المشترك والمتواطئ", "الكلي والجزئي", "الإجماع"], ensure_ascii=False),
+                json.dumps(["ما الفرق بين اللفظ المشترك والمتواطئ والكلي والجزئي؟"], ensure_ascii=False),
+                310.0,
+                450.0,
+                "https://www.youtube.com/watch?v=MwmXm6poras&t=310s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "D3_DEDEW_KALAM",
+                "lec_dedew_aqidah",
+                None,
+                "part_dedew_5",
+                5,
+                6,
+                "المبحث 6: خلاف المنتسبين للسنة في الكلام النفسي ومسألة القرآن",
+                "إن القرآن كلام الله حقيقة لا مجازاً بالحروف والمعاني، وذكر أحمد بن عبد الحليم بن تيمية أن من قصر الكلام على المعنى والكلام النفسي فقط فقد خالف السلف، واستدل بآية الكرسي {اللَّهُ لَا إِلَهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ}.",
+                "إن القرآن كلام الله حقيقة لا مجازاً بالحروف والمعاني، وذكر أحمد بن عبد الحليم بن تيمية أن من قصر الكلام على المعنى والكلام النفسي فقط فقد خالف السلف.",
+                "",
+                "يقرر محمد الحسن الددو في هذا المبحث (خلاف أهل السنة في الكلام) من درس (شرح المنظومة العدودية) تحرير المسألة وتفصيل ضوابطها: مسألة خلق القرآن والكلام النفسي ومذهب السلف.",
+                json.dumps(["كلام الله والقرآن", "الكلام النفسي"], ensure_ascii=False),
+                json.dumps(["ما حكم وضابط «القرآن كلام الله» عند محمد الحسن الددو؟"], ensure_ascii=False),
+                510.0,
+                640.0,
+                "https://www.youtube.com/watch?v=wJd0T9BkymQ&t=510s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "D4_DEDEW_HALF_ABAA",
+                "lec_dedew_aqidah",
+                None,
+                "part_dedew_6",
+                6,
+                6,
+                "المبحث 6: لا تحلفوا بآبائكم والنهي عن الشرك الأصغر",
+                "في حديث أبي هريرة رضي الله عنه أن النبي صلى الله عليه وسلم قال في مكة: لا تحلفوا بآبائكم، فمن كان حالفاً فليحلف بالله أو ليصمت، لأن الحلف بغير الله من أفراد الشرك الأصغر.",
+                "لا تحلفوا بآبائكم، فمن كان حالفاً فليحلف بالله أو ليصمت، لأن الحلف بغير الله من أفراد الشرك الأصغر.",
+                "",
+                "يقرر محمد الحسن الددو في هذا المبحث (لا تحلفوا بآبائكم) من درس (شرح المنظومة العدودية) تحرير المسألة وتفصيل ضوابطها: النهي عن الحلف بالآباء وبيان الشرك الأصغر.",
+                json.dumps(["تحرير مسألة: لا تحلفوا بآبائكم", "الشرك الأصغر"], ensure_ascii=False),
+                json.dumps(["ما حكم وضابط «لا تحلفوا بآبائكم» عند محمد الحسن الددو؟"], ensure_ascii=False),
+                720.0,
+                830.0,
+                "https://www.youtube.com/watch?v=_ghw18kXujk&t=720s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "D5_DEDEW_SADAQAH",
+                "lec_dedew_aqidah",
+                None,
+                "part_dedew_6",
+                6,
+                8,
+                "المبحث 8: داووا مرضاكم بالصدقة ورفع البلاء بالتوبة",
+                "وفيما أورده الإمام أبو عيسى الترمذي في الحديث: داووا مرضاكم بالصدقة، فإنه لم ينزل بلاء إلا بذنب ولم يكشف إلا بتوبة، كما قال نوح لقومه {فَقُلْتُ اسْتَغْفِرُوا رَبَّكُمْ إِنَّهُ كَانَ غَفَّارًا}.",
+                "داووا مرضاكم بالصدقة، فإنه لم ينزل بلاء إلا بذنب ولم يكشف إلا بتوبة.",
+                "",
+                "يقرر محمد الحسن الددو في هذا المبحث (داووا مرضاكم بالصدقة) من درس (شرح المنظومة العدودية) تحرير المسألة وتفصيل ضوابطها: مشروعية التداوي بالصدقة والاستغفار لشفاء المرضى.",
+                json.dumps(["تحرير مسألة: داووا مرضاكم بالصدقة", "التداوي بالصدقة"], ensure_ascii=False),
+                json.dumps(["ما حكم وضابط «داووا مرضاكم بالصدقة» عند محمد الحسن الددو؟"], ensure_ascii=False),
+                910.0,
+                1020.0,
+                "https://www.youtube.com/watch?v=_ghw18kXujk&t=910s",
+                None,
+                "",
+                "",
+            ),
+            (
+                "D6_DEDEW_NADHR",
+                "lec_dedew_aqidah",
+                None,
+                "part_dedew_6",
+                6,
+                17,
+                "المبحث 17: والنذر غير ذلك كالنذر المعلق؛ كمن ينذر لله",
+                "والنذر غير ذلك كالنذر المعلق؛ كمن ينذر لله إن شفاه من مرض، أو إن قدم غائب، أو إن رزق ولداً؛ فهذا مكروه ولكنه ينعقد ويجب الوفاء به إذا تحقق الشرط الذي علق عليه، فيجب الوفاء بالنذر.",
+                "والنذر غير ذلك كالنذر المعلق؛ كمن ينذر لله إن شفاه من مرض، أو إن قدم غائب؛ فهذا مكروه ولكنه ينعقد ويجب الوفاء به إذا تحقق الشرط الذي علق عليه.",
+                "",
+                "يقرر محمد الحسن الددو في هذا المبحث (والنذر غير ذلك كالنذر المعلق) من درس (شرح المنظومة العدودية) تحرير المسألة وتفصيل ضوابطها: حكم النذر المعلق على شرط ووجوب الوفاء به مع الكراهة.",
+                json.dumps(["تحرير مسألة: والنذر المعلق", "أحكام النذر"], ensure_ascii=False),
+                json.dumps(["ما حكم وضابط «والنذر غير ذلك كالنذر المعلق» عند محمد الحسن الددو؟"], ensure_ascii=False),
+                1340.0,
+                1450.0,
+                "https://www.youtube.com/watch?v=_ghw18kXujk&t=1340s",
+                None,
+                "",
+                "",
+            ),
+        ]
+        conn.executemany(
+            "INSERT INTO passages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            passages_rows,
+        )
+
+        for p in passages_rows:
+            pid, _, _, _, _, _, sub_h, raw_t, clean_m, _, summ, top_j, sq_j, *_ = p
+            conn.execute(
+                "INSERT INTO passages_fts VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (pid, sub_h, raw_t, clean_m, summ, " ".join(json.loads(top_j)), " ".join(json.loads(sq_j))),
+            )
+
+        conn.executemany(
+            "INSERT INTO persons VALUES (?, ?, ?, ?, ?)",
+            [
+                ("per_tirmidhi", "الإمام أبو عيسى الترمذي", "محدث", 279, json.dumps(["الإمام أبو عيسى الترمذي", "الترمذي"], ensure_ascii=False)),
+                ("per_abu_hurayrah", "أبو هريرة رضي الله عنه", "صحابي", 57, json.dumps(["أبو هريرة رضي الله عنه", "أبي هريرة"], ensure_ascii=False)),
+                ("per_ibn_taymiyyah", "أحمد بن عبد الحليم بن تيمية", "عالم", 728, json.dumps(["أحمد بن عبد الحليم بن تيمية", "ابن تيمية"], ensure_ascii=False)),
+                ("per_shanqiti", "العلامة محمد الأمين الشنقيطي رحمه الله", "أصولي ومفسر", 1393, json.dumps(["العلامة محمد الأمين الشنقيطي"], ensure_ascii=False)),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO passage_persons (passage_id, person_id, mentioned_name, canonical_name, source_layer, role) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("D5_DEDEW_SADAQAH", "per_tirmidhi", "الإمام أبو عيسى الترمذي", "الإمام أبو عيسى الترمذي", "matn", "scholar"),
+                ("D4_DEDEW_HALF_ABAA", "per_abu_hurayrah", "أبي هريرة رضي الله عنه", "أبو هريرة رضي الله عنه", "matn", "companion"),
+                ("D3_DEDEW_KALAM", "per_ibn_taymiyyah", "أحمد بن عبد الحليم بن تيمية", "أحمد بن عبد الحليم بن تيمية", "matn", "scholar"),
+                ("D1_ADUDIYYA_WAD", "per_shanqiti", "العلامة محمد الأمين الشنقيطي", "العلامة محمد الأمين الشنقيطي رحمه الله", "matn", "scholar"),
+            ],
+        )
+
+        conn.execute(
+            "INSERT INTO places VALUES (?, ?, ?, ?)",
+            ("plc_makkah", "مكه", "حاضرة / إقليم تاريخي", json.dumps(["مكه"], ensure_ascii=False)),
+        )
+        conn.execute(
+            "INSERT INTO passage_places (passage_id, place_id, mentioned_name, canonical_name) VALUES (?, ?, ?, ?)",
+            ("D4_DEDEW_HALF_ABAA", "plc_makkah", "مكه", "مكه"),
+        )
+
+        conn.executemany(
+            "INSERT INTO evidences VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("ev_g4_2_255", "D3_DEDEW_KALAM", "lec_dedew_aqidah", "quran", 2, 255, 255, "2:255", "اللَّهُ لَا إِلَهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ", None, None),
+                ("ev_g4_71_10", "D5_DEDEW_SADAQAH", "lec_dedew_aqidah", "quran", 71, 10, 10, "71:10", "فَقُلْتُ اسْتَغْفِرُوا رَبَّكُمْ إِنَّهُ كَانَ غَفَّارًا", None, None),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def run_quality_gates() -> int:
     errors: List[str] = []
 
@@ -691,6 +891,94 @@ def run_quality_gates() -> int:
                     errors.append(f"[Gate 3] Missing science_gems in hydrated lecture result: {lh['science_gems']}")
 
         # ===================================================================
+        # Gate 4: Real Lecture Corpus & Orthographic/Stopword-Resilient Hybrid Search Gate
+        # ===================================================================
+        gate4_db = Path(tmpdir) / "gate4_real_lectures.sqlite"
+        build_gate4_real_lecture_db(gate4_db)
+        g4_stats = embed_sqlite_corpus(db_path=gate4_db, backend="deterministic-arabic-mps", dim=768, use_mps=True)
+        if g4_stats["passages_embedded"] < 6:
+            errors.append(f"[Gate 4] Unexpected embedded passage count in gate4_db: {g4_stats}")
+
+        with HybridSearchEngine(db_path=gate4_db, backend="deterministic-arabic-mps") as g4_eng:
+            # 4.A: مصطلحات الوضع والاستعمال والحمل والحقيقة والمجاز والمشترك والمتواطئ والكلي والجزئي
+            q_wad_conc = g4_eng.search(
+                query="ما الفرق بين الوضع والاستعمال والحمل في دلالة الالفاظ عند الاصوليين؟",
+                mode="concept",
+                top_k=3,
+            )
+            if not q_wad_conc or q_wad_conc[0]["passage_id"] != "D1_ADUDIYYA_WAD":
+                errors.append(f"[Gate 4] Conceptual query on الوضع/الاستعمال/الحمل failed: {q_wad_conc[:1]}")
+
+            q_mushtarak = g4_eng.search(
+                query="كيف نفرق بين المشترك اللفظي والمتواطئ والكلي والجزئي ومتى يتوقف في المجمل؟",
+                mode="hybrid",
+                top_k=3,
+            )
+            if not q_mushtarak or q_mushtarak[0]["passage_id"] != "D2_SARIRI_MUSHTARAK":
+                errors.append(f"[Gate 4] Query on المشترك/المتواطئ/الكلي/الجزئي failed: {q_mushtarak[:1]}")
+
+            # 4.B: صمود FTS5 أمام اختلاف الهمزات والتاء المربوطة والياء وأدوات الاستفهام القالبية
+            fts_resilience_cases = [
+                ("هل يجوز الحلف بالاباء وما حكمه؟", "D4_DEDEW_HALF_ABAA"),
+                ("ما حكم الصدقه في علاج المرضى؟", "D5_DEDEW_SADAQAH"),
+                ("مساله خلق القران والكلام النفسي", "D3_DEDEW_KALAM"),
+                ("حجيه الاجماع في اصول الفقه", "D2_SARIRI_MUSHTARAK"),
+                ("ما حكم النذر المعلق علي شرط وهل يجب الوفاء به؟", "D6_DEDEW_NADHR"),
+            ]
+            for fts_q, expected_pid in fts_resilience_cases:
+                fts_hits = g4_eng.search(query=fts_q, mode="fts", top_k=3)
+                if not fts_hits or fts_hits[0]["passage_id"] != expected_pid or fts_hits[0]["score_fts"] <= 0.0:
+                    errors.append(
+                        f"[Gate 4] Orthographic/Stopword FTS5 failed for '{fts_q}': "
+                        f"expected {expected_pid}, got {[h['passage_id'] for h in fts_hits]}"
+                    )
+
+            # 4.C: مرونة الفلترة العلائقية بالأعلام (--person بألقاب أو بدونها وبصيغ إعراب الكنى) والأماكن والآيات
+            flex_entity_cases = [
+                ("person=الترمذي", dict(person="الترمذي"), {"D5_DEDEW_SADAQAH"}),
+                ("person=الإمام الترمذي", dict(person="الإمام الترمذي"), {"D5_DEDEW_SADAQAH"}),
+                ("person=أبو هريرة", dict(person="أبو هريرة"), {"D4_DEDEW_HALF_ABAA"}),
+                ("person=أبا هريرة", dict(person="أبا هريرة"), {"D4_DEDEW_HALF_ABAA"}),
+                ("person=أبي هريرة رضي الله عنه", dict(person="أبي هريرة رضي الله عنه"), {"D4_DEDEW_HALF_ABAA"}),
+                ("person=شيخ الإسلام ابن تيمية", dict(person="شيخ الإسلام ابن تيمية"), {"D3_DEDEW_KALAM"}),
+                ("person=الشنقيطي", dict(person="الشنقيطي"), {"D1_ADUDIYYA_WAD"}),
+                ("place=مكة المكرمة", dict(place="مكة المكرمة"), {"D4_DEDEW_HALF_ABAA"}),
+                ("ayah=نوح:10", dict(ayah="نوح:10"), {"D5_DEDEW_SADAQAH"}),
+                ("ayah=٧١:١٠", dict(ayah="٧١:١٠"), {"D5_DEDEW_SADAQAH"}),
+                ("ayah=البقرة:255", dict(ayah="البقرة:255"), {"D3_DEDEW_KALAM"}),
+            ]
+            for label, flt_kwargs, expected_set in flex_entity_cases:
+                got_pids = g4_eng.resolve_candidate_passage_ids(**flt_kwargs)
+                if not expected_set.issubset(got_pids):
+                    errors.append(f"[Gate 4] Flexible entity filter ({label}) failed: expected {expected_set}, got {got_pids}")
+
+        # 4.D: فحص مباشر على قاعدة البيانات الإنتاجية الحقيقية (/tmp/real_e2e_test/orch_dedew_v2/...) إن وجدت
+        real_prod_db = Path("/tmp/real_e2e_test/orch_dedew_v2/dedew/04_knowledge_db/dedew_objects.sqlite")
+        if real_prod_db.exists():
+            with HybridSearchEngine(db_path=real_prod_db, backend="deterministic-arabic-mps") as prod_eng:
+                prod_checks = [
+                    ("هل يجوز الحلف بالاباء وما حكمه؟", "fts", {"dedew__s029_006:P6", "dedew__s029_006:P10"}),
+                    ("ما حكم الصدقه في علاج المرضى؟", "fts", {"dedew__s029_006:P8", "dedew__s029_006:P12"}),
+                    ("ما حكم النذر المعلق على شرط وهل يجب الوفاء به مع الكراهة؟", "concept", {"dedew__s029_006:P17"}),
+                    ("حكم التبرك بآثار الصالحين وذرية النبي", "concept", {"dedew__s029_006:P19"}),
+                    ("حكم التوسل بجاه النبي أو بغيره من الصالحين", "concept", {"dedew__s029_006:P29"}),
+                    ("استوي علي العرش", "fts", {"dedew__s029_004:P11"}),
+                ]
+                for pq, pmode, exp_pids in prod_checks:
+                    pres = prod_eng.search(query=pq, mode=pmode, top_k=3)
+                    if not pres or pres[0]["passage_id"] not in exp_pids:
+                        errors.append(
+                            f"[Gate 4 Live DB] Query '{pq}' ({pmode}) returned "
+                            f"{[x['passage_id'] for x in pres[:2]]}, expected top-1 in {exp_pids}"
+                        )
+                if not prod_eng.resolve_candidate_passage_ids(person="الإمام الترمذي"):
+                    errors.append("[Gate 4 Live DB] person='الإمام الترمذي' returned 0 on dedew_objects.sqlite")
+                if not prod_eng.resolve_candidate_passage_ids(place="مكة المكرمة"):
+                    errors.append("[Gate 4 Live DB] place='مكة المكرمة' returned 0 on dedew_objects.sqlite")
+                if not prod_eng.resolve_candidate_passage_ids(ayah="البقرة:255"):
+                    errors.append("[Gate 4 Live DB] ayah='البقرة:255' returned 0 on dedew_objects.sqlite")
+
+        # ===================================================================
         # تكامل عابر للمهارات مع build_objects_sqlite.py في turath-deep-indexing
         # ===================================================================
         deep_idx_scripts = SCRIPT_DIR.parent.parent / "turath-deep-indexing" / "scripts"
@@ -737,6 +1025,7 @@ def run_quality_gates() -> int:
         "Gate 1 (Dual Text Hygiene & L2-Normalized float32 Vectors): OK\n"
         "Gate 2 (Dual Semantic Retrieval — Matn vs Concept): OK\n"
         "Gate 3 (Hybrid FTS5 + Vector + Entity Filtering & Isnad Isolation): OK\n"
+        "Gate 4 (Real Lecture Corpus & Orthographic/Stopword-Resilient Hybrid Search): OK\n"
         "PASS (0 errors)"
     )
     return 0
