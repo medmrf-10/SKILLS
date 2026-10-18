@@ -47,6 +47,167 @@ def _norm_anchor(s):
     return ' '.join(s.split())
 
 
+DEVOTIONAL_WORDS = {
+    'امين', 'آمين', 'اللهم', 'صل', 'صلي', 'صلى', 'الله', 'عليه', 'عليها', 'عليهم',
+    'وسلم', 'وعلي', 'وعلى', 'اله', 'آله', 'وصحبه', 'اجمعين', 'أجمعين', 'تسليما',
+    'كثيرا', 'بارك', 'وبارك', 'سبحان', 'وبحمده', 'العظيم', 'الحمد', 'لله', 'رب',
+    'العالمين', 'لا', 'اله', 'إله', 'الا', 'إلا', 'والله', 'اكبر', 'أكبر', 'استغفر',
+    'أستغفر', 'ولاحول', 'حول', 'ولا', 'قوه', 'قوة', 'بالله', 'العلي', 'تبارك',
+    'وتعالي', 'وتعالى', 'عز', 'وجل', 'جل', 'جلاله', 'رضي', 'عنه', 'عنها', 'عنهم',
+    'عنهما', 'رحمه', 'رحمهم', 'يا', 'كلا', 'بلي', 'بلى', 'نعم', 'تعالي', 'تعالى',
+    'سيدنا', 'نبينا', 'محمد', 'رسول', 'النبي', 'الكريم',
+}
+
+
+def _norm_word_for_dedup(w):
+    s = re.sub(r'[\u064B-\u065F\u0670\u0640]', '', str(w))
+    s = re.sub(r'[أإآٱ]', 'ا', s)
+    s = s.replace('ة', 'ه').replace('ى', 'ي')
+    s = re.sub(r'[^\u0600-\u06FF0-9a-zA-Z]', '', s)
+    return s.lower()
+
+
+def _is_devotional_span(norm_words):
+    """التحقق مما إذا كانت السلسلة النصية عبارة تعبدية أو دعائية مشروعة يكررها الشيخ قصداً."""
+    cleaned = [w for w in norm_words if w]
+    if not cleaned:
+        return True
+    if all(w in DEVOTIONAL_WORDS for w in cleaned):
+        return True
+    return False
+
+
+def _extract_lexical_tokens(text):
+    tokens = []
+    for m in re.finditer(r'\S+', text):
+        nw = _norm_word_for_dedup(m.group(0))
+        if nw:
+            tokens.append((m.start(), m.end(), nw))
+    return tokens
+
+
+def _consume_trailing_punct(text, pos):
+    m = re.match(r'^[\s.،,:؛!؟?\-—–()\[\]«»"\']+', text[pos:])
+    return pos + (m.end() if m else 0)
+
+
+def _dedup_inline_consecutive_spans(block, min_overlap_words=4, max_span_words=45):
+    """إزالة الجمل أو العبارات المكررة فوراً على التوالي داخل الفقرة الواحدة مع حفظ التكرارات التعبدية."""
+    cur = block
+    for _ in range(8):
+        lex = _extract_lexical_tokens(cur)
+        n = len(lex)
+        if n < min_overlap_words * 2:
+            break
+        found = False
+        max_L = min(max_span_words, n // 2)
+        for L in range(max_L, min_overlap_words - 1, -1):
+            for i in range(0, n - 2 * L + 1):
+                span1 = [lex[k][2] for k in range(i, i + L)]
+                span2 = [lex[k][2] for k in range(i + L, i + 2 * L)]
+                if span1 == span2 and not _is_devotional_span(span1):
+                    # تأكد من عدم وجود فاصل طويل غير علامات الترقيم بين النسختين
+                    between = cur[lex[i + L - 1][1]:lex[i + L][0]]
+                    if len(between.strip()) <= 4:
+                        cut_start = _consume_trailing_punct(cur, lex[i + L - 1][1])
+                        cut_end = _consume_trailing_punct(cur, lex[i + 2 * L - 1][1])
+                        cur = cur[:cut_start].rstrip() + ' ' + cur[cut_end:].lstrip()
+                        found = True
+                        break
+            if found:
+                break
+        if not found:
+            break
+    return cur.strip()
+
+
+def _dedup_two_adjacent_chunks(prev_chunk, next_chunk, min_overlap_words=4, max_window_words=55):
+    """إزالة تداخل الجمل عند حدود مقطعين متتاليين (نهاية المقطع الأول مع بداية المقطع الثاني)."""
+    p_txt = prev_chunk.strip()
+    n_txt = next_chunk.strip()
+    if not p_txt or not n_txt:
+        return p_txt, n_txt
+
+    for _ in range(4):
+        p_lex = _extract_lexical_tokens(p_txt)
+        n_lex = _extract_lexical_tokens(n_txt)
+        if len(p_lex) < min_overlap_words or len(n_lex) < min_overlap_words:
+            break
+        tail_lex = p_lex[-min(len(p_lex), max_window_words):]
+        head_lex = n_lex[:min(len(n_lex), max_window_words)]
+        t_len = len(tail_lex)
+        h_len = len(head_lex)
+        max_L = min(t_len, h_len)
+
+        matched = None
+        for L in range(max_L, min_overlap_words - 1, -1):
+            # ابحث عن تطابق يقع في آخر 3 كلمات من نهاية المقطع الأول وأول 3 كلمات من بداية المقطع الثاني
+            for t_start in range(max(0, t_len - L - 3), t_len - L + 1):
+                t_slice = [tail_lex[k][2] for k in range(t_start, t_start + L)]
+                if _is_devotional_span(t_slice):
+                    continue
+                for h_start in range(0, min(4, h_len - L + 1)):
+                    h_slice = [head_lex[k][2] for k in range(h_start, h_start + L)]
+                    if t_slice == h_slice:
+                        matched = (t_start, h_start, L)
+                        break
+                if matched:
+                    break
+            if matched:
+                break
+
+        if not matched:
+            break
+
+        t_start, h_start, L = matched
+        # قص ذيل المقطع الأول إذا كان هناك 1-3 كلمات زائدة بعد التداخل المشترك
+        if t_start + L < t_len:
+            p_cut = _consume_trailing_punct(p_txt, tail_lex[t_start + L - 1][1])
+            p_txt = p_txt[:p_cut].rstrip()
+        # قص صدر المقطع الثاني حتى نهاية التداخل المشترك
+        n_cut = _consume_trailing_punct(n_txt, head_lex[h_start + L - 1][1])
+        n_txt = n_txt[n_cut:].lstrip()
+
+    return p_txt, n_txt
+
+
+def deduplicate_chunk_boundary_overlap(text_or_chunks, min_overlap_words=4, max_window_words=55):
+    """إزالة الجمل المكررة عند حدود تقطيع الصوت (كل 12 دقيقة) مع الحفاظ الكامل على التكرارات التعبدية المشروعة.
+
+    تقبل إما قائمة نصوص مقاطع `list[str]` أو نصاً كاملاً `str` وتعيد النص المدمج المطهّر `str`.
+    """
+    if isinstance(text_or_chunks, (list, tuple)):
+        raw_blocks = [str(c).strip() for c in text_or_chunks if str(c).strip()]
+        if not raw_blocks:
+            return ''
+    elif isinstance(text_or_chunks, str):
+        if not text_or_chunks.strip():
+            return text_or_chunks
+        raw_blocks = [b.strip() for b in re.split(r'\n\s*\n', text_or_chunks) if b.strip()]
+    else:
+        return ''
+
+    cleaned_blocks = []
+    for blk in raw_blocks:
+        blk_clean = _dedup_inline_consecutive_spans(
+            blk, min_overlap_words=min_overlap_words, max_span_words=max_window_words
+        )
+        if not blk_clean:
+            continue
+        if not cleaned_blocks:
+            cleaned_blocks.append(blk_clean)
+            continue
+        prev_b, next_b = _dedup_two_adjacent_chunks(
+            cleaned_blocks[-1], blk_clean,
+            min_overlap_words=min_overlap_words, max_window_words=max_window_words
+        )
+        cleaned_blocks[-1] = prev_b
+        if next_b:
+            cleaned_blocks.append(next_b)
+
+    return '\n\n'.join(b for b in cleaned_blocks if b)
+
+
 def _strip_single_block_thinking(block):
     """إذا احتوى المقطع على مونولوج تفكير لاتيني أو تكرار لنص الموجه ينتهي بنص عربي صافٍ (≥300 حرف)، اقتطع المونولوج بالكامل."""
     lat_matches = list(LATIN_RE.finditer(block))
@@ -67,7 +228,7 @@ def _strip_single_block_thinking(block):
 
 
 def strip_preamble_and_header(text):
-    """إزالة الترويسات الوصفية والمقدمات غير المنطوقة ومونولوج التفكير المتسرب من مطلع النص أو مقاطعه.
+    """إزالة الترويسات الوصفية والمقدمات غير المنطوقة ومونولوج التفكير المتسرب وتكرارات حدود المقاطع.
 
     تُعيد: (cleaned_text, reasons_list)
     """
@@ -171,6 +332,14 @@ def strip_preamble_and_header(text):
                 cleaned = cleaned[m_ar.start():].lstrip()
                 if 'LATIN_PREAMBLE' not in reasons:
                     reasons.append('LATIN_PREAMBLE')
+
+    # 3. إزالة تداخل الجمل المكررة عند حدود المقاطع الصوتية مع حفظ التكرارات التعبدية
+    if cleaned:
+        deduped = deduplicate_chunk_boundary_overlap(cleaned)
+        if deduped and len(deduped.split()) < len(cleaned.split()):
+            cleaned = deduped
+            if 'CHUNK_BOUNDARY_OVERLAP' not in reasons:
+                reasons.append('CHUNK_BOUNDARY_OVERLAP')
 
     return (cleaned + '\n') if cleaned else '', reasons
 

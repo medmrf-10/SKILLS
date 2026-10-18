@@ -160,7 +160,7 @@ systemd-run --scope -p MemoryMax=${MEMORY_GUARD_MB:-2000M} --unit=pure001 --coll
 
 - `attach_align.py <sheikh/row> [--align-dir DIR]` ينشر `<NNN>_<VID>.align.json` بجانب النص ويحدّث `meta.align` (وفي الوضع الهجين `v5.0` يتولى `upload_and_finalize()` في `mac_align_fleet.py` رفع `.align.json` وتحديث `.meta.json` وتنظيف الجسر تلقائياً على `hermes-vps`).
 - `copy_layers.py` ينسخ طبقات التلخيص والأسئلة والمحاذاة **بالمطابقة القاطعة للهوية فقط** (YouTube ID أو `row-key` + رقم الدرس).
-- `test_pipeline_v5_gates.py` يفحص حتمياً سلامة مكونات `v5.0` (شجرة AST، رياضيات طيّ الصمت وإعادة النفخ `T_orig`، تطهير المقدمات اللاتينية، حارس الكوتة الحي، مخطط `.align.json`، وبوابة `Gate 4: Pre-Speech Breath Onset Tightening Gate`).
+- `test_pipeline_v5_gates.py` يفحص حتمياً سلامة مكونات `v5.0` عبر خمس بوابات (`Gate 1..5`: شجرة AST، رياضيات طيّ الصمت وإعادة النفخ `T_orig`، تطهير المقدمات اللاتينية، حارس الكوتة الحي، مخطط `.align.json`، بوابة `Gate 4: Pre-Speech Breath Onset Tightening Gate`، وبوابة `Gate 5: Chunk-Boundary Overlap Deduplication & Post-Breath Onset Duration Gate`).
 - **حظر النشر الذاتي:** لا نشر تلقائي ولا دفع إلى مستودعات خارجية بلا أمر صريح من المالك.
 
 ---

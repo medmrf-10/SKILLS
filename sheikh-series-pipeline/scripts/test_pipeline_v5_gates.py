@@ -103,9 +103,18 @@ def run_gate_1_syntax_and_integrity(errors):
             errors.append('Gate 1: الدالة _is_quota_safe_for_background مفقودة في agy_transcribe.py')
         if '_is_dead_silent_chunk' not in funcs:
             errors.append('Gate 1: الدالة _is_dead_silent_chunk مفقودة في agy_transcribe.py')
+        if 'deduplicate_chunk_boundary_overlap' not in funcs:
+            errors.append('Gate 1: الدالة deduplicate_chunk_boundary_overlap مفقودة في agy_transcribe.py')
         for token in ('archive.org/', 'libopus', '12k', 'voip', '.job.json', '[language^=ar]'):
             if token not in src:
                 errors.append(f'Gate 1: المكوّن {token} مفقود في agy_transcribe.py')
+
+    # 1b) فحص sanitize_preamble.py
+    if 'sanitize_preamble.py' in parsed:
+        src, funcs, _, _ = parsed['sanitize_preamble.py']
+        for fn in ('strip_preamble_and_header', 'deduplicate_chunk_boundary_overlap'):
+            if fn not in funcs:
+                errors.append(f'Gate 1: الدالة {fn} مفقودة في sanitize_preamble.py')
 
     # 2) فحص vps_align_feeder.py
     if 'vps_align_feeder.py' in parsed:
@@ -552,12 +561,158 @@ def run_gate_4_pre_speech_breath_onset_tightening(errors):
         )
 
 
+def run_gate_5_chunk_boundary_dedup_and_post_breath_duration(errors):
+    print('=== [Gate 5] Chunk-Boundary Overlap Deduplication & Post-Breath Onset Duration Gate ===')
+    import agy_transcribe
+    import ctc_pure_align
+    from ctc_forced_aligner import preprocess_text
+    from sanitize_preamble import deduplicate_chunk_boundary_overlap, strip_preamble_and_header
+
+    # 1) فحص إزالة تداخل الجمل عند حدود المقاطع (12 دقيقة) مع الحفاظ على التكرارات التعبدية المشروعة
+    chunk_1 = (
+        "بسم الله الرحمن الرحيم. الحمد لله رب العالمين، اللهم اغفر لنا وارحمنا، آمين آمين. "
+        "وصلى الله على نبينا محمد صلى الله عليه وسلم، صلى الله عليه وسلم. "
+        "وهذا هو القول الراجح عند جمهور الفقهاء في مسألة خيار المجلس وأحكامه."
+    )
+    chunk_2 = (
+        "وهذا هو القولُ الراجح عند جمهور الفقهاء في مسألة خيار المجلس وأحكامه، "
+        "ثم ننتقل الآن إلى المبحث الثاني في شروط صحة البيع ولزومه عند الأئمة الأربعة. "
+        "ويشترط فيه الرضا التام بين المتعاقدين بلا إكراه."
+    )
+    chunk_3 = (
+        "ويشترط فيه الرضا التام بين المتعاقدين بلا إكراه. "
+        "نسأل الله القبول والتوفيق، آمين آمين، وصلى الله وسلم على سيدنا محمد."
+    )
+
+    merged_from_list = agy_transcribe.deduplicate_chunk_boundary_overlap([chunk_1, chunk_2, chunk_3])
+    merged_from_str = deduplicate_chunk_boundary_overlap('\n\n'.join([chunk_1, chunk_2, chunk_3]))
+    cleaned_full, clean_reasons = strip_preamble_and_header('\n\n'.join([chunk_1, chunk_2, chunk_3]))
+
+    if merged_from_list.count('جمهور الفقهاء في مسألة خيار المجلس') != 1:
+        errors.append(
+            f'Gate 5: فشل deduplicate_chunk_boundary_overlap (list) في إزالة تكرار حد المقطع الأول/الثاني: '
+            f'count={merged_from_list.count("جمهور الفقهاء في مسألة خيار المجلس")}'
+        )
+    if merged_from_str.count('الرضا التام بين المتعاقدين بلا إكراه') != 1:
+        errors.append(
+            f'Gate 5: فشل deduplicate_chunk_boundary_overlap (str) في إزالة تكرار حد المقطع الثاني/الثالث: '
+            f'count={merged_from_str.count("الرضا التام بين المتعاقدين بلا إكراه")}'
+        )
+    if 'CHUNK_BOUNDARY_OVERLAP' not in clean_reasons:
+        errors.append(f'Gate 5: لم يسجل strip_preamble_and_header السبب CHUNK_BOUNDARY_OVERLAP: {clean_reasons}')
+
+    # التحقق الصارم من الحفاظ الكامل على التكرارات التعبدية المشروعة («آمين آمين»، «صلى الله عليه وسلم»)
+    if merged_from_list.count('آمين آمين') != 2:
+        errors.append(
+            f'Gate 5: حُذف التكرار التعبدي المشروع "آمين آمين" بالخطأ! '
+            f'(المتوقع=2، الفعلي={merged_from_list.count("آمين آمين")})'
+        )
+    if merged_from_list.count('صلى الله عليه وسلم') != 2:
+        errors.append(
+            f'Gate 5: حُذف التكرار التعبدي المشروع "صلى الله عليه وسلم" بالخطأ! '
+            f'(المتوقع=2، الفعلي={merged_from_list.count("صلى الله عليه وسلم")})'
+        )
+    print(
+        '  ✓ deduplicate_chunk_boundary_overlap سليم: أزال الجمل المكررة عند حدود المقاطع (12د) '
+        'وحافظ 100% على التكرارات التعبدية المشروعة («آمين آمين»، «صلى الله عليه وسلم»)'
+    )
+
+    # 2) فحص سقف مدة الكلمة بعد سكتة النفس (Post-Breath Onset Duration Gate) عبر أطوال كلمات متعددة
+    with tempfile.TemporaryDirectory(prefix='v5_gate5_postbreath_') as tmpd:
+        words = ['قال', 'المصنف:', 'فالمعاملات', 'المالية', 'مبنية', 'على', 'العدل']
+        rom_tokens, _ = preprocess_text(' '.join(words), True, 'ara', 'word', 'segment')
+        chars = sorted({ch for tok in rom_tokens if tok != '<star>' for ch in tok.split(' ') if ch})
+        vocab = {'<blank>': 0}
+        for idx_c, ch in enumerate(chars, 1):
+            vocab[ch] = idx_c
+        vocab['<star>'] = len(vocab)
+
+        # 400 إطار = 8.0 ثوانٍ عند 50fps
+        T = 400
+        C = len(vocab)
+        em = np.full((T, C), -10.0, dtype=np.float32)
+        em[:, 0] = 0.0
+        em[:, vocab['<star>']] = -2.0
+
+        def _paint(f_start, letters_list):
+            cur = f_start
+            for ch in letters_list:
+                cid = vocab[ch]
+                em[cur:cur + 3, :] = -10.0
+                em[cur:cur + 3, cid] = 0.0
+                cur += 4
+            return cur
+
+        word_roms = [t.split(' ') for t in rom_tokens if t != '<star>']
+        # الكلمة 0 ('قال') والكلمة 1 ('المصنف:') قبل سكتة النفس (0.20s..1.10s)
+        _paint(10, word_roms[0])
+        _paint(30, word_roms[1])
+        # شهيق مبكر عند الإطار 62 (1.24s) يلتقط أول حرفين من 'فالمعاملات'، يليه صمت حتى الإطار 210 (4.20s)
+        for idx_b, ch_b in enumerate(word_roms[2][:2]):
+            f_b = 62 + idx_b * 3
+            em[f_b:f_b + 2, :] = -10.0
+            em[f_b:f_b + 2, vocab[ch_b]] = 0.0
+        # النطق الفعلي لـ 'فالمعاملات' عند الإطار 210 (4.20s) وبقية الجملة بعدها
+        cur_f = _paint(210, word_roms[2][2:])
+        for w_idx in range(3, len(word_roms)):
+            cur_f = _paint(cur_f + 4, word_roms[w_idx])
+
+        saved_vocab = {k: v for k, v in vocab.items() if k != '<star>'}
+        em_path = os.path.join(tmpd, 'postbreath.em.npy')
+        tok_path = os.path.join(tmpd, 'postbreath.tokens.json')
+        meta_path = os.path.join(tmpd, 'postbreath.meta.json')
+        out_align = os.path.join(tmpd, 'postbreath.align.json')
+
+        np.save(em_path, em)
+        json.dump(
+            {'vocab': saved_vocab, 'vocab_size': len(saved_vocab), 'pad': 0, 'blank': 0, 'words': words, 'n_words': len(words)},
+            open(tok_path, 'w', encoding='utf-8'), ensure_ascii=False
+        )
+        json.dump(
+            {'model': 'mms-300m-1130-forced-aligner', 'fps': 50.0, 'stride_ms': 20.0, 'frames': T, 'classes': C, 'dur': T / 50.0, 'n_words': len(words), 'audio': 'postbreath.mp3'},
+            open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False
+        )
+
+        ns = argparse.Namespace(
+            em=em_path, tokens=tok_path, out=out_align, series_out='', only='', tag='gate5_postbreath',
+            slice=120.0, pin=65.0, margin=30, min_words=12, star='segment',
+            pause_cut=1, pause_min_frames=15, pause_tol=10.0, min_score=-3.0, star_pen=-0.9,
+            solid_handoff=1, solid_min_len=2, solid_min_score=-2.0, island_guard=0,
+            v1='', shadow_unify=0, shadow_norm=1, report=''
+        )
+        ctc_pure_align.align_one_file(em_path, tk_path=tok_path, out_path=out_align, tag='gate5_postbreath', a=ns)
+        al_data = json.load(open(out_align, encoding='utf-8'))
+        x = al_data['x']
+        prev_end = x[1][2]
+        pb_start, pb_end = x[2][1], x[2][2]
+        pb_dur = round(pb_end - pb_start, 2)
+        max_allowed_dur = round(max(0.85, 0.22 * len(words[2])), 2)
+        pause_gap = round(pb_start - prev_end, 2)
+
+        if pb_start < 3.95 or pause_gap < 2.50:
+            errors.append(
+                f'Gate 5: لم تُشدّ بداية الكلمة الطويلة "فالمعاملات" بعد سكتة النفس '
+                f'(start={pb_start}s, gap={pause_gap}s): {x[2]}'
+            )
+        if pb_dur > max_allowed_dur or pb_dur < 0.20:
+            errors.append(
+                f'Gate 5: مدة الكلمة بعد النفس خارج النطاق الفيزيائي '
+                f'(dur={pb_dur}s, max_allowed={max_allowed_dur}s): {x[2]}'
+            )
+        print(
+            f'  ✓ Post-Breath Onset Duration Gate سليم: '
+            f'"المصنف:" ينتهي {prev_end}s -> فجوة نفس نظيفة ({pause_gap}s) -> '
+            f'"فالمعاملات"={pb_start}..{pb_end}s (المدة={pb_dur}s <= السقف الفيزيائي {max_allowed_dur}s)'
+        )
+
+
 def main():
     errors = []
     run_gate_1_syntax_and_integrity(errors)
     run_gate_2_silence_math_and_sanitizer(errors)
     run_gate_3_quota_guard_and_align_schema(errors)
     run_gate_4_pre_speech_breath_onset_tightening(errors)
+    run_gate_5_chunk_boundary_dedup_and_post_breath_duration(errors)
 
     if errors:
         print(f'\nFAIL ({len(errors)} errors):')

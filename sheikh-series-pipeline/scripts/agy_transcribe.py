@@ -28,9 +28,19 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sanitize_preamble import strip_preamble_and_header  # noqa: E402
+from sanitize_preamble import (  # noqa: E402
+    deduplicate_chunk_boundary_overlap as _sanitize_dedup_chunk_boundary_overlap,
+    strip_preamble_and_header,
+)
 
 AR_RE = re.compile(r'[\u0600-\u06FF]')
+
+
+def deduplicate_chunk_boundary_overlap(text_or_chunks, min_overlap_words=4, max_window_words=55):
+    """إزالة الجمل المكررة عند حدود تقطيع الصوت (chunk boundaries كل 12 دقيقة) مع الحفاظ الكامل على التكرارات التعبدية المشروعة."""
+    return _sanitize_dedup_chunk_boundary_overlap(
+        text_or_chunks, min_overlap_words=min_overlap_words, max_window_words=max_window_words
+    )
 
 
 def find_bin(name, extra_paths):
@@ -527,7 +537,7 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                         min_words=sub_min, timeout_s=timeout_s, retries=2, sem=sem, dur_s=(dur_s - mid_s)
                     )
                     if t2:
-                        return (t1.strip() + '\n\n' + t2.strip()), round(e1 + e2, 1)
+                        return deduplicate_chunk_boundary_overlap([t1.strip(), t2.strip()]), round(e1 + e2, 1)
             except Exception as e:
                 print('  [تحذير إنقاذ] تعذر تقسيم المقطع المتعثر: %s' % e, flush=True)
     return '', 0.0
@@ -735,7 +745,7 @@ def main():
                                 ), flush=True)
                                 results[idx] = ptxt
                     parts_txt = [results[i] for i in range(1, len(chunks) + 1) if results.get(i)]
-                    full_txt = '\n\n'.join(parts_txt) if (ok and len(results) == len(chunks) and parts_txt) else ''
+                    full_txt = deduplicate_chunk_boundary_overlap(parts_txt) if (ok and len(results) == len(chunks) and parts_txt) else ''
         else:
             print('[تفريغ] %s | المدة=%.1fد | العنوان=«%s»' % (base, dur_m, title[:65]), flush=True)
             req_w = max(12, int(dur_m * 24)) if dur_m > 0 else 40
