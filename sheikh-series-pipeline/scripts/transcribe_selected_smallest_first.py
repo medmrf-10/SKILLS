@@ -90,7 +90,7 @@ def index_existing_ytb():
                 continue
             p = os.path.join(root, f)
             try:
-                if os.path.getsize(p) < 600:
+                if os.path.getsize(p) < 120:
                     continue
                 stem = f[:-4]
                 parts = stem.split('_', 1)
@@ -142,7 +142,7 @@ def cleanup_transcribed_mp3s(series_dir):
         base = os.path.splitext(mp3)[0]
         txt = base + '.txt'
         meta = base + '.meta.json'
-        if os.path.exists(txt) and os.path.getsize(txt) >= 600 and os.path.exists(meta):
+        if os.path.exists(txt) and os.path.getsize(txt) >= 120 and os.path.exists(meta):
             try:
                 md = json.load(open(meta, encoding='utf-8'))
                 if md.get('ok'):
@@ -273,13 +273,23 @@ def main():
             except Exception as e:
                 log(f'[خطأ غير متوقع في عامل السلسلة] {e}')
 
+    yt_after = index_existing_ytb()
+    still_missing_series = 0
+    for item in queue:
+        rem_now = [vid for _, vid, _ in item['missing'] if vid not in yt_after]
+        if rem_now:
+            still_missing_series += 1
+    if still_missing_series > 0:
+        log(f'تبقّت {still_missing_series} سلسلة تحتاج إعادة محاولة لبعض الدروس — لن يُكتب علم الإغلاق حتى تكتمل 100%.')
+        return
+
     flag_path = '/root/workspace/ytb-build/TRANSCRIBE_DRAIN_COMPLETE.flag'
     try:
         with open(flag_path, 'w', encoding='utf-8') as ff:
             ff.write(datetime.now().isoformat() + '\n')
     except Exception:
         pass
-    log('اكتملت جميع القوائم فوق 80% في الطابور وتم إغلاق التفريغ!')
+    log(f'اكتملت جميع القوائم (>= {min_completion_pct:.1f}%) بنسبة 100% في الطابور وتم إغلاق التفريغ!')
 
 
 if __name__ == '__main__':

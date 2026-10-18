@@ -485,19 +485,21 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                         ngrams = Counter(tuple(w_list[i:i + 6]) for i in range(len(w_list) - 5))
                         if ngrams and ngrams.most_common(1)[0][1] >= 10:
                             has_rep_loop = True
-                    if not has_rep_loop and words <= max_words_cap and (
+                    if not has_rep_loop and 'use-policy' not in raw_out.lower() and words <= max_words_cap and (
                         (ar_chars >= min_ar and words >= min_words)
                         or (attempt >= 2 and res.returncode == 0 and ar_chars >= 60 and words >= 15)
+                        or (dur_s > 0 and dur_s < 60.0 and attempt >= 2 and res.returncode == 0 and ar_chars >= 25 and words >= 6)
                     ):
                         return cleaned.strip(), elapsed
                     sample = (cleaned[:180] if cleaned else ((res.stderr or '') + ' ' + (res.stdout or ''))[-240:]).replace('\n', ' ')
                     print('  [محاولة %d/%d · %s] مخرجات قصيرة أو غير صالحة/هلوسة (rc=%s, words=%d/%d..%d, loop=%s, ar=%d): %s' % (
                         attempt, retries, cur_model, res.returncode, words, min_words, max_words_cap, has_rep_loop, ar_chars, sample
                     ), flush=True)
-                    if 'unsupported mime type' in (raw_out + ' ' + (res.stderr or '')).lower():
+                    err_low = (raw_out + ' ' + (res.stderr or '') + ' ' + (res.stdout or '')).lower()
+                    if any(k in err_low for k in ('unsupported mime type', 'use-policy', 'policies.google.com', 'cannot fulfill')) or (res.returncode == 0 and words == 0):
                         for fb in audio_fallbacks:
                             if fb != cur_model:
-                                print('  [تبديل تلقائي للنموذج] النموذج %s لا يدعم الصوت مباشرًا ⇒ التحويل إلى %s' % (cur_model, fb), flush=True)
+                                print('  [تبديل تلقائي للنموذج] تعثر/رفض سياسة في %s ⇒ التحويل إلى %s' % (cur_model, fb), flush=True)
                                 cur_model = fb
                                 break
                 except subprocess.TimeoutExpired:
@@ -696,6 +698,17 @@ def main():
                         dur_m, len(chunks), args.chunk_minutes, worker_limit
                     ), flush=True)
 
+                    chunk_cache_path = os.path.join(args.series_dir, f'.chunk_cache_{base}.json')
+                    cached_chunks = {}
+                    if os.path.exists(chunk_cache_path) and not args.force:
+                        try:
+                            cd = json.load(open(chunk_cache_path, encoding='utf-8'))
+                            if cd.get('n_chunks') == len(chunks) and isinstance(cd.get('parts'), dict):
+                                cached_chunks = cd['parts']
+                        except Exception:
+                            cached_chunks = {}
+                    cache_lock = threading.Lock()
+
                     def _is_dead_silent_chunk(cpath, max_vol_floor_db=-48.0):
                         try:
                             vr = subprocess.run(
@@ -711,6 +724,12 @@ def main():
 
                     def _run_chunk(item):
                         idx, (cpath, st_s, len_s) = item
+                        if str(idx) in cached_chunks and cached_chunks[str(idx)]:
+                            c_txt = cached_chunks[str(idx)]
+                            print('     [استرجاع كاش ✓] المقطع %d/%d (%.1fد): %d كلمة محفوظة مسبقاً' % (
+                                idx, len(chunks), len_s / 60.0, len(c_txt.split())
+                            ), flush=True)
+                            return idx, len_s, c_txt, 0.0
                         is_sil, max_v = _is_dead_silent_chunk(cpath)
                         if is_sil:
                             print('     [تخطي مقطع صامت] المقطع %d/%d (%.1fد) صمت رقمي خالص (max_volume=%.1f dB) — تخطي تفريغه لمنع الهلوسة' % (
@@ -724,6 +743,15 @@ def main():
                             part_idx=idx, total_parts=len(chunks), min_words=req_w,
                             stagger_s=stg, sem=agy_sem, dur_s=len_s
                         )
+                        if ptxt and ptxt != '__SILENT_CHUNK__':
+                            with cache_lock:
+                                cached_chunks[str(idx)] = ptxt
+                                try:
+                                    with open(chunk_cache_path + '.tmp', 'w', encoding='utf-8') as cf:
+                                        json.dump({'n_chunks': len(chunks), 'parts': cached_chunks}, cf, ensure_ascii=False)
+                                    os.replace(chunk_cache_path + '.tmp', chunk_cache_path)
+                                except Exception:
+                                    pass
                         return idx, len_s, ptxt, elapsed
 
                     results = {}
@@ -740,15 +768,21 @@ def main():
                             else:
                                 cw = len(ptxt.split())
                                 cwpm = cw / (len_s / 60.0) if len_s > 0 else 0.0
-                                print('     ✓ المقطع %d/%d (%.1fد): %d كلمة (%.1f ك/د) في %.1fث' % (
-                                    idx, len(chunks), len_s / 60.0, cw, cwpm, elapsed
-                                ), flush=True)
+                                if elapsed > 0:
+                                    print('     ✓ المقطع %d/%d (%.1fد): %d كلمة (%.1f ك/د) في %.1fث' % (
+                                        idx, len(chunks), len_s / 60.0, cw, cwpm, elapsed
+                                    ), flush=True)
                                 results[idx] = ptxt
                     parts_txt = [results[i] for i in range(1, len(chunks) + 1) if results.get(i)]
                     full_txt = deduplicate_chunk_boundary_overlap(parts_txt) if (ok and len(results) == len(chunks) and parts_txt) else ''
+                    if full_txt and os.path.exists(chunk_cache_path):
+                        try:
+                            os.remove(chunk_cache_path)
+                        except OSError:
+                            pass
         else:
             print('[تفريغ] %s | المدة=%.1fد | العنوان=«%s»' % (base, dur_m, title[:65]), flush=True)
-            req_w = max(12, int(dur_m * 24)) if dur_m > 0 else 40
+            req_w = (max(6, int(dur_m * 10)) if dur_m < 1.0 else max(12, int(dur_m * 24))) if dur_m > 0 else 40
             full_txt, _ = transcribe_single_file(
                 audio_path, args.model, sheikh, series, title,
                 min_words=req_w, sem=agy_sem, dur_s=dur_s

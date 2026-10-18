@@ -59,7 +59,7 @@ def index_ytb_txt_and_align():
             vid = parts[1]
             p = os.path.join(root, f)
             try:
-                if os.path.getsize(p) < 600:
+                if os.path.getsize(p) < 120:
                     continue
                 al_name = stem + '.align.json'
                 if al_name in files_set and os.path.getsize(os.path.join(root, al_name)) > 200:
