@@ -155,7 +155,9 @@ def main():
     yt_to_path = index_existing_ytb()
     log(f'إجمالي التفريغات الصالحة المرصودة في ytb حالياً: {len(yt_to_path)}')
 
+    min_completion_pct = float(os.environ.get('MIN_COMPLETION_PCT', '50.0'))
     queue = []
+    skipped_under_threshold = 0
     for s in data.get('series', []):
         lessons = [l for l in (s.get('lessons') or []) if l.get('yt_id')]
         if not lessons:
@@ -168,18 +170,28 @@ def main():
                 missing.append((n, vid, int(l.get('duration') or 0)))
         if not missing:
             continue
+        total_count = len(lessons)
+        done_count = total_count - len(missing)
+        done_pct = (done_count / total_count) * 100.0
+        if done_pct < min_completion_pct:
+            skipped_under_threshold += 1
+            continue
         rem_dur = sum(x[2] for x in missing)
         queue.append({
             'series_obj': s,
             'missing': missing,
             'rem_count': len(missing),
-            'total_count': len(lessons),
+            'total_count': total_count,
+            'done_pct': round(done_pct, 1),
             'rem_dur': rem_dur,
         })
 
     queue.sort(key=lambda x: (x['rem_count'], x['total_count'], x['rem_dur']))
     total_q = len(queue)
-    log(f'عدد القوائم المتبقية للتفريغ: {total_q} قائمة (إجمالي الدروس المتبقية: {sum(x["rem_count"] for x in queue)})')
+    log(
+        f'وضع التصفية (>= {min_completion_pct:.1f}% فقط): تم استبعاد {skipped_under_threshold} سلسلة جديدة أو دون 50% | '
+        f'المتبقي لإكماله: {total_q} سلسلة فقط ({sum(x["rem_count"] for x in queue)} درساً)'
+    )
 
     active_map = {}
     completed_series = 0
@@ -239,6 +251,17 @@ def main():
         log(f'--- [{idx}/{total_q}] انتهت القائمة {sid} (exit={res.returncode} · المنجز في هذه الدفعة={completed_series}) ---')
         return sid, res.returncode
 
+    write_state()
+    if not queue:
+        flag_path = '/root/workspace/ytb-build/TRANSCRIBE_DRAIN_COMPLETE.flag'
+        try:
+            with open(flag_path, 'w', encoding='utf-8') as ff:
+                ff.write(datetime.now().isoformat() + '\n')
+        except Exception:
+            pass
+        log('لا توجد أي سلاسل متبقية فوق 80% — تم إيقاف التفريغ بالكامل.')
+        return
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=SERIES_WORKERS) as pool:
         futs = [pool.submit(process_one_series, idx, item) for idx, item in enumerate(queue, 1)]
         for fut in concurrent.futures.as_completed(futs):
@@ -247,7 +270,13 @@ def main():
             except Exception as e:
                 log(f'[خطأ غير متوقع في عامل السلسلة] {e}')
 
-    log('اكتملت جميع القوائم في الطابور!')
+    flag_path = '/root/workspace/ytb-build/TRANSCRIBE_DRAIN_COMPLETE.flag'
+    try:
+        with open(flag_path, 'w', encoding='utf-8') as ff:
+            ff.write(datetime.now().isoformat() + '\n')
+    except Exception:
+        pass
+    log('اكتملت جميع القوائم فوق 80% في الطابور وتم إغلاق التفريغ!')
 
 
 if __name__ == '__main__':
