@@ -302,12 +302,17 @@ def deduplicate_large_repeated_blocks(text, min_block_words=24):
 
 
 def _strip_leading_ascii_remnants(s):
-    """إزالة بقايا الحروف اللاتينية القصيرة (1-3 أحرف مثل now. أو ed- أو c) أو وسوم _0:/_1: في بداية النص قبل أول حرف عربي."""
-    return re.sub(
-        r'^(?:[\u4e00-\u9fff]+|_[0-9]+\s*:\s*|[A-Za-z]{1,3}(?![A-Za-z])|[\s.:\'"`*\-—–()\[\]0-9/\\])+?(?=[\u0600-\u06FF«"(\[{﴿])',
-        '',
-        s,
-    )
+    """إزالة بقايا الحروف اللاتينية القصيرة (1-3 أحرف مثل now. أو ed- أو c) أو وسوم _0:/_1: في بداية النص قبل أول حرف عربي بزمن خطي O(N)."""
+    m_ar = AR_RE.search(s)
+    if not m_ar or m_ar.start() == 0:
+        return s
+    pos = m_ar.start()
+    prefix = s[:pos]
+    if LATIN_RE.search(prefix):
+        return s
+    while pos > 0 and s[pos - 1] in '«"(\[{﴿':
+        pos -= 1
+    return s[pos:]
 
 
 def _clean_json_thought_and_brace_leaks(text, reasons):
