@@ -192,7 +192,11 @@ def download_lesson_audio(series_dir, n, vid, expected_dur_s=0.0, retries=3, dir
     for att in range(1, retries + 1):
         with tempfile.TemporaryDirectory(prefix='ytdl_%s_' % base) as tmpd:
             tmp_tpl = os.path.join(tmpd, 'raw.%(ext)s')
-            fmt = 'bestaudio[ext=m4a]/bestaudio/best' if att == 1 else 'bestaudio/best'
+            fmt = (
+                'bestaudio[language^=ar][ext=m4a]/bestaudio[language^=ar]/bestaudio[format_note*=original]/bestaudio[ext=m4a]/bestaudio/best'
+                if att == 1 else
+                'bestaudio[language^=ar]/bestaudio[format_note*=original]/bestaudio/best'
+            )
             cmd = [
                 YTDLP_BIN, '--no-playlist', '--retries', '5', '--fragment-retries', '5',
                 '-f', fmt, '-o', tmp_tpl, url
@@ -682,8 +686,27 @@ def main():
                         dur_m, len(chunks), args.chunk_minutes, worker_limit
                     ), flush=True)
 
+                    def _is_dead_silent_chunk(cpath, max_vol_floor_db=-48.0):
+                        try:
+                            vr = subprocess.run(
+                                [FFMPEG_BIN, '-nostdin', '-ss', '0', '-t', '900', '-i', cpath, '-af', 'volumedetect', '-f', 'null', '-'],
+                                capture_output=True, text=True, timeout=20
+                            )
+                            m_max = re.search(r'max_volume:\s*([-0-9.]+)\s*dB', vr.stderr or '')
+                            if m_max and float(m_max.group(1)) <= max_vol_floor_db:
+                                return True, float(m_max.group(1))
+                        except Exception:
+                            pass
+                        return False, 0.0
+
                     def _run_chunk(item):
                         idx, (cpath, st_s, len_s) = item
+                        is_sil, max_v = _is_dead_silent_chunk(cpath)
+                        if is_sil:
+                            print('     [تخطي مقطع صامت] المقطع %d/%d (%.1fد) صمت رقمي خالص (max_volume=%.1f dB) — تخطي تفريغه لمنع الهلوسة' % (
+                                idx, len(chunks), len_s / 60.0, max_v
+                            ), flush=True)
+                            return idx, len_s, '__SILENT_CHUNK__', 0.0
                         req_w = max(50, int((len_s / 60.0) * 24))
                         stg = (idx - 1) * 0.8 if idx <= worker_limit else 0.0
                         ptxt, elapsed = transcribe_single_file(
@@ -699,7 +722,9 @@ def main():
                         futs = [pool.submit(_run_chunk, (idx, ch)) for idx, ch in enumerate(chunks, 1)]
                         for fut in concurrent.futures.as_completed(futs):
                             idx, len_s, ptxt, elapsed = fut.result()
-                            if not ptxt:
+                            if ptxt == '__SILENT_CHUNK__':
+                                results[idx] = ''
+                            elif not ptxt:
                                 ok = False
                                 print('  [!] فشل تفريغ المقطع %d/%d لـ %s' % (idx, len(chunks), base), flush=True)
                             else:
@@ -709,8 +734,8 @@ def main():
                                     idx, len(chunks), len_s / 60.0, cw, cwpm, elapsed
                                 ), flush=True)
                                 results[idx] = ptxt
-                    parts_txt = [results[i] for i in range(1, len(chunks) + 1) if i in results]
-                    full_txt = '\n\n'.join(parts_txt) if (ok and len(parts_txt) == len(chunks)) else ''
+                    parts_txt = [results[i] for i in range(1, len(chunks) + 1) if results.get(i)]
+                    full_txt = '\n\n'.join(parts_txt) if (ok and len(results) == len(chunks) and parts_txt) else ''
         else:
             print('[تفريغ] %s | المدة=%.1fد | العنوان=«%s»' % (base, dur_m, title[:65]), flush=True)
             req_w = max(12, int(dur_m * 24)) if dur_m > 0 else 40

@@ -48,6 +48,7 @@ MAX_PREFETCH = int(os.environ.get('MAC_ALIGN_PREFETCH', '6'))
 PREFETCH_THREADS = int(os.environ.get('MAC_ALIGN_PREFETCH_THREADS', '2'))
 BATCH_SIZE = int(os.environ.get('MAC_ALIGN_BATCH_SIZE', '3'))
 COOLDOWN_S = float(os.environ.get('MAC_ALIGN_COOLDOWN_S', '3.5'))
+MIN_ACCEPTABLE_ALIGN_PCT = float(os.environ.get('MAC_ALIGN_MIN_PCT', '95.0'))
 LOCAL_QUOTA_JSON = '/tmp/agy_quota_snapshot.json'
 REMOTE_QUOTA_JSON = '/root/workspace/ytb-build/live_quota.json'
 AGY_USAGE_BIN = '/Users/macm1pro/.hermes/node/bin/antigravity-usage'
@@ -67,6 +68,51 @@ UPLOAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 def log(msg):
     print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}] [mac-align] {msg}', flush=True)
+
+
+def diagnose_low_coverage(rep, dur):
+    """تشخيص السبب الجذري لأي درس تهبط تغطية محاذاته المنطوقة تحت 95.0%."""
+    cov = float(rep.get('spoken_align_coverage', 0.0))
+    words = int(rep.get('words', 0))
+    spoken = int(rep.get('spoken_words', max(1, words)))
+    interp = int(rep.get('interpolated', 0))
+    forced = int(rep.get('forced', 0))
+    span_pct = float(rep.get('audio_span_pct', 0.0))
+    clusters = rep.get('unaligned_clusters') or []
+    n_clusters = len(clusters)
+    max_cluster = max((c.get('count', 0) for c in clusters), default=0)
+    first_cluster_sample = clusters[0].get('sample', '') if clusters else ''
+    first_cluster_t = clusters[0].get('t', 0.0) if clusters else 0.0
+    wpm = round(spoken / max(0.1, dur / 60.0), 1)
+
+    causes = []
+    if max_cluster >= 40 or (n_clusters >= 1 and interp >= 60):
+        causes.append(f'TEXT_HALLUCINATION_OR_CHUNK_REPEAT(clusters={n_clusters}, max_run={max_cluster}w @ {first_cluster_t}s: «{first_cluster_sample[:60]}»)')
+    if span_pct < 80.0:
+        causes.append(f'DEAD_SILENCE_TAIL_OR_TRUNCATION(audio_span={span_pct:.1f}%)')
+    if wpm > 195.0:
+        causes.append(f'EXCESS_WPM_HALLUCINATION(wpm={wpm})')
+    if forced >= 3 or (cov < 85.0 and not causes):
+        causes.append(f'ACOUSTIC_MISMATCH_OR_DUBBED_TRACK(forced={forced}, cov={cov:.1f}%)')
+    if not causes:
+        causes.append(f'LOCAL_LOW_SNR_OR_OVERLAP(interp={interp}/{spoken}, clusters={n_clusters}, wpm={wpm})')
+
+    diag = {
+        'spoken_align_pct': cov,
+        'interpolated_words': interp,
+        'unaligned_clusters_count': n_clusters,
+        'max_cluster_words': max_cluster,
+        'wpm': wpm,
+        'audio_span_pct': span_pct,
+        'forced_steps': forced,
+        'causes': causes,
+    }
+    msg = (
+        f'cov={cov:.2f}% (< {MIN_ACCEPTABLE_ALIGN_PCT:.1f}%) | مستوفى={interp}/{spoken} كلمة | '
+        f'كتل_غير_محاذاة={n_clusters} (أكبرها={max_cluster} كلمة) | WPM={wpm} | امتداد={span_pct:.1f}% | '
+        f'تقدم_اضطراري={forced} => السبب: {" + ".join(causes)}'
+    )
+    return msg, diag
 
 
 def quota_sync_worker():
@@ -103,6 +149,8 @@ def list_remote_jobs():
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if res.returncode != 0 or not res.stdout.strip():
+        if res.returncode != 0:
+            _reset_stale_ssh_mux()
         return []
     try:
         return json.loads(res.stdout.strip().splitlines()[-1])
@@ -149,6 +197,7 @@ def prefetch_worker():
                     PREFETCH_QUEUE.put(job)
                     fetched_any = True
                 else:
+                    _reset_stale_ssh_mux()
                     for p in (local_opus, local_txt):
                         if os.path.exists(p):
                             os.remove(p)
@@ -157,6 +206,7 @@ def prefetch_worker():
             if not fetched_any:
                 time.sleep(3)
         except Exception as e:
+            _reset_stale_ssh_mux()
             log(f'[تحذير سحب مسبق] {e}')
             time.sleep(4)
 
@@ -190,55 +240,75 @@ def make_align_args():
     return ns
 
 
+def _reset_stale_ssh_mux():
+    for p in glob.glob('/tmp/ssh-mux-align-*'):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def upload_and_finalize(job, local_align_path, rep):
     key = job['key']
     vid = job.get('vid', '')
     sheikh = job.get('sheikh', '')
     remote_txt = job['txt_path']
     try:
-        # التأكد من المسار القياسي في حال نُقل الملف أثناء توحيد هيكلة cheikh
-        resolve_py = (
-            f'import glob, os; '
-            f'rt = {json.dumps(remote_txt)}; '
-            f'vid = {json.dumps(vid)}; '
-            f'sh = {json.dumps(sheikh)}; '
-            f'cands = [rt] if os.path.exists(rt) else glob.glob(f"/root/workspace/ytb/{{sh}}/*/*_{{vid}}.txt"); '
-            f'print(cands[0] if cands else rt)'
-        )
-        res_p = subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(resolve_py)}'], capture_output=True, text=True, timeout=20)
-        if res_p.returncode == 0 and res_p.stdout.strip():
-            remote_txt = res_p.stdout.strip().splitlines()[-1]
+        for attempt in range(1, 5):
+            try:
+                # التأكد من المسار القياسي في حال نُقل الملف أثناء توحيد هيكلة cheikh
+                resolve_py = (
+                    f'import glob, os; '
+                    f'rt = {json.dumps(remote_txt)}; '
+                    f'vid = {json.dumps(vid)}; '
+                    f'sh = {json.dumps(sheikh)}; '
+                    f'cands = [rt] if os.path.exists(rt) else glob.glob(f"/root/workspace/ytb/{{sh}}/*/*_{{vid}}.txt"); '
+                    f'print(cands[0] if cands else rt)'
+                )
+                res_p = subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(resolve_py)}'], capture_output=True, text=True, timeout=25)
+                if res_p.returncode == 0 and res_p.stdout.strip():
+                    remote_txt = res_p.stdout.strip().splitlines()[-1]
 
-        remote_align = remote_txt[:-4] + '.align.json'
-        remote_meta = remote_txt[:-4] + '.meta.json'
+                remote_align = remote_txt[:-4] + '.align.json'
+                remote_meta = remote_txt[:-4] + '.meta.json'
 
-        # 1) رفع ملف align.json للسيرفر عبر اتصال SSH المدمج
-        r = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, local_align_path, f'{VPS_HOST}:{remote_align}'], timeout=120)
-        if r.returncode != 0:
-            raise RuntimeError(f'فشل رفع {local_align_path} إلى السيرفر ({remote_align})')
+                # 1) رفع ملف align.json للسيرفر عبر اتصال SSH المدمج
+                r = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, local_align_path, f'{VPS_HOST}:{remote_align}'], timeout=120)
+                if r.returncode != 0:
+                    raise RuntimeError(f'فشل رفع {local_align_path} إلى السيرفر ({remote_align})')
 
-        # 2) تحديث meta.json وحذف ملفات الجسر المؤقتة على السيرفر
-        align_summary = {
-            'engine': 'ctc-pure-mac-mps',
-            'model': MODEL,
-            'cov': round(rep['spoken_align_coverage'] / 100.0, 4),
-            'spoken_align_pct': rep['spoken_align_coverage'],
-            'audio_span_pct': rep['audio_span_pct'],
-            'words': rep['words'],
-            'aligned': rep['aligned'],
-            'interpolated': rep['interpolated'],
-            'at': datetime.now().strftime('%Y-%m-%d %H:%M'),
-        }
-        py_code = (
-            f'import glob, json, os; '
-            f'mp = {json.dumps(remote_meta)}; '
-            f'md = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else {{}}; '
-            f'md["align"] = {json.dumps(align_summary)}; '
-            f'json.dump(md, open(mp, "w", encoding="utf-8"), ensure_ascii=False, indent=2); '
-            f'vid = {json.dumps(vid)}; '
-            f'[os.remove(p) for p in glob.glob({json.dumps(REMOTE_BRIDGE)} + f"/*_{{vid}}.*") if os.path.exists(p)]'
-        )
-        subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(py_code)}'], timeout=30, check=True)
+                # 2) تحديث meta.json وحذف ملفات الجسر المؤقتة على السيرفر
+                align_summary = {
+                    'engine': 'ctc-pure-mac-mps',
+                    'model': MODEL,
+                    'cov': round(rep['spoken_align_coverage'] / 100.0, 4),
+                    'spoken_align_pct': rep['spoken_align_coverage'],
+                    'audio_span_pct': rep['audio_span_pct'],
+                    'words': rep['words'],
+                    'aligned': rep['aligned'],
+                    'interpolated': rep['interpolated'],
+                    'retried_without_silence_compact': bool(rep.get('retried_without_silence_compact', False)),
+                    'at': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                }
+                if rep.get('low_coverage_diagnosis'):
+                    align_summary['low_coverage_diagnosis'] = rep['low_coverage_diagnosis']
+                py_code = (
+                    f'import glob, json, os; '
+                    f'mp = {json.dumps(remote_meta)}; '
+                    f'md = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else {{}}; '
+                    f'md["align"] = {json.dumps(align_summary)}; '
+                    f'json.dump(md, open(mp, "w", encoding="utf-8"), ensure_ascii=False, indent=2); '
+                    f'vid = {json.dumps(vid)}; '
+                    f'[os.remove(p) for p in glob.glob({json.dumps(REMOTE_BRIDGE)} + f"/*_{{vid}}.*") if os.path.exists(p)]'
+                )
+                subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(py_code)}'], timeout=30, check=True)
+                break
+            except Exception as e:
+                _reset_stale_ssh_mux()
+                if attempt == 4:
+                    raise
+                log(f'[↻ إعادة محاولة رفع {attempt}/4] {key}: {e}')
+                time.sleep(5 * attempt)
     except Exception as e:
         log(f'[✗ خطأ رفع الخلفية] {key}: {e}')
     finally:
@@ -259,7 +329,7 @@ def main():
     device = 'mps' if (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()) else 'cpu'
     dtype = torch.float16 if device == 'mps' else torch.float32
     dtype_label = 'fp16' if dtype == torch.float16 else 'fp32'
-    log(f'تحميل نموذج المحاذاة {MODEL} من الكاش المحلي على شريحة الماك ({device} · {dtype_label} + طي الصمت)...')
+    log(f'تحميل نموذج المحاذاة {MODEL} من الكاش المحلي على شريحة الماك ({device} · {dtype_label} + طي الصمت المحافظ + حارس <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}%)...')
     t_load0 = time.time()
     model, tokenizer = load_alignment_model(device, model_path=MODEL, dtype=dtype)
     vocab = {k.lower(): v for k, v in tokenizer.get_vocab().items()}
@@ -317,8 +387,9 @@ def main():
             t_dec = time.time() - t0
             dur = len(data) / SR
 
+            # عتبة طيّ صمت محافظة (rel_db=9.5, win_s=8.0, min_sil=0.65, keep=0.20) تحمي الحروف المهموسة وأصوات السائلين
             t_em0 = time.time()
-            keep_mask, sc_stats = plan_silence(np.asarray(data), SR, 0.5, 0.15, rel_db=5.0, win_s=5.0)
+            keep_mask, sc_stats = plan_silence(np.asarray(data), SR, 0.65, 0.20, rel_db=9.5, win_s=8.0)
             idx_map = None
             if keep_mask is not None and sc_stats.get('pct', 0.0) >= 1.5:
                 comp_data, idx_map = compact_wave(np.asarray(data), keep_mask)
@@ -357,6 +428,47 @@ def main():
             json.dump(em_meta, open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 
             rep = ctc_pure_align.align_one_file(em_path, tok_path, out_align, key, align_args)
+
+            # حارس < 95.0% الإلزامي: إعادة المحاولة تلقائياً بدون طي الصمت ثم تشخيص السبب الجذري
+            if rep['spoken_align_coverage'] < MIN_ACCEPTABLE_ALIGN_PCT:
+                cov_before = rep['spoken_align_coverage']
+                if idx_map is not None:
+                    log(
+                        f'[⚠ حارس <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}%] {key}: التغطية {cov_before:.2f}% '
+                        f'(مع طي الصمت {sc_stats.get("pct", 0.0):.1f}%) — إعادة المحاذاة على الموجة الكاملة بدون طي الصمت...'
+                    )
+                    t_ret0 = time.time()
+                    em_full, stride_full = emissions_torch(
+                        model, torch.from_numpy(data), device=device, dtype=dtype,
+                        window=30.0, context=2.0, batch_size=BATCH_SIZE
+                    )
+                    t_em_ret = time.time() - t_ret0
+                    t_em += t_em_ret
+                    fps_full = float(em_full.shape[0]) / dur if dur > 0 else 1000.0 / float(stride_full)
+                    np.save(em_path, em_full)
+                    em_meta['fps'] = round(fps_full, 4)
+                    em_meta['frames'] = int(em_full.shape[0])
+                    em_meta['em_s'] = round(t_em, 1)
+                    em_meta['silence_compact'] = False
+                    json.dump(em_meta, open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+                    retry_align = out_align + '.retry'
+                    rep_retry = ctc_pure_align.align_one_file(em_path, tok_path, retry_align, key + ':full_wave', align_args)
+                    if rep_retry['spoken_align_coverage'] >= cov_before:
+                        os.replace(retry_align, out_align)
+                        rep = rep_retry
+                        rep['retried_without_silence_compact'] = True
+                    else:
+                        if os.path.exists(retry_align):
+                            os.remove(retry_align)
+                    log(
+                        f'[↺ نتيجة إعادة المحاولة بدون طي الصمت] {key}: '
+                        f'{cov_before:.2f}% -> {rep["spoken_align_coverage"]:.2f}% (الاعتماد={rep["spoken_align_coverage"]:.2f}%)'
+                    )
+                if rep['spoken_align_coverage'] < MIN_ACCEPTABLE_ALIGN_PCT:
+                    diag_msg, diag_dict = diagnose_low_coverage(rep, dur)
+                    rep['low_coverage_diagnosis'] = diag_dict
+                    log(f'[🔍 تشخيص جذري <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}%] {key}: {diag_msg}')
+
             UPLOAD_POOL.submit(upload_and_finalize, job, out_align, rep)
             submitted_upload = True
 

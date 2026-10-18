@@ -108,12 +108,12 @@ flowchart TD
 ### ج) تطهير الديباجة (`strip_preamble_and_header`) قبل المحاذاة
 قبل فكّ الصوت أو حساب التوكنات، يمرّر `mac_align_fleet.py` نصّ الدرس عبر `strip_preamble_and_header()` لإزالة أي مقدمة لاتينية متسربة (`LATIN_PREAMBLE`) أو ترويسة بيانات وصفية غير منطوقة (`METADATA_HEADER` مثل `الشيخ:` / `السلسلة:` / `[شارة إنشادية]`) وتحديث نسخة النص المحلية حتى لا تفسد محاذاة أول 60 ثانية من المحاضرة.
 
-### د) معادلات طيّ الصمت وإعادة النفخ (`plan_silence` → `compact_wave` → `emissions_torch fp16` → `unpad_emissions`)
-لتسريع استخراج الانبعاثات على شريحة `mps` بدقة `fp16` دون أي إخلال بالتوقيت الزمني للمللي ثانية:
-1. **`plan_silence(wave_np, sr=16000, min_sil=0.5, keep=0.15, frame=320, rel_db=5.0, win_s=5.0)`:**
+### د) معادلات طيّ الصمت المحافظ وإعادة النفخ (`plan_silence` → `compact_wave` → `emissions_torch fp16` → `unpad_emissions`)
+لتسريع استخراج الانبعاثات على شريحة `mps` بدقة `fp16` دون أي إخلال بالتوقيت الزمني للمللي ثانية ودون قصّ الحروف المهموسة أو أصوات السائلين:
+1. **`plan_silence(wave_np, sr=16000, min_sil=0.65, keep=0.20, frame=320, rel_db=9.5, win_s=8.0, abs_db=-55.0)`:**
    - يقسّم الموجة الصوتية إلى إطارات بطول `20ms` (`frame = 320` عينة عند `16kHz`)، ويحسب طاقة `RMS` بالديسيبل لكل إطار.
-   - يحسب وسيط الطاقة المحلي المتدرّج (`rolling median` بنافذة `±5.0s`) ويعدّ الإطار صامتاً إذا انخفض بـ`5.0 dB` تحت الوسيط المحلي.
-   - لكل فجوة صمت متصلة لا تقل مدتها عن `min_sil = 0.5s` (`25` إطاراً)، يُبقي هامش أمان `keep = 0.15s` (`7–8` إطارات) عند الطرفين ويعلّم الوسط بـ`keep_mask = False`.
+   - يحسب وسيط الطاقة المحلي المتدرّج (`rolling median` بنافذة `±8.0s`) ويعدّ الإطار صامتاً إذا انخفض بـ`rel_db = 9.5 dB` تحت الوسيط المحلي **أو** انخفض تحت أرضية الصمت المطلقة `abs_db = -55.0 dB` (بحيث تُطوى المقاطع الصامتة الطويلة كلياً حتى لو هبط الوسيط المحلي فيها إلى `-100 dB`).
+   - لكل فجوة صمت متصلة لا تقل مدتها عن `min_sil = 0.65s` (`32` إطاراً)، يُبقي هامش أمان `keep = 0.20s` (`10` إطارات) عند الطرفين ويعلّم الوسط بـ`keep_mask = False`.
 2. **`compact_wave(wave_np, keep_mask, frame=320)`:**
    - إذا كانت نسبة الصمت القابل للطيّ `pct >= 1.5%`، يقتطع الإطارات المحذوفة ويبني موجة صوتية مضغوطة متصلة مع مصفوفة الفهارس الأصلية `idx_map = np.flatnonzero(keep_mask)` حيث يمثّل كل عنصر في `idx_map` موضع الإطار المحتفظ به في المصفوفة الأصلية ذات الطول `n_frames = len(wave_np) // 320`.
 3. **`emissions_torch(model, wav_in, device='mps', dtype=torch.float16, window=30.0, context=2.0, batch_size=3)`:**
@@ -122,14 +122,24 @@ flowchart TD
    - ينشئ مصفوفة بالحجم الأصلي الكامل `(n_frames, C)` مملوءة بقيمة `blank_fill = -10.0` مع تصفير عمود `<blank>` (`full[:, 0] = 0.0`) وعمود `<star>` (`full[:, star_col] = 0.0`).
    - يعيد إسقاط الانبعاثات المحسوبة في مواضعها الزمنية الأصلية بدقة: `full[idx_map[:k]] = em_compact[:k]`. بذلك تبقى أبعاد المصفوفة النهائية `T == n_frames` مطابقةً تماماً للصوت الأصلي قبل الطيّ، وتظل خطوة الإطار `stride = 20.0ms` (`50 fps`) ثابتة بلا أي انزياح زمني.
 
-### هـ) تخفيف الحمل الحراري وإدارة ذاكرة الماك (`Thermal & Memory Throttling`)
+### هـ) القاعدة الإلزامية لحارس `< 95.0%` (`< 95.0% Auto-Retry & Root-Cause Investigation Guard`)
+تُعدّ أي محاذاة تقل فيها نسبة الكلمات المنطوقة المحاذاة صوتياً (`spoken_align_coverage`) عن **`95.0%`** (`MIN_ACCEPTABLE_ALIGN_PCT = 95.0`) حالة شاذة تستوجب المعالجة والتشخيص الآلي الفوري داخل `mac_align_fleet.py`:
+1. **إعادة المحاولة التلقائية بدون طيّ الصمت (`Full-Wave Auto-Retry`):**
+   - إذا خرجت `spoken_align_coverage < 95.0%` وكان طيّ الصمت مفعّلاً (`idx_map is not None`)، يعيد `mac_align_fleet.py` فوراً استخراج الانبعاثات من الموجة الكاملة بدون أي طيّ صمت (`torch.from_numpy(data)`), ويعيد تشغيل `ctc_pure_align.align_one_file` ويعتمد النتيجة ذات التغطية الأعلى.
+2. **التشخيص الجذري الآلي (`diagnose_low_coverage`):**
+   - إذا بقيت التغطية `< 95.0%` بعد إعادة المحاولة على الموجة الكاملة، يحلّل `diagnose_low_coverage(rep, dur)` السبب الجذري ويسجّله في `mac_align_fleet.log` و`<stem>.meta.json`:
+     - **`TEXT_HALLUCINATION_OR_CHUNK_REPEAT`:** وجود كتل كلمات متصلة بلا أثر صوتي (`unaligned_clusters` بطول `>= 40` كلمة أو استيفاء كثيف نتيجة هلوسة مقطع صامت أو تكرار حدود المقاطع).
+     - **`DEAD_SILENCE_TAIL_OR_TRUNCATION`:** انتهاء الكلام الفعلي في الصوت مبكراً (`audio_span_pct < 80%`) بسبب ذيل صمت رقمي في الفيديو الأصلي (حيث يتوقف `ctc_pure_align.py` تلقائياً فور نفاد الأحداث الصوتية `ev_after == 0`، ويتخطى `agy_transcribe.py` المقاطع الصامتة عبر `_is_dead_silent_chunk` عند `max_volume <= -48 dB`).
+     - **`ACOUSTIC_MISMATCH_OR_DUBBED_TRACK`:** عدم تطابق صوتي واسع أو مسار مدبلج إنجليزياً؛ ولمنعه من الجذور يفرض `vps_align_feeder.py` و`agy_transcribe.py` اختيار المسار العربي الأصلي في `yt-dlp` عبر `[language^=ar]` و`[format_note*=original]`.
+
+### و) تخفيف الحمل الحراري وإدارة ذاكرة الماك (`Thermal & Memory Throttling`)
 لحماية جهاز `MacBook Pro M1 Pro` من الاختناق الحراري (`Thermal Throttling`) أو تضخم ذاكرة `MPS` أثناء العمل المتواصل لأيام:
 - **`MAC_ALIGN_BATCH_SIZE = 3`** (بدل 8 أو 16) لتقليل ذروة استهلاك GPU لكل نافذة.
 - **`MAC_ALIGN_PREFETCH = 6`** لتقليل استهلاك `/tmp/mac_align_spool`.
 - **تنظيف فوري بعد كل درس:** استدعاء `torch.mps.empty_cache()` متبوعاً بـ`gc.collect()` داخل كتلة `finally` بعد كل درس، بالإضافة إلى تفريغ الكاش كل 8 خطوات داخل `emissions_torch()`.
 - **استراحة تبريد إجبارية (`MAC_ALIGN_COOLDOWN_S = 3.5` ثانية):** توقّف `time.sleep(3.5)` بين كل درس والذي يليه، مما يُبقي حرارة الشريحة منخفضة مع الحفاظ على سرعة إجمالية تبلغ **~38× إلى 49× من الوقت الحقيقي** (درس 30 دقيقة يُحاذى بالكامل في **~36 إلى 45 ثانية**).
 
-### و) خيط مزامنة الكوتة الحية (`quota_sync_worker`)
+### ز) خيط مزامنة الكوتة الحية (`quota_sync_worker`)
 - يعمل كخيط خلفي دائم (`daemon=True`) داخل `mac_align_fleet.py`.
 - يستدعي كل **120 ثانية** أداة `/Users/macm1pro/.hermes/node/bin/antigravity-usage quota --json --all-models` محلياً على الماك، ويكتب النتيجة ذرياً في `/tmp/agy_quota_snapshot.json`، ثم ينسخها عبر اتصال SSH المدمج إلى السيرفر في `/root/workspace/ytb-build/live_quota.json`.
 - يضمن هذا الخيط أن حارس الكوتة على السيرفر (`_is_quota_safe_for_background` في `agy_transcribe.py`) يقرأ دائماً الاستهلاك الفعلي الحيّ لحساب Antigravity ويتوقف فوراً عند اقتراب الكوتة من حدود الأمان.
@@ -145,6 +155,6 @@ python3 /Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/test_pipelin
 ```
 
 تختبر البوابة ثلاث مراحل صارمة:
-1. **`Gate 1 (Syntax & Component Integrity)`:** فحص شجرة `AST` ووجود الدوال والثوابت المحورية في `agy_transcribe.py` (`download_lesson_audio` مع `direct_url`, `_is_quota_safe_for_background`), `vps_align_feeder.py`, `mac_align_fleet.py` (`plan_silence`, `compact_wave`, `unpad_emissions`, `quota_sync_worker`), `transcribe_selected_smallest_first.py`, ووجود هذا المرجع `references/11-hybrid-vps-mac-mps-v5.md`.
-2. **`Gate 2 (Silence Compaction & Unpadding Math + Preamble Sanitizer)`:** اختبار رياضي فعلي لدوال `plan_silence` و`compact_wave` و`unpad_emissions` على موجة صوتية اصطناعية تحوي فجوات صمت طويلة والتأكد من استرجاع الطول الأصلي `T_orig` بدقة الملي ثانية، مع فحص `strip_preamble_and_header` على نصوص ملوثة بمقدمات لاتينية وترويسات وصفية.
-3. **`Gate 3 (Quota Guard & Real .align.json Schema Validation)`:** اختبار `_is_quota_safe_for_background` على حالات الكوتة الحرجة (`5h < 15%`، والأسبوعية `<= 25%` مع `> 12h` مقابل `<= 12h`)، والتحقق من مخطط `.align.json` ودوال المحاذاة النقية (`shadow_words_1to1`, `interpolate`).
+1. **`Gate 1 (Syntax & Component Integrity)`:** فحص شجرة `AST` ووجود الدوال والثوابت المحورية في `agy_transcribe.py` (`download_lesson_audio` مع `direct_url`, `_is_quota_safe_for_background`, `_is_dead_silent_chunk`), `vps_align_feeder.py` (`[language^=ar]`), `mac_align_fleet.py` (`plan_silence`, `compact_wave`, `unpad_emissions`, `quota_sync_worker`, `MIN_ACCEPTABLE_ALIGN_PCT`, `diagnose_low_coverage`), `transcribe_selected_smallest_first.py`, ووجود هذا المرجع `references/11-hybrid-vps-mac-mps-v5.md`.
+2. **`Gate 2 (Silence Compaction & Unpadding Math + Preamble Sanitizer)`:** اختبار رياضي فعلي لدوال `plan_silence` (بما فيها طيّ الصمت الرقمي الطويل عبر `abs_db=-55.0`) و`compact_wave` و`unpad_emissions` على موجة صوتية اصطناعية تحوي فجوات صمت طويلة والتأكد من استرجاع الطول الأصلي `T_orig` بدقة الملي ثانية، مع فحص `strip_preamble_and_header` على نصوص ملوثة بمقدمات لاتينية وترويسات وصفية.
+3. **`Gate 3 (Quota Guard, <95% Diagnosis Guard & Real .align.json Schema Validation)`:** اختبار `_is_quota_safe_for_background` على حالات الكوتة الحرجة (`5h < 15%`، والأسبوعية `<= 25%` مع `> 12h` مقابل `<= 12h`)، واختبار `diagnose_low_coverage` للحالات الأقل من `95.0%`، والتحقق من مخطط `.align.json` ودوال المحاذاة النقية (`shadow_words_1to1`, `interpolate`).

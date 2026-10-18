@@ -127,8 +127,8 @@ def emissions_onnx(wave_np, model_file, window, context, workers, threads, sr=SR
     return em
 
 
-def plan_silence(wave_np, sr, min_sil=0.5, keep=0.15, frame=320, rel_db=5.0, win_s=5.0):
-    """يخطّط طيّ الصمت بعتبة **محلية متدرّجة**: يرجع (keep_mask لكل إطار 20ms، إحصاءات) بلا أي نموذج."""
+def plan_silence(wave_np, sr, min_sil=0.5, keep=0.15, frame=320, rel_db=5.0, win_s=5.0, abs_db=-55.0):
+    """يخطّط طيّ الصمت بعتبة **محلية متدرّجة** مع أرضية صمت مطلقة (`abs_db`): يرجع (keep_mask لكل إطار 20ms، إحصاءات) بلا أي نموذج."""
     n = len(wave_np) // frame
     if n < 8:
         return None, dict(removed_s=0.0, pct=0.0, gaps=0, reason='صوت قصير')
@@ -141,7 +141,7 @@ def plan_silence(wave_np, sr, min_sil=0.5, keep=0.15, frame=320, rel_db=5.0, win
     pos = np.arange(0, n, step)
     med = np.array([np.median(pad[p:p + 2 * W + 1]) for p in pos], dtype=np.float64)
     roll = np.interp(np.arange(n), pos, med, left=med[0], right=med[-1])
-    sil = db < (roll - rel_db)
+    sil = (db < (roll - rel_db)) | (db < abs_db)
     d = np.diff(np.concatenate([[0], sil.astype(np.int8), [0]]))
     st, en = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
     kf, kmin = int(round(keep * sr / frame)), int(round(min_sil * sr / frame))
@@ -157,7 +157,7 @@ def plan_silence(wave_np, sr, min_sil=0.5, keep=0.15, frame=320, rel_db=5.0, win
         removed += (b - a)
         gaps += 1
     return keep_mask, dict(removed_s=round(removed * 0.02, 1), gaps=gaps, total_s=round(n * 0.02, 1),
-                           pct=round(removed / n * 100.0, 1), rel_db=rel_db, win_s=win_s,
+                           pct=round(removed / n * 100.0, 1), rel_db=rel_db, win_s=win_s, abs_db=abs_db,
                            thr_db=round(float(np.median(roll) - rel_db), 1),
                            frames_kept=int(keep_mask.sum()), frames_total=n)
 

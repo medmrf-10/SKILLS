@@ -108,7 +108,13 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
         if j >= len(active_idx):
             break
         gi = active_idx[j]
-        got[gi] = (round(s['start'] + off, 2), round(s['end'] + off, 2), s.get('score'))
+        w_st = round(s['start'] + off, 2)
+        w_en = round(s['end'] + off, 2)
+        if j == len(active_idx) - 1:
+            max_w_dur = max(2.5, 0.45 * max(1, len(src[gi])))
+            if (w_en - w_st) > max_w_dur:
+                w_en = round(w_st + min(1.2, max_w_dur), 2)
+        got[gi] = (w_st, w_en, s.get('score'))
 
     # ربط الرموز الصامتة داخل الشريحة بحدّ الكلمة المنطوقة السابقة حتى يتقدم المؤشر بسلاسة
     last_t = None
@@ -348,6 +354,7 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
         slice_dur = max(1.0, (fi1 - fc) / fps)
         avg_rate = N / max(1.0, dur)
         ev_slice = 0
+        ev_after = 0
         if fi1 >= T:
             n_est = N - wc
             wi1 = N
@@ -356,14 +363,20 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             ev_before = int(cum_ev[fc - 1]) if fc > 0 else 0
             ev_slice = max(0, int(cum_ev[min(T - 1, fi1 - 1)] - ev_before))
             ev_rem = max(1, int(cum_ev[-1] - ev_before))
+            ev_after = max(0, int(cum_ev[-1] - cum_ev[min(T - 1, fi1 - 1)]))
+            if ev_slice == 0 and ev_after == 0:
+                print('[%s]   [!] لا أحداث صوتية متبقية بعد %.0fث — إنهاء الزحف عند نهاية الكلام الفعلي' % (tag, tc), flush=True)
+                break
             ch_before = int(cum_wchars[wc - 1]) if wc > 0 else 0
             ch_rem = max(1, int(cum_wchars[-1] - ch_before))
-            target_ch = ch_before + ch_rem * (max(1, ev_slice) / float(ev_rem))
+            ch_per_ev = min(1.85, ch_rem / float(ev_rem))
+            target_ch = ch_before + max(1, ev_slice) * ch_per_ev
             wi_ev = int(np.searchsorted(cum_wchars, target_ch, side='left')) + 1
             max_phys_words = max(a.min_words, int(round(max(3.6, avg_rate * 2.4) * slice_dur)))
             n_est = min(max_phys_words, max(a.min_words, wi_ev - wc))
             eff_margin = min(a.margin, max(4, int(round(0.06 * n_est))))
             wi1 = min(N, wc + n_est + eff_margin)
+        is_last_speech_slice = (fi1 >= T) or (ev_after == 0 and wi1 >= N)
         slice_rate = n_est / slice_dur
         margin = eff_margin
         while True:                                     # تحصين: عند فشل التثبيت تُقلَّص الشريحة
@@ -372,13 +385,16 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             except Exception as e:
                 got = {}
                 print('[%s]   [!] فشل شريحة %.0f–%.0fث (%s: %s)' % (tag, tc, fi1 / fps, type(e).__name__, str(e)[:80]), flush=True)
-            horizon = (fi1 / fps) if fi1 >= T else (tc + a.pin)
+            horizon = (fi1 / fps) if is_last_speech_slice else (tc + a.pin)
             new = {i: v for i, v in got.items() if v[1] <= horizon and v[1] > v[0] - 0.01}
             if new or margin <= 0:
                 break
             margin -= 10                                # قلّل الهامش ثم أعد المحاولة على الشريحة نفسها
             wi1 = min(N, wc + n_est + max(0, margin))
         if not new:                                     # لا تثبيت: تقدّم اضطراري لضمان التقدّم
+            if ev_after == 0 and ev_slice < max(4, int(slice_dur * 0.4)):
+                print('[%s]   [!] صمت ذيلي كامل بعد %.0fث بلا تثبيت — توقف الزحف' % (tag, tc), flush=True)
+                break
             forced += 1
             step_f = int(a.slice * fps / 2)
             step_dur = max(1.0, step_f / fps)
@@ -391,9 +407,9 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             fc += step_f
             wc += step_w
             continue
-        if a.solid_handoff and fi1 < T:
+        if a.solid_handoff and not is_last_speech_slice:
             cut_i = solid_cut(new, nwords if nwords is not None else words, slice_rate, a)
-            if cut_i is not None and cut_i < max(new):
+            if cut_i is not None and cut_i < max(new) and new[cut_i][1] >= tc + min(10.0, 0.25 * a.pin):
                 dropped = sum(1 for i in new if i > cut_i)
                 new = {i: v for i, v in new.items() if i <= cut_i}
                 if dropped:
@@ -412,8 +428,9 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
         print('[%s]   شريحة %.0f–%.0fث ⇒ ثُبّت %d كلمة حتى %.0fث (معدل %.2f كلمة/ث)' % (
             tag, tc, fi1 / fps, len(new), last_end, rate), flush=True)
 
-    # الكلمات المتبقية في الذيل (إن وُجدت) بتوسيع الشريحة إلى أقصى ما تبقّى
-    if wc < N:
+    # الكلمات المتبقية في الذيل (إن وُجدت) بتوسيع الشريحة إلى أقصى ما تبقّى بشرط وجود أحداث صوتية
+    rem_tail_ev = max(0, int(cum_ev[-1] - (int(cum_ev[min(T - 1, int(fc) - 1)]) if int(fc) > 0 else 0))) if T > 0 else 0
+    if wc < N and rem_tail_ev > 0:
         got = {}
         try:
             got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star, nwords, a.star_pen, star_col)

@@ -173,7 +173,7 @@ def prepare_one_opus(item):
                 cmd = [
                     YTDLP, '--no-warnings', '--no-playlist',
                     *FLAGS,
-                    '-f', 'worstaudio[abr>=32]/worstaudio/bestaudio',
+                    '-f', 'worstaudio[language^=ar][abr>=32]/bestaudio[language^=ar]/worstaudio[format_note*=original][abr>=32]/worstaudio[abr>=32]/worstaudio/bestaudio',
                     '-o', tmpl, url,
                 ]
                 if os.path.exists(COOKIES):

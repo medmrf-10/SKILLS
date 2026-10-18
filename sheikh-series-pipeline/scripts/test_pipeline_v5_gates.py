@@ -101,7 +101,9 @@ def run_gate_1_syntax_and_integrity(errors):
             errors.append('Gate 1: المعامل direct_url مفقود في download_lesson_audio داخل agy_transcribe.py')
         if '_is_quota_safe_for_background' not in funcs:
             errors.append('Gate 1: الدالة _is_quota_safe_for_background مفقودة في agy_transcribe.py')
-        for token in ('archive.org/', 'libopus', '12k', 'voip', '.job.json'):
+        if '_is_dead_silent_chunk' not in funcs:
+            errors.append('Gate 1: الدالة _is_dead_silent_chunk مفقودة في agy_transcribe.py')
+        for token in ('archive.org/', 'libopus', '12k', 'voip', '.job.json', '[language^=ar]'):
             if token not in src:
                 errors.append(f'Gate 1: المكوّن {token} مفقود في agy_transcribe.py')
 
@@ -111,19 +113,25 @@ def run_gate_1_syntax_and_integrity(errors):
         for fn in ('index_ytb_txt_and_align', 'build_ordered_lessons', 'cleanup_completed_in_bridge', 'prepare_one_opus'):
             if fn not in funcs:
                 errors.append(f'Gate 1: الدالة {fn} مفقودة في vps_align_feeder.py')
+        if '[language^=ar]' not in src:
+            errors.append('Gate 1: تفضيل المسار العربي [language^=ar] مفقود في vps_align_feeder.py')
 
     # 3) فحص mac_align_fleet.py
     if 'mac_align_fleet.py' in parsed:
         src, funcs, assigns, imports = parsed['mac_align_fleet.py']
-        for fn in ('quota_sync_worker', 'prefetch_worker', 'upload_and_finalize'):
+        for fn in ('quota_sync_worker', 'prefetch_worker', 'upload_and_finalize', 'diagnose_low_coverage'):
             if fn not in funcs:
                 errors.append(f'Gate 1: الدالة {fn} مفقودة في mac_align_fleet.py')
         for imp in ('plan_silence', 'compact_wave', 'unpad_emissions'):
             if imp not in imports and imp not in funcs:
                 errors.append(f'Gate 1: الدالة {imp} غير مستوردة في mac_align_fleet.py')
-        for tok in ('MAC_ALIGN_BATCH_SIZE', 'MAC_ALIGN_PREFETCH', 'MAC_ALIGN_COOLDOWN_S', 'empty_cache', 'gc.collect'):
+        for tok in (
+            'MAC_ALIGN_BATCH_SIZE', 'MAC_ALIGN_PREFETCH', 'MAC_ALIGN_COOLDOWN_S',
+            'MIN_ACCEPTABLE_ALIGN_PCT', 'retried_without_silence_compact',
+            'empty_cache', 'gc.collect',
+        ):
             if tok not in src:
-                errors.append(f'Gate 1: إعداد تخفيف الحمل الحراري {tok} مفقود في mac_align_fleet.py')
+                errors.append(f'Gate 1: إعداد الحارس/تخفيف الحمل {tok} مفقود في mac_align_fleet.py')
 
     # 4) فحص transcribe_selected_smallest_first.py
     if 'transcribe_selected_smallest_first.py' in parsed:
@@ -137,7 +145,11 @@ def run_gate_1_syntax_and_integrity(errors):
     if not os.path.exists(ref11) or os.path.getsize(ref11) < 1000:
         errors.append('Gate 1: المرجع references/11-hybrid-vps-mac-mps-v5.md مفقود أو غير مكتمل')
     else:
-        print('  ✓ المرجع الهندسي موجود ومكتمل: references/11-hybrid-vps-mac-mps-v5.md')
+        r11_txt = open(ref11, encoding='utf-8').read()
+        for req_tok in ('MIN_ACCEPTABLE_ALIGN_PCT', 'diagnose_low_coverage', 'abs_db'):
+            if req_tok not in r11_txt:
+                errors.append(f'Gate 1: توثيق {req_tok} مفقود في references/11-hybrid-vps-mac-mps-v5.md')
+        print('  ✓ المرجع الهندسي موجود ومكتمل (بما فيه حارس <95%): references/11-hybrid-vps-mac-mps-v5.md')
 
     skill_md = os.path.join(SKILL_ROOT, 'SKILL.md')
     if not os.path.exists(skill_md):
@@ -231,6 +243,15 @@ def run_gate_2_silence_math_and_sanitizer(errors):
         f'-> استُرجع إلى {em_unpadded.shape} بانزياح 0.00ms'
     )
 
+    # 1b) اختبار أرضية الصمت المطلقة (abs_db=-55.0) على ذيل صامت طويل (أكبر من نافذة الوسيط win_s)
+    tail_wave = np.concatenate([wave[:int(10.0 * sr)], np.full(int(20.0 * sr), 1e-5, dtype=np.float32)])
+    tail_mask, tail_stats = plan_silence(tail_wave, sr, min_sil=0.65, keep=0.20, frame=frame_samples, rel_db=9.5, win_s=8.0, abs_db=-55.0)
+    tail_silent_kept_pct = float(tail_mask[510:].mean() * 100.0)
+    if tail_silent_kept_pct > 2.0:
+        errors.append(f'Gate 2: فشل طي الذيل الصامت الطويل (بقيت {tail_silent_kept_pct:.2f}% من الإطارات الصامتة)')
+    else:
+        print(f'  ✓ أرضية الصمت المطلقة (abs_db=-55.0) تطوي الذيل الصامت الطويل بنجاح (أزالت {100.0 - tail_silent_kept_pct:.1f}% من الصمت الممتد)')
+
     # 2) اختبار تطهير الديباجة اللاتينية والترويسات الوصفية
     contaminated = (
         "I have launched view_file on lesson_audio.mp3 and will now provide the exact Arabic transcript.\n\n"
@@ -252,7 +273,25 @@ def run_gate_3_quota_guard_and_align_schema(errors):
     print('=== [Gate 3] Quota Guard & Real .align.json Schema Validation ===')
     import agy_transcribe
     import ctc_pure_align
+    import mac_align_fleet
     from ctc_forced_aligner import preprocess_text
+
+    # 0) اختبار مشخّص < 95.0% (diagnose_low_coverage)
+    fake_low_rep = {
+        'spoken_align_coverage': 37.9,
+        'words': 5550,
+        'spoken_words': 5550,
+        'interpolated': 3447,
+        'forced': 37,
+        'audio_span_pct': 14.5,
+        'unaligned_clusters': [{'start_idx': 726, 'end_idx': 5549, 'count': 4824, 't': 575.4, 'sample': 'بسم الله الرحمن الرحيم باب البيوع'}],
+    }
+    diag_msg, diag_dict = mac_align_fleet.diagnose_low_coverage(fake_low_rep, 3971.8)
+    causes_joined = ' '.join(diag_dict.get('causes', []))
+    if 'TEXT_HALLUCINATION_OR_CHUNK_REPEAT' not in causes_joined or 'DEAD_SILENCE_TAIL_OR_TRUNCATION' not in causes_joined:
+        errors.append(f'Gate 3: لم يرصد diagnose_low_coverage أسباب الهلوسة والذيل الصامت: {diag_dict}')
+    else:
+        print(f'  ✓ حارس ومشخّص <95% (diagnose_low_coverage) سليم: رصد {diag_dict["causes"]}')
 
     # 1) اختبار حارس الكوتة الحي (_is_quota_safe_for_background) على الحالات الحرجة
     snap_path = '/tmp/agy_quota_snapshot.json'
