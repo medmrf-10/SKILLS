@@ -2263,6 +2263,14 @@ def stage8_resolve_states_and_export(
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(curated_payload, f, ensure_ascii=False, indent=2)
 
+    canonical_json_path = output_json_path.parent / f"{person_id}.json"
+    if (
+        canonical_json_path.resolve() != output_json_path.resolve()
+        and not str(canonical_json_path).startswith("/Users/macm1pro/REPOS/cheikh/")
+    ):
+        with open(canonical_json_path, "w", encoding="utf-8") as cf:
+            json.dump(curated_payload, cf, ensure_ascii=False, indent=2)
+
     companion_raw_path = output_json_path.parent / f"{person_id}_raw.json"
     if not str(companion_raw_path).startswith("/Users/macm1pro/REPOS/cheikh/"):
         with open(companion_raw_path, "w", encoding="utf-8") as rf:
@@ -2646,22 +2654,29 @@ def main():
     parser.add_argument(
         "--raw-input",
         "--raw-json",
+        "--input",
         dest="raw_input",
         required=True,
         help="Path to input <person_id>_raw.json file.",
     )
     parser.add_argument(
         "--output-json",
+        "--output",
+        dest="output_json",
         required=True,
         help="Path to output curated <person_id>.json file.",
     )
     parser.add_argument(
         "--output-series-dir",
+        "--series-dir",
+        dest="output_series_dir",
         default=None,
         help="Optional root directory to export <person_id>/sXXX/_meta.json folders.",
     )
     parser.add_argument(
         "--db-path",
+        "--db",
+        dest="db_path",
         default=None,
         help="Optional path to curated.db SQLite file (defaults to <output_dir>/curated.db).",
     )

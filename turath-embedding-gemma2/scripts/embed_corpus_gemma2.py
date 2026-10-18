@@ -1118,7 +1118,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="توليد وفهرسة التضمين المزدوج بـ EmbeddingGemma 2 في قاعدة بيانات SQLite."
     )
-    parser.add_argument("--db", required=True, help="مسار ملف قاعدة بيانات SQLite")
+    parser.add_argument("--db", "--db-path", dest="db", required=True, help="مسار ملف قاعدة بيانات SQLite")
     parser.add_argument(
         "--backend",
         default="auto",

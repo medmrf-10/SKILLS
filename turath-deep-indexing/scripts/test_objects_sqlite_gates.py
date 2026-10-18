@@ -605,6 +605,42 @@ def run_all_3_gates() -> int:
 
         conn.close()
 
+        # 3.6 Real-World Edge-Case Regression (Cycle 1 Continuous Improvement):
+        # - Exact 6,236-verse Quran resolver (no false 38:1 'ص' or 50:1 'ق' collisions)
+        # - Ambiguous single-word person guard ('رجل مسلم' != Imam Muslim) + genitive 'أبي هريرة' & 'الترمذي'
+        # - Muqaddimah / procedural gem hygiene
+        q_ref = yti.resolve_quran_verse_reference(
+            "الذي جعل لكم من الشجر الأخضر نارا فإذا أنتم منه توقدون",
+            "وقد استدل المصنف رحمه الله بقوله تعالى في الآيات الصريحة القاطعة: {الذي جعل لكم من الشجر الأخضر نارا فإذا أنتم منه توقدون}",
+        )
+        if q_ref != "سورة يس: 80":
+            errors.append(f"Gate 3.6 FAILED: Quran resolver returned {q_ref!r} instead of 'سورة يس: 80'")
+
+        persons_test, _, _, _ = yti.detect_passage_entities(
+            "ذكر كل رجل مسلم صادق ما رواه الإمام الترمذي عن أبي هريرة رضي الله عنه في السنن."
+        )
+        p_canons = {p["canonical_name"] for p in persons_test}
+        p_names = {p["mentioned_as"] for p in persons_test}
+        if "مسلم بن الحجاج" in p_canons:
+            errors.append(f"Gate 3.6 FAILED: Bare 'رجل مسلم' falsely matched Imam Muslim: {persons_test}")
+        if "الإمام أبو عيسى الترمذي" not in p_canons or "أبو هريرة رضي الله عنه" not in p_canons:
+            errors.append(f"Gate 3.6 FAILED: Missed الترمذي or أبو هريرة in {persons_test}")
+        if "أبي هريرة" not in p_names:
+            errors.append(f"Gate 3.6 FAILED: Exact surface mention 'أبي هريرة' not preserved: {persons_test}")
+
+        gem_cands = yti.extract_candidate_sentences(
+            "بسم الله الرحمن الرحيم الحمد لله رب العالمين وصلى الله وسلم على سيدنا محمد. "
+            "وصلنا إلى قول الشيخ رحمه الله تعالى في الباب الثالث. "
+            "والقاعدة المقررة عند الأصوليين أن الأمر المطلق يقتضي الوجوب والنهي المطلق يقتضي التحريم والفساد."
+        )
+        if not gem_cands or any("بسم الله" in c or "وصلنا إلى قول" in c for c in gem_cands):
+            errors.append(f"Gate 3.6 FAILED: Muqaddimah or procedural sentence leaked into gem candidates: {gem_cands}")
+        if not errors:
+            print(
+                "  [OK] Query 3.6 (Real-World Regression Gate): 6,236-verse Quran resolver (36:80), "
+                "person disambiguation ('رجل مسلم' vs 'أبي هريرة'/'الترمذي'), and Muqaddimah gem hygiene verified."
+            )
+
     print("\n" + "=" * 78)
     if errors:
         print(f"FAIL ({len(errors)} errors):")

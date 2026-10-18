@@ -746,7 +746,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="محرك الاسترجاع الهجين العلائقي (FTS5 BM25 + Dual EmbeddingGemma 2 + RRF + Entity Filters)."
     )
-    parser.add_argument("--db", required=True, help="مسار ملف قاعدة بيانات SQLite")
+    parser.add_argument("--db", "--db-path", dest="db", required=True, help="مسار ملف قاعدة بيانات SQLite")
     parser.add_argument("--query", default="", help="نص البحث (عبارة تراثية أو سؤال مفهومي)")
     parser.add_argument("--top-k", type=int, default=5, help="عدد النتائج المسترجعة")
     parser.add_argument(

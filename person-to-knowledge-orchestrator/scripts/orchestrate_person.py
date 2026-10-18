@@ -986,21 +986,23 @@ def orchestrate_person(
                         encoding="utf-8",
                     )
 
-            # Sanitize all .txt transcripts in dst_sdir FIRST
-            sanitize_mod.process_dir(str(dst_sdir), dry_run=False)
-            for txt_fp in sorted(dst_sdir.glob("*.txt")):
-                raw_t = txt_fp.read_text(encoding="utf-8")
-                clean_t, extra_reasons = strip_all_preambles(raw_t)
-                if extra_reasons and clean_t and clean_t != raw_t:
-                    txt_fp.write_text(clean_t, encoding="utf-8")
+            txt_files_in_dir = sorted(dst_sdir.glob("*.txt"))
+            if txt_files_in_dir:
+                # Sanitize all .txt transcripts in dst_sdir FIRST
+                sanitize_mod.process_dir(str(dst_sdir), dry_run=False)
+                for txt_fp in sorted(dst_sdir.glob("*.txt")):
+                    raw_t = txt_fp.read_text(encoding="utf-8")
+                    clean_t, extra_reasons = strip_all_preambles(raw_t)
+                    if extra_reasons and clean_t and clean_t != raw_t:
+                        txt_fp.write_text(clean_t, encoding="utf-8")
 
-            # Then generate word-level CTC .align.json for any sanitized .txt missing .align.json
-            for txt_fp in sorted(dst_sdir.glob("*.txt")):
-                align_fp = dst_sdir / f"{txt_fp.stem}.align.json"
-                if not align_fp.exists():
-                    clean_txt = txt_fp.read_text(encoding="utf-8")
-                    align_payload = _build_word_ctc_align_payload(clean_txt)
-                    align_fp.write_text(json.dumps(align_payload, ensure_ascii=False), encoding="utf-8")
+                # Then generate word-level CTC .align.json for any sanitized .txt missing .align.json
+                for txt_fp in sorted(dst_sdir.glob("*.txt")):
+                    align_fp = dst_sdir / f"{txt_fp.stem}.align.json"
+                    if not align_fp.exists():
+                        clean_txt = txt_fp.read_text(encoding="utf-8")
+                        align_payload = _build_word_ctc_align_payload(clean_txt)
+                        align_fp.write_text(json.dumps(align_payload, ensure_ascii=False), encoding="utf-8")
 
         # Track 3B: Process written books via pdf_to_preflight_adapter
         all_book_sources: List[Dict[str, Any]] = []
@@ -1272,9 +1274,16 @@ def main() -> int:
     parser.add_argument("--archive-id", action="append", default=[], help="Archive.org identifier")
     parser.add_argument("--index-pdf", action="append", default=[], help="PDF index file containing links")
     parser.add_argument("--books-json", default=None, help="JSON file of book metadata")
-    parser.add_argument("--offline-fixture", default=None, help="Offline discovery fixture JSON")
+    parser.add_argument(
+        "--offline-fixture",
+        "--discovery-fixture",
+        "--offline-bundle",
+        dest="offline_fixture",
+        default=None,
+        help="Offline discovery fixture JSON",
+    )
     parser.add_argument("--series-transcripts-dir", default=None, help="Directory of pre-extracted transcripts")
-    parser.add_argument("--book-input", action="append", default=[], help="Path to PDF book output dir or JSON")
+    parser.add_argument("--book-input", "--books-pages-dir", dest="book_input", action="append", default=[], help="Path to PDF book output dir or JSON")
     parser.add_argument("--preferred-model", default="gemini-3.8-flash-high", help="Preferred model for Stage 0")
     parser.add_argument(
         "--embedding-backend",
@@ -1285,6 +1294,8 @@ def main() -> int:
     parser.add_argument("--from-stage", type=int, default=0, choices=[0, 1, 2, 3, 4, 5])
     parser.add_argument("--to-stage", type=int, default=5, choices=[0, 1, 2, 3, 4, 5])
     parser.add_argument("--no-resume", action="store_true", help="Disable resuming from passed stages")
+    parser.add_argument("--resume", action="store_true", help="Resume from passed stages (default behavior)")
+    parser.add_argument("--run-sample-queries", action="store_true", help="Run sample hybrid queries in Stage 5 (default behavior)")
     parser.add_argument("--force", action="store_true", help="Force re-running all stages in range")
 
     args = parser.parse_args()

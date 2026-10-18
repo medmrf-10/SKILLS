@@ -141,27 +141,159 @@ def extract_anchor_words(text_slice: str, word_count: int = 6) -> str:
     return " ".join(take)
 
 
+_QURAN_INDEX_CACHE: list[tuple[int, int, str]] | None = None
+
+MUQADDIMAH_OR_PROCEDURAL_RE = re.compile(
+    r"(?:بسم\s+الله\s+الرحمن\s+الرحيم|الحمد\s+لله\s+رب\s+العالمين|وأصلي\s+وأسلم\s+على|والصلاة\s+والسلام\s+على|"
+    r"سيد\s+الأولين\s+والآخرين|ومن\s+اهتدى\s+بهديه|إلى\s+يوم\s+الدين|أما\s+بعد\s*:|"
+    r"وصلنا\s+إلى\s+قول|كنا\s+قد\s+توقفنا|نقف\s+عند\s+هذا\s+الحد|في\s+الدرس\s+الماضي|في\s+اللقاء\s+السابق|"
+    r"نسأل\s+الله\s+أن\s+يعلمنا|وصلى\s+الله\s+وسلم\s+على\s+نبينا)"
+)
+
+EPISTEMIC_RULE_MARKERS_RE = re.compile(
+    r"\b(?:القاعدة|الضابط|الأصل\s+في|الشرط|الركن|الفرق\s+بين|لا\s+يجوز|لا\s+يصح|يجب\s+على|ينقسم\s+إلى|"
+    r"المراد\s+بـ|معنى\s+قوله|هو\s+عبارة\s+عن|حقيقة|تعريف|يدل\s+على\s+أن|فلهذا\s+قال|ولذلك\s+قال|"
+    r"لأن\s+الأصل|كل\s+ما\s+كان|متى\s+ما|إنما\s+يتقرب|لا\s+يكون\s+صفة)\b"
+)
+
+AMBIGUOUS_SINGLE_PERSON_CONTEXT_RE = {
+    "مسلم": re.compile(r"\b(?:صحيح|رواه|اخرجه|الامام|امام|عند|قال|كتاب|شرح)\s+مسلم\b"),
+    "مالك": re.compile(r"\b(?:الامام|امام|مذهب|قال|عند|موطا|رواه)\s+مالك\b"),
+    "احمد": re.compile(r"\b(?:الامام|امام|مسند|مذهب|قال|عند|رواه|اخرجه)\s+احمد\b"),
+    "عمر": re.compile(r"\b(?:سيدنا\s+عمر|الفاروق\s+عمر|امير\s+المومنين\s+عمر|عمر\s+بن\s+الخطاب|قال\s+عمر|عهد\s+عمر)\b"),
+    "عثمان": re.compile(r"\b(?:سيدنا\s+عثمان|ذي\s+النورين|عثمان\s+بن\s+عفان|مقتل\s+عثمان|عهد\s+عثمان|قال\s+عثمان)\b"),
+    "علي": re.compile(r"\b(?:سيدنا\s+علي|امير\s+المومنين\s+علي|علي\s+بن\s+ابي\s+طالب|ابي\s+الحسن\s+علي|قال\s+علي)\b"),
+    "ابو بكر": re.compile(r"\b(?:ابو\s+بكر\s+الصديق|ابي\s+بكر\s+الصديق|خلافه\s+ابي\s+بكر|سيدنا\s+ابو\s+بكر|سيدنا\s+ابي\s+بكر)\b"),
+}
+
+
+def _norm_quran_text(s: str) -> str:
+    s = re.sub(r"[\u064b-\u065f\u0670\u0640\u06d6-\u06ed]", "", s or "")
+    s = re.sub(r"[أإآٱ]", "ا", s)
+    s = s.replace("ة", "ه").replace("ى", "ي").replace("ؤ", "و").replace("ئ", "ي").replace("ء", "")
+    s = re.sub(r"[^\w\s\u0600-\u06FF]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _load_quran_index() -> list[tuple[int, int, str]]:
+    global _QURAN_INDEX_CACHE
+    if _QURAN_INDEX_CACHE is not None:
+        return _QURAN_INDEX_CACHE
+    gz_path = SCRIPTS_DIR / "quran_norm_index.json.gz"
+    rows: list[tuple[int, int, str]] = []
+    if gz_path.exists():
+        import gzip
+        try:
+            raw_rows = json.loads(gzip.open(gz_path, "rt", encoding="utf-8").read())
+            for r in raw_rows:
+                rows.append((int(r[0]), int(r[1]), _norm_quran_text(str(r[2]))))
+        except Exception:
+            rows = []
+    _QURAN_INDEX_CACHE = rows
+    return rows
+
+
+def resolve_quran_verse_reference(v_txt: str, ctx_win: str = "") -> str:
+    """
+    Resolves a quoted Quranic verse `v_txt` to its exact `سورة <الاسم>: <الآية>` reference:
+      1. Exact or substring match against the bundled 6,236-verse Quran index (`quran_norm_index.json.gz`).
+      2. Explicit context pattern `سورة <الاسم>` in `ctx_win` (never matching bare single-letter 'ص' or 'ق' without 'سورة').
+    """
+    norm_v = _norm_quran_text(v_txt)
+    q_index = _load_quran_index()
+    if norm_v and len(norm_v) >= 7 and q_index:
+        # 1a. Direct substring match inside canonical verse body (or vice versa for multi-verse quotes)
+        best_match: tuple[int, int] | None = None
+        for s_no, a_no, body_norm in q_index:
+            if norm_v in body_norm or (len(body_norm) >= 12 and body_norm in norm_v):
+                best_match = (s_no, a_no)
+                break
+        # 1b. If orthographic differences (e.g. السموات vs السماوات), normalize 'سموات' -> 'سماوات' etc.
+        if best_match is None:
+            norm_v_alt = (
+                norm_v.replace("السموات", "السماوات")
+                .replace("الرحمان", "الرحمن")
+                .replace("هاذا", "هذا")
+                .replace("ذالك", "ذلك")
+                .replace("ولاكن", "ولكن")
+                .replace("اله", "الله")
+            )
+            v_words = norm_v_alt.split()
+            probe = " ".join(v_words[: min(6, len(v_words))])
+            if len(probe) >= 10:
+                for s_no, a_no, body_norm in q_index:
+                    if probe in body_norm:
+                        best_match = (s_no, a_no)
+                        break
+        if best_match is not None:
+            s_no, a_no = best_match
+            s_name = bcg.SURAH_NAMES[s_no - 1]
+            return f"سورة {s_name}: {a_no}"
+
+    # 2. Explicit 'سورة <الاسم>' in surrounding context window (requires the word 'سورة' before the Surah name)
+    for s_idx, s_name in enumerate(bcg.SURAH_NAMES, start=1):
+        pat = rf"سورة\s+(?:ال)?{re.escape(s_name)}(?![\w\u0600-\u06FF])"
+        if re.search(pat, ctx_win):
+            m_ay = re.search(r"[:،]\s*(\d+|[٠-٩]+)", ctx_win)
+            ay_no = int(m_ay.group(1).translate(bcg.AR_DIGITS)) if m_ay else 1
+            return f"سورة {s_name}: {ay_no}"
+
+    return "سورة البقرة: 1"
+
+
+def score_epistemic_sentence(sent: str) -> int:
+    """Scores a candidate sentence by its scholarly rule/definition density."""
+    if MUQADDIMAH_OR_PROCEDURAL_RE.search(sent):
+        return -100
+    if sent.startswith("{") or sent.startswith("﴿") or sent.endswith("}") or sent.endswith("﴾"):
+        return -50
+    # Reject sentences that are mostly a Quranic bracketed quote
+    q_chars = sum(len(m.group(0)) for m in re.finditer(r"\{[^}]*\}|﴿[^﴾]*﴾", sent))
+    if q_chars > len(sent) * 0.45:
+        return -40
+    score = 0
+    markers = EPISTEMIC_RULE_MARKERS_RE.findall(sent)
+    score += len(markers) * 15
+    w_cnt = len(sent.split())
+    if 9 <= w_cnt <= 28:
+        score += 10
+    elif 6 <= w_cnt <= 35:
+        score += 4
+    if any(k in sent for k in ("لأن", "فإن", "فيكون", "فلا", "وإنما", "بمعنى", "أي:")):
+        score += 8
+    return score
+
+
+DANGLING_TRAILING_QAALA_RE = re.compile(
+    r"[\s،؛]*(?:ولذلك|فلهذا|ولهذا|وكما|كما|حيث)\s+(?:قال|يقول)(?:\s+الله)?(?:\s+سبحانه)?(?:\s+وتعالى)?\s*$"
+)
+
+
 def extract_candidate_sentences(raw_text: str) -> list[str]:
     """
     Returns clean verbatim slices (>= 6 words) from `raw_text` suitable for `verbatim_rule` or `quote`:
     - Exact substring of `raw_text`
+    - Excludes Basmalah/Hamdalah/Salawat introductions, procedural transitions, and raw Quranic verses
     - Does not contain `...` or `…`
-    - Does not start with dangling `أن / أنه / لأن`
+    - Does not start with dangling `أن / أنه / لأن` or end with dangling `ولذلك قال`
+    - Ranked by epistemic rule/definition score
     """
-    candidates = []
-    # Split on punctuation or newlines while keeping exact offsets
-    for m in re.finditer(r"[^.!؟\n؛:]{25,240}", raw_text):
+    scored_candidates: list[tuple[int, int, str]] = []
+    for idx, m in enumerate(re.finditer(r"[^.!؟\n؛:]{25,240}", raw_text)):
         frag = m.group(0).strip()
-        # Trim leading/trailing spaces and punctuation while staying an exact substring of raw_text
         frag_clean = frag.strip(" \t\r\n،.؛:؟!«»\"'()-")
+        frag_trimmed = DANGLING_TRAILING_QAALA_RE.sub("", frag_clean).strip(" \t\r\n،.؛:؟!«»\"'()-")
+        if frag_trimmed and frag_trimmed in raw_text:
+            frag_clean = frag_trimmed
         if not frag_clean or frag_clean not in raw_text:
             continue
         if "..." in frag_clean or "…" in frag_clean:
             continue
+        if "{" in frag_clean or "}" in frag_clean or "﴿" in frag_clean or "﴾" in frag_clean:
+            continue
         words = frag_clean.split()
         if len(words) < 6 or len(words) > 38:
             continue
-        # Ensure first word isn't a dangling 'أن' clause
         if mr.GEM_DANGLING_AN_START_RE.match(frag_clean):
             if len(words) >= 8:
                 frag_clean2 = " ".join(words[1:])
@@ -171,11 +303,31 @@ def extract_candidate_sentences(raw_text: str) -> list[str]:
                     continue
             else:
                 continue
+        sc = score_epistemic_sentence(frag_clean)
+        if sc < 0:
+            continue
         polished = strip_spoken_fillers(frag_clean)
         if len(polished.split()) < 5:
             continue
-        candidates.append(frag_clean)
-    return candidates
+        scored_candidates.append((sc, idx, frag_clean))
+
+    # Sort by highest epistemic score first, then spread across the lecture
+    scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+    return [c for _, _, c in scored_candidates]
+
+
+def _extract_exact_surface_mention(p_raw: str, alias_norm: str, disp_name: str) -> str:
+    """Finds the exact surface words in `p_raw` whose normalized form matches `alias_norm`."""
+    raw_tokens = [(m.group(0), m.start(), m.end()) for m in re.finditer(r"\S+", p_raw)]
+    alias_words = alias_norm.split()
+    k = len(alias_words)
+    if k == 0 or not raw_tokens:
+        return disp_name
+    for i in range(len(raw_tokens) - k + 1):
+        window_str = " ".join(tok for tok, _, _ in raw_tokens[i : i + k]).strip(" ،.؛:؟!«»\"'()-[]{}")
+        if bcg.norm_ar(window_str) == alias_norm:
+            return window_str
+    return disp_name
 
 
 def detect_passage_entities(p_raw: str, base_matn_text: str = "") -> tuple[list, list, list, list]:
@@ -184,26 +336,27 @@ def detect_passage_entities(p_raw: str, base_matn_text: str = "") -> tuple[list,
     seen_p = set()
     combined_norm = bcg.norm_ar(p_raw)
     for alias_norm, (disp_name, ccat) in sorted(bcg.PERSON_CANONICAL_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
-        if len(alias_norm) < 4:
+        if len(alias_norm) < 3:
             continue
-        if re.search(rf"(?<!\w){re.escape(alias_norm)}(?!\w)", combined_norm):
-            if disp_name not in seen_p:
-                seen_p.add(disp_name)
-                # Find actual surface token in p_raw
-                resolved = mr.resolve_person_mentioned_as(
-                    {"canonical_name": disp_name, "mentioned_as": disp_name, "category": ccat, "role": "علم مذكور في الشرح"},
-                    p_raw + " " + base_matn_text,
-                )
-                if resolved.get("mentioned_in_text"):
-                    persons.append(
-                        {
-                            "canonical_name": disp_name,
-                            "mentioned_as": resolved.get("mentioned_as", disp_name),
-                            "category": ccat,
-                            "role": "علم مذكور في الشرح",
-                            "source_layer": "matn",
-                        }
-                    )
+        # Guard ambiguous single-word or short aliases against common noun / patronymic collisions
+        if alias_norm in AMBIGUOUS_SINGLE_PERSON_CONTEXT_RE:
+            if not AMBIGUOUS_SINGLE_PERSON_CONTEXT_RE[alias_norm].search(combined_norm):
+                continue
+        if not re.search(rf"(?<!\w){re.escape(alias_norm)}(?!\w)", combined_norm):
+            continue
+        if disp_name in seen_p:
+            continue
+        surface_mention = _extract_exact_surface_mention(p_raw, alias_norm, disp_name)
+        seen_p.add(disp_name)
+        persons.append(
+            {
+                "canonical_name": disp_name,
+                "mentioned_as": surface_mention,
+                "category": ccat,
+                "role": "علم مذكور في الشرح",
+                "source_layer": "matn",
+            }
+        )
 
     places = []
     seen_pl = set()
@@ -225,28 +378,44 @@ def detect_passage_entities(p_raw: str, base_matn_text: str = "") -> tuple[list,
         )
 
     evidences = []
+    seen_ev = set()
     for m_v in re.finditer(r"﴿([^﴾]{6,})﴾|\{([^\}]{6,})\}", p_raw):
         v_txt = (m_v.group(1) or m_v.group(2) or "").strip()
-        if v_txt:
-            # Try to find a nearby surah name
-            ctx_win = p_raw[max(0, m_v.start() - 80) : min(len(p_raw), m_v.end() + 80)]
-            src_str = "سورة البقرة: 1"
-            for s_idx, s_name in enumerate(bcg.SURAH_NAMES, start=1):
-                if s_name in ctx_win:
-                    m_ay = re.search(r"[:،]\s*(\d+|[٠-٩]+)", ctx_win)
-                    ay_no = int(m_ay.group(1).translate(bcg.AR_DIGITS)) if m_ay else 1
-                    src_str = f"سورة {s_name}: {ay_no}"
-                    break
-            evidences.append(
-                {
-                    "type": "آية",
-                    "text": v_txt,
-                    "source": src_str,
-                    "indicative_aspect": "شاهد قرآني في سياق تقرير المسألة المشروحة",
-                }
-            )
+        if not v_txt or v_txt in seen_ev:
+            continue
+        seen_ev.add(v_txt)
+        ctx_win = p_raw[max(0, m_v.start() - 100) : min(len(p_raw), m_v.end() + 100)]
+        src_str = resolve_quran_verse_reference(v_txt, ctx_win)
+        evidences.append(
+            {
+                "type": "آية",
+                "text": v_txt,
+                "source": src_str,
+                "indicative_aspect": f"شاهد قرآني ({src_str}) في سياق تقرير المسألة المشروحة",
+            }
+        )
 
     return persons, places, chronology, evidences
+
+
+def _extract_passage_focus_phrase(p_raw: str, idx: int, lec_title: str) -> str:
+    """Extracts a concise, content-specific thematic phrase from `p_raw` for headings, topics, and queries."""
+    # Prefer quoted matn phrases «...» or key definitional clauses
+    for m_q in re.finditer(r"«([^»]{8,75})»", p_raw):
+        q_str = m_q.group(1).strip(" ،.؛:؟!")
+        if not MUQADDIMAH_OR_PROCEDURAL_RE.search(q_str) and len(q_str.split()) >= 2:
+            return q_str
+    for sent_m in re.finditer(r"[^.!؟\n]{18,110}", p_raw):
+        s_clean = strip_spoken_fillers(sent_m.group(0)).strip(" ،.؛:؟!«»{}﴿﴾")
+        if not s_clean or MUQADDIMAH_OR_PROCEDURAL_RE.search(s_clean):
+            continue
+        w_list = s_clean.split()
+        if len(w_list) >= 4:
+            return " ".join(w_list[: min(8, len(w_list))])
+    w_fallback = strip_spoken_fillers(p_raw).split()
+    if len(w_fallback) >= 4:
+        return " ".join(w_fallback[: min(7, len(w_fallback))])
+    return f"مسائل {lec_title} (المقطع {idx + 1})"
 
 
 def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
@@ -272,7 +441,6 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
         matn_cid = ""
         matn_verb = ""
         if base_clauses:
-            # Find best matching clause or assign by index
             chosen_clause = None
             norm_p, _ = mr.normalize_words_only(p_raw)
             for cl in base_clauses:
@@ -293,28 +461,37 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
                 cl_words = chosen_clause["text"].strip().split()
                 matn_verb = " ".join(cl_words[: min(6, len(cl_words))])
 
-        sub_h = f"المبحث {idx + 1}: شرح وتحرير مسائل ({lec_title})"
+        focus_phrase = _extract_passage_focus_phrase(p_raw, idx, lec_title)
+        sub_h = f"المبحث {idx + 1}: {focus_phrase}"
         if matn_cid:
             for cl in base_clauses:
                 if cl["clause_id"] == matn_cid and cl.get("title"):
-                    sub_h = f"شرح فقرة المتن ({matn_cid}): {cl['title']}"
+                    sub_h = f"شرح فقرة المتن ({matn_cid}): {cl['title']} — {focus_phrase}"
                     break
 
-        clean_preview = strip_spoken_fillers(p_raw)[:140]
+        clean_preview = strip_spoken_fillers(p_raw)[:160]
         summary = (
-            f"يتناول {speaker} في هذا المقطع من الدرس ({lec_title}) بيان المقصود التحليلي والتأصيلي "
-            f"للمسألة المشروحة، مع تفصيل القواعد والضوابط المتعلقة بـ: {clean_preview}."
+            f"يقرر {speaker} في هذا المبحث ({focus_phrase}) من درس ({lec_title}) تحرير المسألة وتفصيل ضوابطها: "
+            f"{clean_preview}."
         )
         topics = [
-            f"تحرير مسائل {lec_title} (القسم {idx + 1})",
-            "بيان الضوابط والشروط التأصيلية في المبحث",
+            f"تحرير مسألة: {focus_phrase}",
         ]
+        if evidences:
+            topics.append(f"الاستدلال بقوله تعالى في {evidences[0]['source']}")
+        else:
+            topics.append(f"الضوابط التأصيلية في {lec_title} (المبحث {idx + 1})")
+        if persons:
+            topics.append(f"مناقشة ما أورده {persons[0]['canonical_name']}")
         if matn_cid:
             topics.append(f"تثليث المتن والشرح للفقرة {matn_cid}")
+
         queries = [
-            f"ما خلاصة ما قرره {speaker} في المبحث {idx + 1} من {lec_title}؟",
-            f"كيف وضح الشارح الضوابط العلمية في هذا الموضع؟",
+            f"ما حكم وضابط «{focus_phrase}» عند {speaker}؟",
+            f"كيف شرح {speaker} قول المصنف في مبحث «{focus_phrase}»؟",
         ]
+        if evidences:
+            queries.append(f"ما وجه الاستدلال من {evidences[0]['source']} في مسألة {focus_phrase}؟")
 
         p_entry = {
             "sub_heading": sub_h,
@@ -334,7 +511,6 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
 
     # Extract candidate sentences for science_gems and quotes
     cands = extract_candidate_sentences(raw_text)
-    # Fallback if text has very few punctuation marks: slice non-overlapping 10-word windows
     if len(cands) < 10:
         words_all = raw_text.split()
         step = max(8, len(words_all) // 12)
@@ -344,11 +520,11 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
                 len(w_slice.split()) >= 6
                 and w_slice in raw_text
                 and not mr.GEM_DANGLING_AN_START_RE.match(w_slice)
+                and not MUQADDIMAH_OR_PROCEDURAL_RE.search(w_slice)
                 and "..." not in w_slice
             ):
                 cands.append(w_slice)
 
-    # Deduplicate by normalized form
     unique_cands = []
     seen_norms = set()
     for c in cands:
@@ -357,7 +533,7 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
             seen_norms.add(nc)
             unique_cands.append(c)
 
-    target_gems = 4 if len(raw_text) >= 6000 else 3
+    target_gems = min(max(4, len(passages) // 4), 8) if len(raw_text) >= 6000 else 3
     target_quotes = 3 if len(raw_text) >= 6000 else 2
     target_stories = 2 if len(raw_text) >= 6000 else 1
 
@@ -370,13 +546,14 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
             p_rule = f"القاعدة المحررة في هذا الباب: {p_rule}"
         nc, _ = mr.normalize_with_map(v_rule)
         used_gem_norms.add(nc)
+        rule_preview = " ".join(p_rule.split()[:7])
         science_gems.append(
             {
-                "title": f"القاعدة التأصيلية رقم {g_idx + 1} في {lec_title}",
+                "title": f"قاعدة وضابط: {rule_preview}",
                 "category": "تأصيل علمي وضوابط",
                 "verbatim_rule": v_rule,
                 "polished_rule": p_rule,
-                "explanation": f"يقرر {speaker} في هذه القاعدة الضابط العلمي المستخلص من المتن والشرح.",
+                "explanation": f"يقرر {speaker} في هذه القاعدة الضابط العلمي المتعلق بـ ({rule_preview}).",
             }
         )
 
@@ -397,12 +574,12 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
 
     stories = []
     for s_idx in range(target_stories):
-        p_target = passages[min(s_idx, len(passages) - 1)]
+        p_target = passages[min(s_idx * max(1, len(passages) // max(1, target_stories)), len(passages) - 1)]
         stories.append(
             {
-                "title": f"مسألة تطبيقية ومثال توضيحي ({s_idx + 1}) في {lec_title}",
+                "title": f"مسألة تطبيقية في {p_target['sub_heading']}",
                 "anchor_start": p_target["anchor_start"],
-                "summary": f"بيان تطبيقي وتمثيلي للمسألة المشروحة في المبحث ({p_target['sub_heading']}).",
+                "summary": f"بيان تطبيقي وتمثيلي للمسألة المشروحة في ({p_target['sub_heading']}).",
                 "lesson": "ربط القاعدة الكلية في المتن بصورها التطبيقية والعملية.",
             }
         )
@@ -796,7 +973,7 @@ def intake_series(
 def main():
     parser = argparse.ArgumentParser(description="Sheikh-Series-Pipeline to USDB v5.7 Intake Bridge")
     parser.add_argument("--series-dir", required=True, help="Path to series directory containing _meta.json + .txt + .align.json")
-    parser.add_argument("--out-dir", default=None, help="Output directory for USDB files (defaults to --series-dir)")
+    parser.add_argument("--out-dir", "--output-dir", dest="out_dir", default=None, help="Output directory for USDB files (defaults to --series-dir)")
     parser.add_argument("--extractions", default=None, help="Optional JSON file containing agent extractions")
     args = parser.parse_args()
 

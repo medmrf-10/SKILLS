@@ -1,0 +1,32 @@
+{
+  "loop_version": "2.0-subagent-driven",
+  "updated_at": "2026-10-18T14:43:30+02:00",
+  "cycle_count": 1,
+  "next_skill_index": 1,
+  "skills_rotation": [
+    "turath-deep-indexing",
+    "person-discovery-intake",
+    "sheikh-curation",
+    "sheikh-series-pipeline",
+    "turath-pdf-to-text",
+    "turath-embedding-gemma2",
+    "person-to-knowledge-orchestrator",
+    "agy-lean-cli"
+  ],
+  "last_completed_cycle": {
+    "cycle": 1,
+    "skills_tested": [
+      "turath-deep-indexing",
+      "sheikh-curation",
+      "person-to-knowledge-orchestrator",
+      "sheikh-series-pipeline"
+    ],
+    "real_datasets_used": [
+      "hermes-vps:/root/workspace/ytb/daddo/sharh_manzouma_adoudiya (3 aligned lessons, 91,293 chars)",
+      "/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/*_raw.json (all 17 real sheikhs)",
+      "hermes-vps:/root/workspace/ytb/bardouni-husaymi/984/010_W_2g8HoIJTY (CTC token-budget overflow fix)"
+    ],
+    "bugs_fixed": 6,
+    "gate_status": "PASS (0 errors)"
+  }
+}

@@ -1214,8 +1214,8 @@ def build_objects_sqlite(
 
 def main():
     parser = argparse.ArgumentParser(description="Build canonical SQLite + FTS5 entity database (objects.sqlite)")
-    parser.add_argument("--work-dir", default=None, help="Directory containing merged USDB JSON outputs")
-    parser.add_argument("--db-path", default=None, help="Output SQLite database path (default: <work-dir>/objects.sqlite)")
+    parser.add_argument("--work-dir", "--inputs", "--input-dir", dest="work_dir", default=None, help="Directory containing merged USDB JSON outputs")
+    parser.add_argument("--db-path", "--db", dest="db_path", default=None, help="Output SQLite database path (default: <work-dir>/objects.sqlite)")
     args = parser.parse_args()
 
     wdir = Path(args.work_dir).resolve() if args.work_dir else Path.cwd()
