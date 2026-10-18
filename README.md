@@ -2,7 +2,7 @@
 
 مستودع المهارات القياسية لمنظومة التراث والمعرفة (خط الإنتاج الشامل من «اسم الشخصية» إلى قواعد البيانات العلائقية والتضمين الشعاعي المزدوج):
 
-## ١. المهارات الثماني المعتمدة (`8 Verified Production Skills`)
+## ١. المهارات التسع المعتمدة (`9 Verified Production Skills`)
 
 1. **[`person-to-knowledge-orchestrator`](./person-to-knowledge-orchestrator/SKILL.md) (`v1.0`)**:
    - **المايسترو الشامل (`End-to-End Orchestrator`):** يستلم «اسم الشخصية» فقط ويدير المراحل الست (`G0..G5`) بالتتابع المحكوم ببوابات الجودة الحتمية ونقاط الحفظ القابلة للاستئناف (`pipeline_state.json`) حتى إخراج المستودع المعرفي الكامل للشخصية (`SQLite + FTS5 + Dual EmbeddingGemma 2`).
@@ -35,6 +35,10 @@
 8. **[`agy-lean-cli`](./agy-lean-cli/SKILL.md) (`v1.0`)**:
    - **الاستدعاء المعزول الخفيف لـ `agy` وحارس الكوتة الصارم:** يعزل بيئة `HOME` تماماً من مخططات `MCP` والإضافات والمهارات (`~0` توكن إضافي بدلاً من `~38,000` توكن) عبر [`scripts/agy_lean.py`](./agy-lean-cli/scripts/agy_lean.py)، ويحمي الكوتة الحية (`>= 10%` للوكيل الرئيسي و`>= 15%` لعمال الخلفية في نافذة الـ5 ساعات، و`>= 25%` للاحتياطي الأسبوعي حتى آخر 12 ساعة).
    - بوابة الفحص: [`scripts/test_agy_lean_gates.py`](./agy-lean-cli/scripts/test_agy_lean_gates.py) (`PASS (0 errors)`).
+
+9. **[`continuous-skill-improver`](./continuous-skill-improver/SKILL.md) (`v1.0`)**:
+   - **حلقة التحسين المستمر للمهارات عبر الوكلاء الفرعيين وحارس الإنتاج الفعلي المضاد للخداع (`Subagent-Driven Continuous Skill Improvement & Anti-Deception Production Watchdog`):** تدير التدوير الدوري (`Round-Robin`) للمهارات التسع كل 20 دقيقة داخل وكلاء فرعيين معزولين (`Zero Main-Context Bloat`) عبر [`scripts/manage_improvement_loop.py`](./continuous-skill-improver/scripts/manage_improvement_loop.py)، وتكشف التقدم الوهمي (`completed_series_this_run` مقابل `new_txts_last_30m` وأخطاء `$HOME is not defined` في `systemd`)، وتراقب دقة محاذاة الماك (`< 95.0%` وقاعدة `ALIGN-ONSET-BREATH-JUMP`).
+   - بوابة الفحص: [`scripts/test_improver_gates.py`](./continuous-skill-improver/scripts/test_improver_gates.py) (`PASS (0 errors)`).
 
 ---
 

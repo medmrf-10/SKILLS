@@ -21,7 +21,8 @@
     "turath-pdf-to-text",
     "turath-embedding-gemma2",
     "person-to-knowledge-orchestrator",
-    "agy-lean-cli"
+    "agy-lean-cli",
+    "continuous-skill-improver"
   ],
   "last_completed_cycle": {
     "cycle": 14,
