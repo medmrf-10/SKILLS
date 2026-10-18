@@ -128,16 +128,16 @@ def run_gate_1_syntax_and_integrity(errors):
     # 3) فحص mac_align_fleet.py
     if 'mac_align_fleet.py' in parsed:
         src, funcs, assigns, imports = parsed['mac_align_fleet.py']
-        for fn in ('quota_sync_worker', 'prefetch_worker', 'upload_and_finalize', 'diagnose_low_coverage'):
+        for fn in ('quota_sync_worker', 'prefetch_worker', 'upload_and_finalize', 'diagnose_low_coverage', '_ensure_ssh_master'):
             if fn not in funcs:
                 errors.append(f'Gate 1: الدالة {fn} مفقودة في mac_align_fleet.py')
-        for imp in ('plan_silence', 'compact_wave', 'unpad_emissions'):
+        for imp in ('plan_silence', 'compact_wave', 'unpad_emissions', 'apply_local_agc'):
             if imp not in imports and imp not in funcs:
                 errors.append(f'Gate 1: الدالة {imp} غير مستوردة في mac_align_fleet.py')
         for tok in (
             'MAC_ALIGN_BATCH_SIZE', 'MAC_ALIGN_PREFETCH', 'MAC_ALIGN_COOLDOWN_S',
             'MIN_ACCEPTABLE_ALIGN_PCT', 'retried_without_silence_compact',
-            'empty_cache', 'gc.collect',
+            'empty_cache', 'gc.collect', 'ControlMaster=no', 'sys.stdin.buffer.read()',
         ):
             if tok not in src:
                 errors.append(f'Gate 1: إعداد الحارس/تخفيف الحمل {tok} مفقود في mac_align_fleet.py')
@@ -192,7 +192,7 @@ def run_gate_1_syntax_and_integrity(errors):
 
 def run_gate_2_silence_math_and_sanitizer(errors):
     print('=== [Gate 2] Silence Compaction & Unpadding Math + Preamble Sanitizer ===')
-    from extract_emissions import compact_wave, plan_silence, unpad_emissions
+    from extract_emissions import apply_local_agc, compact_wave, plan_silence, unpad_emissions
     from sanitize_preamble import strip_preamble_and_header
 
     # 1) إنشاء موجة صوتية اصطناعية بطول 30 ثانية (480,000 عينة عند 16kHz = 1,500 إطار بطول 20ms)
@@ -267,6 +267,22 @@ def run_gate_2_silence_math_and_sanitizer(errors):
         errors.append(f'Gate 2: فشل طي الذيل الصامت الطويل (بقيت {tail_silent_kept_pct:.2f}% من الإطارات الصامتة)')
     else:
         print(f'  ✓ أرضية الصمت المطلقة (abs_db=-55.0) تطوي الذيل الصامت الطويل بنجاح (أزالت {100.0 - tail_silent_kept_pct:.1f}% من الصمت الممتد)')
+
+    # 1c) اختبار Two-Way Local AGC لرفع صوت السائل البعيد (-42dB) بجوار صوت الشيخ القريب (-18dB) دون تضخيم الصمت (-80dB)
+    agc_test_wave = np.zeros(int(6.0 * sr), dtype=np.float32)
+    t_seg = np.arange(int(2.0 * sr), dtype=np.float32) / sr
+    agc_test_wave[:int(2.0 * sr)] = 0.18 * np.sin(2.0 * np.pi * 220.0 * t_seg)          # شيخ قريب (-18dB)
+    agc_test_wave[int(2.0 * sr):int(4.0 * sr)] = 0.008 * np.sin(2.0 * np.pi * 300.0 * t_seg)  # سائل بعيد (-42dB)
+    agc_test_wave[int(4.0 * sr):] = 1e-5                                                 # صمت محض (-100dB)
+    agc_out = apply_local_agc(agc_test_wave, sr=sr)
+    rms_sheikh = float(np.sqrt(np.mean(agc_out[int(0.3 * sr):int(1.7 * sr)] ** 2)))
+    rms_student = float(np.sqrt(np.mean(agc_out[int(2.3 * sr):int(3.7 * sr)] ** 2)))
+    rms_silence = float(np.sqrt(np.mean(agc_out[int(4.3 * sr):int(5.7 * sr)] ** 2)))
+    ratio_sp = rms_student / max(1e-6, rms_sheikh)
+    if not (0.75 <= ratio_sp <= 1.35) or rms_silence > 0.05:
+        errors.append(f'Gate 2: فشل apply_local_agc في موازنة السائل البعيد (ratio={ratio_sp:.2f}, silence={rms_silence:.4f})')
+    else:
+        print(f'  ✓ Two-Way Local AGC سليم: وازن صوت السائل البعيد (-42dB) مع الشيخ (-18dB) بنسبة {ratio_sp:.2f}× وحافظ على الصمت ({rms_silence:.4f})')
 
     # 2) اختبار تطهير الديباجة اللاتينية والترويسات الوصفية
     contaminated = (

@@ -83,16 +83,39 @@ def emissions_torch(model, wave, device, dtype, window, context, batch_size, sr=
             torch.mps.empty_cache()
 
     emissions = torch.cat(batched_outs, dim=0)
-    ctx_frames = time_to_frame(context)
+    ctx_frames = time_to_frame(context, stride)
+    win_frames = time_to_frame(window_samples / sr, stride)
     if ctx_frames > 0:
-        emissions = emissions[:, ctx_frames:-ctx_frames]
+        emissions = emissions[:, ctx_frames:ctx_frames + win_frames]
     emissions = emissions.flatten(0, 1)
-    ext_frames = time_to_frame(ext / sr)
+    ext_frames = time_to_frame(ext / sr, stride)
     if ext_frames > 0:
         emissions = emissions[:-ext_frames]
     emissions = torch.log_softmax(emissions, dim=-1)
     emissions = torch.cat([emissions, torch.zeros(emissions.size(0), 1)], dim=1)
     return np.ascontiguousarray(emissions.float().numpy()), float(stride)
+
+
+def apply_local_agc(wave_np, sr=SR, win_sec=0.15, hop_sec=0.02, noise_floor=0.001, target_rms=0.15, max_gain=60.0):
+    """تطبيع الكسب الصوتي المحلي ثنائي الاتجاه (Two-Way Sliding-Window AGC):
+    يرفع أصوات السائلين البعيدين عن الميكروفون في القاعات والمساجد (-40dB إلى -52dB)
+    ويضغط قمم الصوت القريب من الميكروفون نحو مستوى موحد (target_rms)، مع بوابة ضجيج (noise_floor)
+    تمنع تضخيم الصمت المحض، ثم يطبّع التباين إلى 1.0 كما يتوقعه Wav2Vec2FeatureExtractor.
+    """
+    arr = np.ascontiguousarray(wave_np, dtype=np.float32)
+    if arr.size < max(32, int(win_sec * sr)):
+        return arr
+    t = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)
+    win = max(16, int(win_sec * sr))
+    hop = max(4, int(hop_sec * sr))
+    rms = torch.sqrt(torch.nn.functional.avg_pool1d(t * t, kernel_size=win, stride=hop, padding=win // 2) + 1e-10)
+    gain = torch.where(rms > noise_floor, torch.clamp(target_rms / (rms + 1e-6), 0.25, max_gain), torch.ones_like(rms))
+    gain_up = torch.nn.functional.interpolate(gain, size=arr.shape[0], mode='linear', align_corners=False)
+    out = np.clip((t * gain_up).squeeze().numpy(), -1.0, 1.0)
+    std = float(out.std())
+    if std > 1e-6:
+        out = (out - float(out.mean())) / std
+    return np.ascontiguousarray(out, dtype=np.float32)
 
 
 def emissions_onnx(wave_np, model_file, window, context, workers, threads, sr=SR):

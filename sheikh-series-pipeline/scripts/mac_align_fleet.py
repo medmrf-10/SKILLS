@@ -35,7 +35,7 @@ sys.path.insert(0, SKILL_SCRIPTS)
 
 from ctc_forced_aligner import load_alignment_model  # noqa: E402
 from extract_emissions import (  # noqa: E402
-    MODEL, SR, compact_wave, emissions_torch, peak_mb,
+    MODEL, SR, apply_local_agc, compact_wave, emissions_torch, peak_mb,
     plan_silence, read_audio_16k, unpad_emissions,
 )
 import ctc_pure_align  # noqa: E402
@@ -53,17 +53,55 @@ LOCAL_QUOTA_JSON = '/tmp/agy_quota_snapshot.json'
 REMOTE_QUOTA_JSON = '/root/workspace/ytb-build/live_quota.json'
 AGY_USAGE_BIN = '/Users/macm1pro/.hermes/node/bin/antigravity-usage'
 
-SSH_MUX_OPTS = [
-    '-o', 'ControlMaster=auto',
-    '-o', 'ControlPath=/tmp/ssh-mux-align-%h',
-    '-o', 'ControlPersist=600',
-    '-o', 'ServerAliveInterval=30',
-]
+
+def _ssh_control_path(slot='main'):
+    return f'/tmp/ssh-mux-align-{slot}-%h'
+
+
+def _ssh_mux_opts(slot='main'):
+    return [
+        '-o', 'ControlMaster=no',
+        '-o', f'ControlPath={_ssh_control_path(slot)}',
+        '-o', 'ServerAliveInterval=20',
+        '-o', 'ServerAliveCountMax=2',
+        '-o', 'ConnectTimeout=15',
+    ]
+
+
+def _ensure_ssh_master(slot='main'):
+    cpath = _ssh_control_path(slot)
+    chk = subprocess.run(
+        ['ssh', '-O', 'check', '-o', f'ControlPath={cpath}', VPS_HOST],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=5, check=False
+    )
+    if chk.returncode == 0:
+        return True
+    _reset_stale_ssh_mux(slot)
+    res = subprocess.run(
+        [
+            'ssh', '-MNf',
+            '-o', 'ControlMaster=yes',
+            '-o', f'ControlPath={cpath}',
+            '-o', 'ControlPersist=600',
+            '-o', 'ServerAliveInterval=20',
+            '-o', 'ServerAliveCountMax=2',
+            '-o', 'ConnectTimeout=15',
+            VPS_HOST,
+        ],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=20, check=False
+    )
+    return res.returncode == 0
+
 
 PREFETCH_QUEUE = queue.Queue(maxsize=MAX_PREFETCH)
 IN_FLIGHT_KEYS = set()
+COMPLETED_KEYS = set()
 LOCK = threading.Lock()
-UPLOAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+LIST_LOCK = threading.Lock()
+UPLOAD_LOCK = threading.Lock()
+UPLOAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 def log(msg):
@@ -115,9 +153,26 @@ def diagnose_low_coverage(rep, dur):
     return msg, diag
 
 
+def _reset_stale_ssh_mux(slot=None):
+    pattern = f'/tmp/ssh-mux-align-{slot}-*' if slot else '/tmp/ssh-mux-align-*'
+    for p in glob.glob(pattern):
+        try:
+            subprocess.run(
+                ['ssh', '-O', 'exit', '-o', f'ControlPath={p}', VPS_HOST],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=3
+            )
+        except Exception:
+            pass
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def quota_sync_worker():
     """فحص الكوتة الحية من سيرفر Antigravity المحلي كل دقيقتين ومزامنتها مع الماك و hermes-vps."""
-    pending_sync = '/Users/macm1pro/workspace/ytb-build/pending_vps_fixes/sync_once.sh'
+    mux_opts = _ssh_mux_opts('quota')
     while True:
         try:
             if os.path.exists(AGY_USAGE_BIN):
@@ -130,48 +185,82 @@ def quota_sync_worker():
                     with open(tmp_q, 'w', encoding='utf-8') as qf:
                         qf.write(res.stdout.strip())
                     os.replace(tmp_q, LOCAL_QUOTA_JSON)
+                    _ensure_ssh_master('quota')
                     sq = subprocess.run(
-                        ['scp', '-q', *SSH_MUX_OPTS, LOCAL_QUOTA_JSON, f'{VPS_HOST}:{REMOTE_QUOTA_JSON}'],
-                        timeout=20, check=False
+                        ['scp', '-q', *mux_opts, LOCAL_QUOTA_JSON, f'{VPS_HOST}:{REMOTE_QUOTA_JSON}'],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=30, check=False
                     )
-                    if sq.returncode == 0 and os.path.exists(pending_sync):
-                        sr = subprocess.run(['bash', pending_sync], timeout=90, check=False)
-                        if sr.returncode == 0:
-                            os.remove(pending_sync)
-                            log('[✓ مزامنة إصلاحات السيرفر المعلقة] اكتمل رفع 010_W_2g8HoIJTY (100%) وتحديث السكربتات على hermes-vps')
+                    if sq.returncode != 0:
+                        _reset_stale_ssh_mux('quota')
         except Exception as e:
+            _reset_stale_ssh_mux('quota')
             log(f'[تحذير مزامنة كوتة] {e}')
         time.sleep(120)
 
 
-def list_remote_jobs():
-    cmd = [
-        'ssh', *SSH_MUX_OPTS, VPS_HOST,
-        f'python3 -c \'import glob, json, os; '
-        f'jobs = []; '
-        f'[jobs.append(json.load(open(p))) for p in glob.glob("{REMOTE_BRIDGE}/*.job.json") if os.path.exists(p[:-9]+".opus")]; '
-        f'jobs.sort(key=lambda x: x.get("created_at", 0)); '
-        f'print(json.dumps(jobs[:25]))\''
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if res.returncode != 0 or not res.stdout.strip():
-        if res.returncode != 0:
-            _reset_stale_ssh_mux()
-        return []
-    try:
-        return json.loads(res.stdout.strip().splitlines()[-1])
-    except Exception:
-        return []
+def list_remote_jobs(slot='list'):
+    import base64
+    with LIST_LOCK:
+        _ensure_ssh_master(slot)
+        mux_opts = _ssh_mux_opts(slot)
+        remote_script = (
+            'import glob, json, os\n'
+            f'bdir = {json.dumps(REMOTE_BRIDGE)}\n'
+            'jobs = []\n'
+            'for p in glob.glob(bdir + "/*.job.json"):\n'
+            '    op = p[:-9] + ".opus"\n'
+            '    if not os.path.exists(op):\n'
+            '        continue\n'
+            '    try:\n'
+            '        j = json.load(open(p, encoding="utf-8"))\n'
+            '        tp = j.get("txt_path", "")\n'
+            '        vid = j.get("vid", "")\n'
+            '        sh = j.get("sheikh", "")\n'
+            '        if not os.path.exists(tp) and sh and vid:\n'
+            '            cs = glob.glob(f"/root/workspace/ytb/{sh}/*/*_{vid}.txt")\n'
+            '            if cs:\n'
+            '                tp = cs[0]\n'
+            '                j["txt_path"] = tp\n'
+            '        ap = tp[:-4] + ".align.json" if tp.endswith(".txt") else ""\n'
+            '        if ap and os.path.exists(ap) and os.path.getsize(ap) > 200:\n'
+            '            for fp in (p, op):\n'
+            '                try: os.remove(fp)\n'
+            '                except OSError: pass\n'
+            '            continue\n'
+            '        if os.path.exists(tp):\n'
+            '            j["txt_content"] = open(tp, encoding="utf-8", errors="replace").read()\n'
+            '            jobs.append(j)\n'
+            '    except Exception:\n'
+            '        pass\n'
+            'jobs.sort(key=lambda x: x.get("created_at", 0))\n'
+            'print(json.dumps(jobs[:12], ensure_ascii=False))\n'
+        )
+        b64 = base64.b64encode(remote_script.encode('utf-8')).decode('ascii')
+        cmd = ['ssh', *mux_opts, VPS_HOST, f'python3 -c "import base64; exec(base64.b64decode(\'{b64}\'))"']
+        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=35)
+        if res.returncode != 0 or not res.stdout.strip():
+            if res.returncode != 0:
+                log(f'[تحذير list_remote_jobs] rc={res.returncode} err={(res.stderr or "").strip()[:200]}')
+                _reset_stale_ssh_mux(slot)
+            return []
+        try:
+            return json.loads(res.stdout.strip().splitlines()[-1])
+        except Exception as e:
+            log(f'[تحذير فك JSON في list_remote_jobs] {e}')
+            return []
 
 
-def prefetch_worker():
+def prefetch_worker(worker_id=0):
     os.makedirs(LOCAL_SPOOL, exist_ok=True)
+    slot = f'pf{worker_id}'
+    mux_opts = _ssh_mux_opts(slot)
     while True:
         try:
             if PREFETCH_QUEUE.qsize() >= MAX_PREFETCH:
                 time.sleep(1.5)
                 continue
-            jobs = list_remote_jobs()
+            jobs = list_remote_jobs(slot=slot)
             if not jobs:
                 time.sleep(4)
                 continue
@@ -181,7 +270,7 @@ def prefetch_worker():
                     break
                 key = job['key']
                 with LOCK:
-                    if key in IN_FLIGHT_KEYS:
+                    if key in IN_FLIGHT_KEYS or key in COMPLETED_KEYS:
                         continue
                     IN_FLIGHT_KEYS.add(key)
 
@@ -191,11 +280,29 @@ def prefetch_worker():
                 remote_txt = job['txt_path']
 
                 t0 = time.time()
-                r1 = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, f'{VPS_HOST}:{remote_opus}', local_opus], timeout=180)
-                r2 = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, f'{VPS_HOST}:{remote_txt}', local_txt], timeout=60)
-                if r1.returncode == 0 and r2.returncode == 0 and os.path.exists(local_opus) and os.path.exists(local_txt):
+                _ensure_ssh_master(slot)
+                r1 = subprocess.run(
+                    ['scp', '-q', *mux_opts, f'{VPS_HOST}:{remote_opus}', local_opus],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=120
+                )
+                txt_content = job.get('txt_content')
+                if txt_content:
+                    with open(local_txt, 'w', encoding='utf-8') as tf:
+                        tf.write(txt_content)
+                    r2_ok = True
+                else:
+                    r2 = subprocess.run(
+                        ['scp', '-q', *mux_opts, f'{VPS_HOST}:{remote_txt}', local_txt],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=45
+                    )
+                    r2_ok = (r2.returncode == 0)
+
+                if r1.returncode == 0 and r2_ok and os.path.exists(local_opus) and os.path.exists(local_txt):
                     dl_s = round(time.time() - t0, 1)
                     mb = os.path.getsize(local_opus) / (1024.0 * 1024.0)
+                    job.pop('txt_content', None)
                     job['local_opus'] = local_opus
                     job['local_txt'] = local_txt
                     job['dl_s'] = dl_s
@@ -203,18 +310,18 @@ def prefetch_worker():
                     PREFETCH_QUEUE.put(job)
                     fetched_any = True
                 else:
-                    _reset_stale_ssh_mux()
+                    _reset_stale_ssh_mux(slot)
                     for p in (local_opus, local_txt):
                         if os.path.exists(p):
                             os.remove(p)
                     with LOCK:
                         IN_FLIGHT_KEYS.discard(key)
             if not fetched_any:
-                time.sleep(3)
+                time.sleep(2.5)
         except Exception as e:
-            _reset_stale_ssh_mux()
+            _reset_stale_ssh_mux(slot)
             log(f'[تحذير سحب مسبق] {e}')
-            time.sleep(4)
+            time.sleep(3)
 
 
 def make_align_args():
@@ -246,75 +353,83 @@ def make_align_args():
     return ns
 
 
-def _reset_stale_ssh_mux():
-    for p in glob.glob('/tmp/ssh-mux-align-*'):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-
-
 def upload_and_finalize(job, local_align_path, rep):
+    import base64
     key = job['key']
     vid = job.get('vid', '')
     sheikh = job.get('sheikh', '')
     remote_txt = job['txt_path']
+    slot = 'up'
+    mux_opts = _ssh_mux_opts(slot)
+    align_summary = {
+        'engine': 'ctc-pure-mac-mps',
+        'model': MODEL,
+        'cov': round(rep['spoken_align_coverage'] / 100.0, 4),
+        'spoken_align_pct': rep['spoken_align_coverage'],
+        'audio_span_pct': rep['audio_span_pct'],
+        'words': rep['words'],
+        'aligned': rep['aligned'],
+        'interpolated': rep['interpolated'],
+        'retried_without_silence_compact': bool(rep.get('retried_without_silence_compact', False)),
+        'local_agc_applied': bool(rep.get('local_agc_applied', False)),
+        'at': datetime.now().strftime('%Y-%m-%d %H:%M'),
+    }
+    if rep.get('low_coverage_diagnosis'):
+        align_summary['low_coverage_diagnosis'] = rep['low_coverage_diagnosis']
+
+    py_code = (
+        f'import glob, json, os, sys\n'
+        f'data = sys.stdin.buffer.read()\n'
+        f'if len(data) < 200:\n'
+        f'    raise RuntimeError(f"short align payload: {{len(data)}} bytes")\n'
+        f'rt = {json.dumps(remote_txt)}\n'
+        f'vid = {json.dumps(vid)}\n'
+        f'sh = {json.dumps(sheikh)}\n'
+        f'if not os.path.exists(rt) and sh and vid:\n'
+        f'    cands = glob.glob(f"/root/workspace/ytb/{{sh}}/*/*_{{vid}}.txt")\n'
+        f'    if cands:\n'
+        f'        rt = cands[0]\n'
+        f'ap = rt[:-4] + ".align.json"\n'
+        f'mp = rt[:-4] + ".meta.json"\n'
+        f'os.makedirs(os.path.dirname(ap), exist_ok=True)\n'
+        f'with open(ap + ".tmp", "wb") as f:\n'
+        f'    f.write(data)\n'
+        f'os.replace(ap + ".tmp", ap)\n'
+        f'md = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else {{}}\n'
+        f'md["align"] = {repr(align_summary)}\n'
+        f'with open(mp + ".tmp", "w", encoding="utf-8") as mf:\n'
+        f'    json.dump(md, mf, ensure_ascii=False, indent=2)\n'
+        f'os.replace(mp + ".tmp", mp)\n'
+        f'bdir = {json.dumps(REMOTE_BRIDGE)}\n'
+        f'k = {json.dumps(key)}\n'
+        f'targets = set([os.path.join(bdir, k + ".job.json"), os.path.join(bdir, k + ".opus")] + (glob.glob(bdir + f"/*_{{vid}}.*") if vid else []))\n'
+        f'for p in targets:\n'
+        f'    if os.path.exists(p):\n'
+        f'        try: os.remove(p)\n'
+        f'        except OSError: pass\n'
+    )
+    b64_up = base64.b64encode(py_code.encode('utf-8')).decode('ascii')
+
     try:
-        for attempt in range(1, 5):
-            try:
-                # التأكد من المسار القياسي في حال نُقل الملف أثناء توحيد هيكلة cheikh
-                resolve_py = (
-                    f'import glob, os; '
-                    f'rt = {json.dumps(remote_txt)}; '
-                    f'vid = {json.dumps(vid)}; '
-                    f'sh = {json.dumps(sheikh)}; '
-                    f'cands = [rt] if os.path.exists(rt) else glob.glob(f"/root/workspace/ytb/{{sh}}/*/*_{{vid}}.txt"); '
-                    f'print(cands[0] if cands else rt)'
-                )
-                res_p = subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(resolve_py)}'], capture_output=True, text=True, timeout=25)
-                if res_p.returncode == 0 and res_p.stdout.strip():
-                    remote_txt = res_p.stdout.strip().splitlines()[-1]
-
-                remote_align = remote_txt[:-4] + '.align.json'
-                remote_meta = remote_txt[:-4] + '.meta.json'
-
-                # 1) رفع ملف align.json للسيرفر عبر اتصال SSH المدمج
-                r = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, local_align_path, f'{VPS_HOST}:{remote_align}'], timeout=120)
-                if r.returncode != 0:
-                    raise RuntimeError(f'فشل رفع {local_align_path} إلى السيرفر ({remote_align})')
-
-                # 2) تحديث meta.json وحذف ملفات الجسر المؤقتة على السيرفر
-                align_summary = {
-                    'engine': 'ctc-pure-mac-mps',
-                    'model': MODEL,
-                    'cov': round(rep['spoken_align_coverage'] / 100.0, 4),
-                    'spoken_align_pct': rep['spoken_align_coverage'],
-                    'audio_span_pct': rep['audio_span_pct'],
-                    'words': rep['words'],
-                    'aligned': rep['aligned'],
-                    'interpolated': rep['interpolated'],
-                    'retried_without_silence_compact': bool(rep.get('retried_without_silence_compact', False)),
-                    'at': datetime.now().strftime('%Y-%m-%d %H:%M'),
-                }
-                if rep.get('low_coverage_diagnosis'):
-                    align_summary['low_coverage_diagnosis'] = rep['low_coverage_diagnosis']
-                py_code = (
-                    f'import glob, json, os; '
-                    f'mp = {json.dumps(remote_meta)}; '
-                    f'md = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else {{}}; '
-                    f'md["align"] = {json.dumps(align_summary)}; '
-                    f'json.dump(md, open(mp, "w", encoding="utf-8"), ensure_ascii=False, indent=2); '
-                    f'vid = {json.dumps(vid)}; '
-                    f'[os.remove(p) for p in glob.glob({json.dumps(REMOTE_BRIDGE)} + f"/*_{{vid}}.*") if os.path.exists(p)]'
-                )
-                subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(py_code)}'], timeout=30, check=True)
-                break
-            except Exception as e:
-                _reset_stale_ssh_mux()
-                if attempt == 4:
-                    raise
-                log(f'[↻ إعادة محاولة رفع {attempt}/4] {key}: {e}')
-                time.sleep(5 * attempt)
+        with UPLOAD_LOCK:
+            for attempt in range(1, 5):
+                try:
+                    _ensure_ssh_master(slot)
+                    with open(local_align_path, 'rb') as af:
+                        subprocess.run(
+                            ['ssh', *mux_opts, VPS_HOST, f'python3 -c "import base64; exec(base64.b64decode(\'{b64_up}\'))"'],
+                            stdin=af, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            timeout=60, check=True
+                        )
+                    with LOCK:
+                        COMPLETED_KEYS.add(key)
+                    break
+                except Exception as e:
+                    _reset_stale_ssh_mux(slot)
+                    if attempt == 4:
+                        raise
+                    log(f'[↻ إعادة محاولة رفع {attempt}/4] {key}: {e}')
+                    time.sleep(3 * attempt)
     except Exception as e:
         log(f'[✗ خطأ رفع الخلفية] {key}: {e}')
     finally:
@@ -331,11 +446,12 @@ def main():
     from agy_transcribe import strip_preamble_and_header
     os.makedirs(LOCAL_SPOOL, exist_ok=True)
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    _reset_stale_ssh_mux()
 
     device = 'mps' if (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()) else 'cpu'
     dtype = torch.float16 if device == 'mps' else torch.float32
     dtype_label = 'fp16' if dtype == torch.float16 else 'fp32'
-    log(f'تحميل نموذج المحاذاة {MODEL} من الكاش المحلي على شريحة الماك ({device} · {dtype_label} + طي الصمت المحافظ + حارس <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}%)...')
+    log(f'تحميل نموذج المحاذاة {MODEL} من الكاش المحلي على شريحة الماك ({device} · {dtype_label} + طي الصمت المحافظ + حارس <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}% + AGC)...')
     t_load0 = time.time()
     model, tokenizer = load_alignment_model(device, model_path=MODEL, dtype=dtype)
     vocab = {k.lower(): v for k, v in tokenizer.get_vocab().items()}
@@ -345,8 +461,8 @@ def main():
     t_qs = threading.Thread(target=quota_sync_worker, daemon=True)
     t_qs.start()
 
-    for _ in range(PREFETCH_THREADS):
-        t_pf = threading.Thread(target=prefetch_worker, daemon=True)
+    for wid in range(PREFETCH_THREADS):
+        t_pf = threading.Thread(target=prefetch_worker, args=(wid,), daemon=True)
         t_pf.start()
 
     completed_lessons = 0
@@ -435,41 +551,43 @@ def main():
 
             rep = ctc_pure_align.align_one_file(em_path, tok_path, out_align, key, align_args)
 
-            # حارس < 95.0% الإلزامي: إعادة المحاولة تلقائياً بدون طي الصمت ثم تشخيص السبب الجذري
+            # حارس < 95.0% الإلزامي: إعادة المحاولة تلقائياً على الموجة الكاملة بدون طي الصمت + تطبيع الكسب المحلي ثنائي الاتجاه (Two-Way AGC) لرفع مداخلات السائلين (-40dB..-52dB)
             if rep['spoken_align_coverage'] < MIN_ACCEPTABLE_ALIGN_PCT:
                 cov_before = rep['spoken_align_coverage']
-                if idx_map is not None:
-                    log(
-                        f'[⚠ حارس <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}%] {key}: التغطية {cov_before:.2f}% '
-                        f'(مع طي الصمت {sc_stats.get("pct", 0.0):.1f}%) — إعادة المحاذاة على الموجة الكاملة بدون طي الصمت...'
-                    )
-                    t_ret0 = time.time()
-                    em_full, stride_full = emissions_torch(
-                        model, torch.from_numpy(data), device=device, dtype=dtype,
-                        window=30.0, context=2.0, batch_size=BATCH_SIZE
-                    )
-                    t_em_ret = time.time() - t_ret0
-                    t_em += t_em_ret
-                    fps_full = float(em_full.shape[0]) / dur if dur > 0 else 1000.0 / float(stride_full)
-                    np.save(em_path, em_full)
-                    em_meta['fps'] = round(fps_full, 4)
-                    em_meta['frames'] = int(em_full.shape[0])
-                    em_meta['em_s'] = round(t_em, 1)
-                    em_meta['silence_compact'] = False
-                    json.dump(em_meta, open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-                    retry_align = out_align + '.retry'
-                    rep_retry = ctc_pure_align.align_one_file(em_path, tok_path, retry_align, key + ':full_wave', align_args)
-                    if rep_retry['spoken_align_coverage'] >= cov_before:
-                        os.replace(retry_align, out_align)
-                        rep = rep_retry
-                        rep['retried_without_silence_compact'] = True
-                    else:
-                        if os.path.exists(retry_align):
-                            os.remove(retry_align)
-                    log(
-                        f'[↺ نتيجة إعادة المحاولة بدون طي الصمت] {key}: '
-                        f'{cov_before:.2f}% -> {rep["spoken_align_coverage"]:.2f}% (الاعتماد={rep["spoken_align_coverage"]:.2f}%)'
-                    )
+                log(
+                    f'[⚠ حارس <{MIN_ACCEPTABLE_ALIGN_PCT:.0f}%] {key}: التغطية {cov_before:.2f}% '
+                    f'(طي الصمت={sc_stats.get("pct", 0.0) if sc_stats else 0.0:.1f}%) — إعادة المحاذاة على الموجة الكاملة مع Two-Way Local AGC (window=15s)...'
+                )
+                t_ret0 = time.time()
+                data_agc = apply_local_agc(np.asarray(data), sr=SR)
+                em_full, stride_full = emissions_torch(
+                    model, torch.from_numpy(data_agc), device=device, dtype=dtype,
+                    window=15.0, context=2.0, batch_size=max(BATCH_SIZE, 4)
+                )
+                t_em_ret = time.time() - t_ret0
+                t_em += t_em_ret
+                fps_full = float(em_full.shape[0]) / dur if dur > 0 else 1000.0 / float(stride_full)
+                np.save(em_path, em_full)
+                em_meta['fps'] = round(fps_full, 4)
+                em_meta['frames'] = int(em_full.shape[0])
+                em_meta['em_s'] = round(t_em, 1)
+                em_meta['silence_compact'] = False
+                em_meta['local_agc'] = True
+                json.dump(em_meta, open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+                retry_align = out_align + '.retry'
+                rep_retry = ctc_pure_align.align_one_file(em_path, tok_path, retry_align, key + ':full_wave_agc', align_args)
+                if rep_retry['spoken_align_coverage'] >= cov_before:
+                    os.replace(retry_align, out_align)
+                    rep = rep_retry
+                    rep['retried_without_silence_compact'] = True
+                    rep['local_agc_applied'] = True
+                else:
+                    if os.path.exists(retry_align):
+                        os.remove(retry_align)
+                log(
+                    f'[↺ نتيجة إعادة المحاولة مع Local AGC] {key}: '
+                    f'{cov_before:.2f}% -> {rep["spoken_align_coverage"]:.2f}% (الاعتماد={rep["spoken_align_coverage"]:.2f}%)'
+                )
                 if rep['spoken_align_coverage'] < MIN_ACCEPTABLE_ALIGN_PCT:
                     diag_msg, diag_dict = diagnose_low_coverage(rep, dur)
                     rep['low_coverage_diagnosis'] = diag_dict
