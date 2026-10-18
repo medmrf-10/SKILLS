@@ -56,9 +56,10 @@ def build_char_to_time_mapper(raw_text: str, align_path: str | None, duration_se
 
     aln = json.loads(Path(align_path).read_text(encoding="utf-8"))
     words_timed = []
-    if "w" in aln and isinstance(aln["w"], list):
-        # Format v3: [['بسم', 0.46, 0.61, 0], ...]
-        for item in aln["w"]:
+    w_list = aln.get("w") if isinstance(aln.get("w"), list) else (aln.get("x") if isinstance(aln.get("x"), list) else None)
+    if w_list is not None:
+        # Format v3 ('w') & ctc-pure v4.2 ('x'): [['بسم', 0.46, 0.61, 'a'|0], ...]
+        for item in w_list:
             if len(item) >= 3 and item[1] is not None and item[2] is not None:
                 words_timed.append((str(item[0]), float(item[1]), float(item[2])))
     elif "words" in aln and "start" in aln and "dur" in aln:

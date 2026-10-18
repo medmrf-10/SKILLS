@@ -324,7 +324,7 @@ def build_matn_system_clauses(
 
 
 def build_graph(work_dir: Path | None = None):
-    books_dir = work_dir if work_dir is not None else BOOKS_DIR
+    books_dir = work_dir if (work_dir is not None and (work_dir / "all_9_books_deep.json").exists()) else BOOKS_DIR
     usdb_dir = work_dir if (work_dir is not None and (work_dir / "raw_lectures.json").exists()) else (books_dir / "usdb_v5")
 
     # 1. Load all classical books dynamically (Round 1 + any roundN_9_books_deep.json)
@@ -362,8 +362,9 @@ def build_graph(work_dir: Path | None = None):
         b_author = bk.get("author", "")
         for p in bk.get("deep_toc_passages", []):
             for ev in p.get("evidences", []):
-                if ev.get("type") == "آية" or "سورة" in (ev.get("source") or ""):
-                    akey, snum, anum, sname = parse_ayah_key(ev.get("source", ""))
+                ev_src = ev.get("source") or ev.get("reference") or ""
+                if ev.get("type") in ("آية", "quran") or "سورة" in ev_src:
+                    akey, snum, anum, sname = parse_ayah_key(ev_src)
                     if not akey:
                         continue
                     node = ayah_nodes.setdefault(
@@ -397,8 +398,9 @@ def build_graph(work_dir: Path | None = None):
     for lid, lec in lectures_map.items():
         for p in lec.get("deep_toc_passages", []):
             for ev in p.get("evidences", []):
-                if ev.get("type") == "آية" or "سورة" in (ev.get("source") or ""):
-                    akey, snum, anum, sname = parse_ayah_key(ev.get("source", ""))
+                ev_src = ev.get("source") or ev.get("reference") or ""
+                if ev.get("type") in ("آية", "quran") or "سورة" in ev_src:
+                    akey, snum, anum, sname = parse_ayah_key(ev_src)
                     if not akey:
                         continue
                     node = ayah_nodes.setdefault(
@@ -456,6 +458,12 @@ def build_graph(work_dir: Path | None = None):
             "science": "akida",
             "keywords": ["الحكم العقلي", "الواجب", "حدوث العالم", "القدم", "الدور", "التسلسل", "البقاء", "الحوادث", "قيامه بنفسه"],
         },
+        "muqaddimat-al-sanusi": {
+            "title": "متن المقدمات وشرحها للإمام محمد بن يوسف السنوسي",
+            "author": "الإمام أبو عبد الله محمد بن يوسف السنوسي (ت 895هـ)",
+            "science": "akida",
+            "keywords": ["الحكم العقلي", "الواجب", "الكسب", "الشرك", "البدع", "الموجودات", "المحل والمخصص", "الصفات الأزلية", "الكلام الأزلي"],
+        },
         "matn-al-akhdari": {
             "title": "متن الأخضري في العبادات على مذهب الإمام مالك (الكتاب 3418)",
             "author": "العلامة عبد الرحمن بن محمد الصغير الأخضري (ت 983هـ)",
@@ -473,15 +481,23 @@ def build_graph(work_dir: Path | None = None):
     for lid, rlec in raw_lecs.items():
         bwid = rlec.get("base_work_id")
         bclauses = rlec.get("base_matn_clauses") or []
-        if bwid and bclauses and bwid not in discovered_matns:
-            meta = KNOWN_MATN_META.get(bwid, {})
-            discovered_matns[bwid] = {
-                "title": meta.get("title") or rlec.get("base_work_title") or bwid,
-                "author": meta.get("author") or rlec.get("base_work_author") or "",
-                "science": meta.get("science") or rlec.get("science") or "akida",
-                "clauses_raw": bclauses,
-                "keywords": meta.get("keywords") or [c.get("title", "") for c in bclauses if c.get("title")],
-            }
+        if bwid and bclauses:
+            if bwid not in discovered_matns:
+                meta = KNOWN_MATN_META.get(bwid, {})
+                discovered_matns[bwid] = {
+                    "title": meta.get("title") or rlec.get("base_work_title") or bwid,
+                    "author": meta.get("author") or rlec.get("base_work_author") or "",
+                    "science": meta.get("science") or rlec.get("science") or "akida",
+                    "clauses_raw": list(bclauses),
+                    "clause_ids_seen": {c["clause_id"] for c in bclauses if "clause_id" in c},
+                    "keywords": meta.get("keywords") or [c.get("title", "") for c in bclauses if c.get("title")],
+                }
+            else:
+                for c in bclauses:
+                    cid = c.get("clause_id")
+                    if cid and cid not in discovered_matns[bwid]["clause_ids_seen"]:
+                        discovered_matns[bwid]["clauses_raw"].append(c)
+                        discovered_matns[bwid]["clause_ids_seen"].add(cid)
 
     matn_systems_bridge = []
     for bwid, minfo in discovered_matns.items():

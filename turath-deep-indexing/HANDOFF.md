@@ -89,3 +89,20 @@
    - `bouti-387` (الدكتور محمد سعيد رمضان البوطي — **3 دروس قصيرة**، `68 KB`).
 2. **أو تجربة التكامل المباشر مع مخرجات `sheikh-series-pipeline` v4.2 الجاهزة على الماك:**
    - فهرسة درس أو درسين (أو السلسلة) من **«مقدمات السنوسي» للشيخ محمد البردوني (`bardouni-husaymi/1005`)** التي فُرّغت وحُوذيت للتو بدقة `99.72%` في `/tmp/bardouni_1005_after/ytb/bardouni-husaymi/1005/` + `/tmp/bardouni_1005_pure/out/` مع ربطها بفقرات متن *المقدمات* للإمام السنوسي.
+
+---
+
+## ٦. تنفيذ التجربة العملية الكاملة على سلسلة «شرح المقدمات للسنوسي — الشيخ محمد البردوني الحسيمي» (`9/9 PASSED, 0 P0`)
+
+تم تنفيذ الفهرسة العميقة الكاملة (`Track 2: Spoken Video Lectures` + `Track 4: Cross-Corpus Knowledge Graph`) على كامل السلسلة (**9 دروس، 10 ساعات و23 دقيقة، 308,201 حرف، 55,481 كلمة**) في `/tmp/bardouni_muqaddimat_usdb/`:
+
+1. **إصلاحان برمجيان للتكامل المباشر مع `sheikh-series-pipeline` v4.2:**
+   - في [`merge_lecture.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_lecture.py): دعم المفتاح `"x"` الذي يولده `ctc_pure_align.py` v4.2 في ملفات `.align.json` إلى جانب المفتاح `"w"`، مع إضافة اختبار انحداري `test_12_ctc_pure_v4_x_key_support` في [`test_skill_gates.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/test_skill_gates.py) (`12/12 OK`).
+   - في [`build_cross_corpus_graph.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/build_cross_corpus_graph.py): تجميع كل فقرات المتن (`base_matn_clauses`) عبر جميع دروس السلسلة المشتركة في `base_work_id` (`27` فقرة من `MUQ:01_1` إلى `MUQ:09_3`)، مع الرجوع التلقائي إلى مستودع الكتب التراثية (`81` كتاباً) عند تشغيل `--work-dir` في مجلد معزول.
+2. **حصيلة التحقق الصارم (`Gate v5.1` — `0 P0` في جميع الدروس التسعة):**
+   - **الدروس المفهرسة:** `9 / 9` (`bardouni_muqaddimat_01` .. `bardouni_muqaddimat_09`) — كلها `passed=True, p0=0`، استرجاع نصي `100% Zero Loss` (`308,201 / 308,201` حرف)، ومحاذاة زمنية `ctc_forced_alignment` من `.align.json`.
+   - **إجمالي المقاطع الموضوعية (`deep_toc_passages`):** `153` مقطعاً مفصلاً مع روابط يوتيوب بالثانية (`youtube_clip_url`).
+   - **درر القواعد والضوابط (`science_gems`):** `54` قاعدة عقدية ومنطقية وأصولية بطبقتين (`verbatim_rule` حرفية + `polished_rule` مصقولة خالية من الحشو الشفهي).
+   - **الربط الثلاثي بالمتن (`matn_triangulation`):** `54` موضع شرح مربوطاً بـ `27` فقرة من متن وشرح *المقدمات* للإمام السنوسي (`MUQ:01_1` .. `MUQ:09_3`) وبـ `81` كتاباً تراثياً مكتوباً.
+   - **المناظرات والأمثلة التطبيقية (`stories`) والاقتباسات (`quotes`):** `33` مناظرة ومثالاً تطبيقياً + `41` اقتباساً موثقاً بالثانية.
+

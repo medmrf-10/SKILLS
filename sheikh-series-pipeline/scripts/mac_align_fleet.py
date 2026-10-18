@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""mac_align_fleet.py — محرك المحاذاة النقية (Pure CTC v4.2) على الماك (Apple Silicon M1 Pro MPS GPU) مع سحب مسبق في الخلفية.
+
+- يحمّل نموذج MahmoudAshraf/mms-300m-1130-forced-aligner على شريحة MPS GPU مرة واحدة فقط طوال فترة العمل.
+- يسحب في الخلفية (Prefetch Thread) ملفات الصوت المضغوطة (Opus 12kbps VoIP ≈ 5MB/ساعة) والنصوص من hermes-vps
+  إلى /tmp/mac_align_spool حتى لا تنتظر شريحة M1 Pro الشبكة أبداً.
+- يرفع ملف <stem>.align.json الناتج فوراً إلى السيرفر بجانب النص ويحدّث <stem>.meta.json ويحذف الملفات المؤقتة.
+"""
+import argparse
+import concurrent.futures
+import gc
+import glob
+import json
+import os
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
+
+# استخدام النسخة المخزنة محلياً من النموذج فوراً إذا كانت مكتملة على القرص
+_hf_snap = '/Users/macm1pro/.cache/huggingface/hub/models--MahmoudAshraf--mms-300m-1130-forced-aligner/snapshots/49402e9577b1158620820667c218cd494cc44486'
+if os.path.exists(os.path.join(_hf_snap, 'pytorch_model.bin')) or os.path.exists(os.path.join(_hf_snap, 'model.safetensors')):
+    os.environ.setdefault('HF_HUB_OFFLINE', '1')
+    os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+
+import numpy as np
+import torch
+
+SKILL_SCRIPTS = '/Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts'
+sys.path.insert(0, SKILL_SCRIPTS)
+
+from ctc_forced_aligner import load_alignment_model  # noqa: E402
+from extract_emissions import (  # noqa: E402
+    MODEL, SR, compact_wave, emissions_torch, peak_mb,
+    plan_silence, read_audio_16k, unpad_emissions,
+)
+import ctc_pure_align  # noqa: E402
+
+VPS_HOST = os.environ.get('VPS_HOST', 'hermes-vps')
+REMOTE_BRIDGE = '/root/workspace/align-bridge/ready'
+LOCAL_SPOOL = '/tmp/mac_align_spool'
+STATE_FILE = '/Users/macm1pro/workspace/ytb-build/mac_align_state.json'
+MAX_PREFETCH = int(os.environ.get('MAC_ALIGN_PREFETCH', '6'))
+PREFETCH_THREADS = int(os.environ.get('MAC_ALIGN_PREFETCH_THREADS', '2'))
+BATCH_SIZE = int(os.environ.get('MAC_ALIGN_BATCH_SIZE', '3'))
+COOLDOWN_S = float(os.environ.get('MAC_ALIGN_COOLDOWN_S', '3.5'))
+LOCAL_QUOTA_JSON = '/tmp/agy_quota_snapshot.json'
+REMOTE_QUOTA_JSON = '/root/workspace/ytb-build/live_quota.json'
+AGY_USAGE_BIN = '/Users/macm1pro/.hermes/node/bin/antigravity-usage'
+
+SSH_MUX_OPTS = [
+    '-o', 'ControlMaster=auto',
+    '-o', 'ControlPath=/tmp/ssh-mux-align-%h',
+    '-o', 'ControlPersist=600',
+    '-o', 'ServerAliveInterval=30',
+]
+
+PREFETCH_QUEUE = queue.Queue(maxsize=MAX_PREFETCH)
+IN_FLIGHT_KEYS = set()
+LOCK = threading.Lock()
+UPLOAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+
+def log(msg):
+    print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}] [mac-align] {msg}', flush=True)
+
+
+def quota_sync_worker():
+    """فحص الكوتة الحية من سيرفر Antigravity المحلي كل دقيقتين ومزامنتها مع الماك و hermes-vps."""
+    while True:
+        try:
+            if os.path.exists(AGY_USAGE_BIN):
+                res = subprocess.run(
+                    [AGY_USAGE_BIN, 'quota', '--json', '--all-models'],
+                    capture_output=True, text=True, timeout=15
+                )
+                if res.returncode == 0 and res.stdout.strip().startswith('{'):
+                    tmp_q = LOCAL_QUOTA_JSON + '.tmp'
+                    with open(tmp_q, 'w', encoding='utf-8') as qf:
+                        qf.write(res.stdout.strip())
+                    os.replace(tmp_q, LOCAL_QUOTA_JSON)
+                    subprocess.run(
+                        ['scp', '-q', *SSH_MUX_OPTS, LOCAL_QUOTA_JSON, f'{VPS_HOST}:{REMOTE_QUOTA_JSON}'],
+                        timeout=20, check=False
+                    )
+        except Exception as e:
+            log(f'[تحذير مزامنة كوتة] {e}')
+        time.sleep(120)
+
+
+def list_remote_jobs():
+    cmd = [
+        'ssh', *SSH_MUX_OPTS, VPS_HOST,
+        f'python3 -c \'import glob, json, os; '
+        f'jobs = []; '
+        f'[jobs.append(json.load(open(p))) for p in glob.glob("{REMOTE_BRIDGE}/*.job.json") if os.path.exists(p[:-9]+".opus")]; '
+        f'jobs.sort(key=lambda x: x.get("created_at", 0)); '
+        f'print(json.dumps(jobs[:25]))\''
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if res.returncode != 0 or not res.stdout.strip():
+        return []
+    try:
+        return json.loads(res.stdout.strip().splitlines()[-1])
+    except Exception:
+        return []
+
+
+def prefetch_worker():
+    os.makedirs(LOCAL_SPOOL, exist_ok=True)
+    while True:
+        try:
+            if PREFETCH_QUEUE.qsize() >= MAX_PREFETCH:
+                time.sleep(1.5)
+                continue
+            jobs = list_remote_jobs()
+            if not jobs:
+                time.sleep(4)
+                continue
+            fetched_any = False
+            for job in jobs:
+                if PREFETCH_QUEUE.qsize() >= MAX_PREFETCH:
+                    break
+                key = job['key']
+                with LOCK:
+                    if key in IN_FLIGHT_KEYS:
+                        continue
+                    IN_FLIGHT_KEYS.add(key)
+
+                local_opus = os.path.join(LOCAL_SPOOL, key + '.opus')
+                local_txt = os.path.join(LOCAL_SPOOL, key + '.txt')
+                remote_opus = f'{REMOTE_BRIDGE}/{key}.opus'
+                remote_txt = job['txt_path']
+
+                t0 = time.time()
+                r1 = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, f'{VPS_HOST}:{remote_opus}', local_opus], timeout=180)
+                r2 = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, f'{VPS_HOST}:{remote_txt}', local_txt], timeout=60)
+                if r1.returncode == 0 and r2.returncode == 0 and os.path.exists(local_opus) and os.path.exists(local_txt):
+                    dl_s = round(time.time() - t0, 1)
+                    mb = os.path.getsize(local_opus) / (1024.0 * 1024.0)
+                    job['local_opus'] = local_opus
+                    job['local_txt'] = local_txt
+                    job['dl_s'] = dl_s
+                    log(f'[سحب مسبق ✓] {key}.opus ({mb:.2f} MB في {dl_s}ث · طابور الماك={PREFETCH_QUEUE.qsize() + 1})')
+                    PREFETCH_QUEUE.put(job)
+                    fetched_any = True
+                else:
+                    for p in (local_opus, local_txt):
+                        if os.path.exists(p):
+                            os.remove(p)
+                    with LOCK:
+                        IN_FLIGHT_KEYS.discard(key)
+            if not fetched_any:
+                time.sleep(3)
+        except Exception as e:
+            log(f'[تحذير سحب مسبق] {e}')
+            time.sleep(4)
+
+
+def make_align_args():
+    ns = argparse.Namespace()
+    ns.em = ''
+    ns.tokens = ''
+    ns.out = ''
+    ns.series_out = ''
+    ns.only = ''
+    ns.tag = ''
+    ns.slice = 120.0
+    ns.pin = 65.0
+    ns.margin = 30
+    ns.min_words = 12
+    ns.star = 'segment'
+    ns.pause_cut = 1
+    ns.pause_min_frames = 15
+    ns.pause_tol = 10.0
+    ns.min_score = -3.0
+    ns.star_pen = -0.9
+    ns.solid_handoff = 1
+    ns.solid_min_len = 4
+    ns.solid_min_score = -1.0
+    ns.island_guard = 0
+    ns.v1 = ''
+    ns.shadow_unify = 0
+    ns.shadow_norm = 1
+    ns.report = ''
+    return ns
+
+
+def upload_and_finalize(job, local_align_path, rep):
+    key = job['key']
+    vid = job.get('vid', '')
+    sheikh = job.get('sheikh', '')
+    remote_txt = job['txt_path']
+    try:
+        # التأكد من المسار القياسي في حال نُقل الملف أثناء توحيد هيكلة cheikh
+        resolve_py = (
+            f'import glob, os; '
+            f'rt = {json.dumps(remote_txt)}; '
+            f'vid = {json.dumps(vid)}; '
+            f'sh = {json.dumps(sheikh)}; '
+            f'cands = [rt] if os.path.exists(rt) else glob.glob(f"/root/workspace/ytb/{{sh}}/*/*_{{vid}}.txt"); '
+            f'print(cands[0] if cands else rt)'
+        )
+        res_p = subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(resolve_py)}'], capture_output=True, text=True, timeout=20)
+        if res_p.returncode == 0 and res_p.stdout.strip():
+            remote_txt = res_p.stdout.strip().splitlines()[-1]
+
+        remote_align = remote_txt[:-4] + '.align.json'
+        remote_meta = remote_txt[:-4] + '.meta.json'
+
+        # 1) رفع ملف align.json للسيرفر عبر اتصال SSH المدمج
+        r = subprocess.run(['scp', '-q', *SSH_MUX_OPTS, local_align_path, f'{VPS_HOST}:{remote_align}'], timeout=120)
+        if r.returncode != 0:
+            raise RuntimeError(f'فشل رفع {local_align_path} إلى السيرفر ({remote_align})')
+
+        # 2) تحديث meta.json وحذف ملفات الجسر المؤقتة على السيرفر
+        align_summary = {
+            'engine': 'ctc-pure-mac-mps',
+            'model': MODEL,
+            'cov': round(rep['spoken_align_coverage'] / 100.0, 4),
+            'spoken_align_pct': rep['spoken_align_coverage'],
+            'audio_span_pct': rep['audio_span_pct'],
+            'words': rep['words'],
+            'aligned': rep['aligned'],
+            'interpolated': rep['interpolated'],
+            'at': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        }
+        py_code = (
+            f'import glob, json, os; '
+            f'mp = {json.dumps(remote_meta)}; '
+            f'md = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else {{}}; '
+            f'md["align"] = {json.dumps(align_summary)}; '
+            f'json.dump(md, open(mp, "w", encoding="utf-8"), ensure_ascii=False, indent=2); '
+            f'vid = {json.dumps(vid)}; '
+            f'[os.remove(p) for p in glob.glob({json.dumps(REMOTE_BRIDGE)} + f"/*_{{vid}}.*") if os.path.exists(p)]'
+        )
+        subprocess.run(['ssh', *SSH_MUX_OPTS, VPS_HOST, f'python3 -c {json.dumps(py_code)}'], timeout=30, check=True)
+    except Exception as e:
+        log(f'[✗ خطأ رفع الخلفية] {key}: {e}')
+    finally:
+        try:
+            if os.path.exists(local_align_path):
+                os.remove(local_align_path)
+        except OSError:
+            pass
+        with LOCK:
+            IN_FLIGHT_KEYS.discard(key)
+
+
+def main():
+    from agy_transcribe import strip_preamble_and_header
+    os.makedirs(LOCAL_SPOOL, exist_ok=True)
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+
+    device = 'mps' if (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()) else 'cpu'
+    dtype = torch.float16 if device == 'mps' else torch.float32
+    dtype_label = 'fp16' if dtype == torch.float16 else 'fp32'
+    log(f'تحميل نموذج المحاذاة {MODEL} من الكاش المحلي على شريحة الماك ({device} · {dtype_label} + طي الصمت)...')
+    t_load0 = time.time()
+    model, tokenizer = load_alignment_model(device, model_path=MODEL, dtype=dtype)
+    vocab = {k.lower(): v for k, v in tokenizer.get_vocab().items()}
+    blank = vocab.get('<blank>', tokenizer.pad_token_id)
+    log(f'✓ اكتمل تحميل النموذج في {time.time() - t_load0:.1f}ث — بدء {PREFETCH_THREADS} خيوط سحب مسبق ومزامنة الكوتة وحلقة المحاذاة (batch={BATCH_SIZE}, cooldown={COOLDOWN_S}s)...')
+
+    t_qs = threading.Thread(target=quota_sync_worker, daemon=True)
+    t_qs.start()
+
+    for _ in range(PREFETCH_THREADS):
+        t_pf = threading.Thread(target=prefetch_worker, daemon=True)
+        t_pf.start()
+
+    completed_lessons = 0
+    total_audio_s = 0.0
+    total_gpu_s = 0.0
+    total_words_aligned = 0
+    if os.path.exists(STATE_FILE):
+        try:
+            prev_st = json.load(open(STATE_FILE, encoding='utf-8'))
+            completed_lessons = int(prev_st.get('completed_lessons', 0))
+            total_audio_s = float(prev_st.get('total_audio_hours', 0.0)) * 3600.0
+            total_words_aligned = int(prev_st.get('total_words_aligned', 0))
+            total_gpu_s = total_audio_s * float(prev_st.get('avg_rtf', 0.0285))
+        except Exception:
+            pass
+    align_args = make_align_args()
+
+    while True:
+        job = PREFETCH_QUEUE.get()
+        key = job['key']
+        local_opus = job['local_opus']
+        local_txt = job['local_txt']
+        em_path = os.path.join(LOCAL_SPOOL, key + '.em.npy')
+        tok_path = os.path.join(LOCAL_SPOOL, key + '.tokens.json')
+        meta_path = os.path.join(LOCAL_SPOOL, key + '.meta.json')
+        out_align = os.path.join(LOCAL_SPOOL, key + '.align.json')
+        rep_path = os.path.join(LOCAL_SPOOL, key + '.report.json')
+        submitted_upload = False
+
+        try:
+            raw_txt = open(local_txt, encoding='utf-8', errors='replace').read()
+            cleaned_txt, stripped_reasons = strip_preamble_and_header(raw_txt)
+            if stripped_reasons and cleaned_txt:
+                with open(local_txt, 'w', encoding='utf-8') as tf:
+                    tf.write(cleaned_txt)
+                raw_txt = cleaned_txt
+            words = raw_txt.split()
+            if not words:
+                log(f'[تخطي] نص فارغ: {key}')
+                continue
+
+            t0 = time.time()
+            data = read_audio_16k(local_opus, sr=SR)
+            t_dec = time.time() - t0
+            dur = len(data) / SR
+
+            t_em0 = time.time()
+            keep_mask, sc_stats = plan_silence(np.asarray(data), SR, 0.5, 0.15, rel_db=5.0, win_s=5.0)
+            idx_map = None
+            if keep_mask is not None and sc_stats.get('pct', 0.0) >= 1.5:
+                comp_data, idx_map = compact_wave(np.asarray(data), keep_mask)
+                wav_in = torch.from_numpy(comp_data)
+            else:
+                wav_in = torch.from_numpy(data)
+
+            em, stride = emissions_torch(
+                model, wav_in, device=device, dtype=dtype,
+                window=30.0, context=2.0, batch_size=BATCH_SIZE
+            )
+            if idx_map is not None:
+                n_frames = int(sc_stats['frames_total'])
+                em, _ = unpad_emissions(
+                    em, idx_map, n_frames,
+                    star_col=(em.shape[1] - 1 if em.shape[1] > 31 else None)
+                )
+            t_em = time.time() - t_em0
+            fps = float(em.shape[0]) / dur if dur > 0 else 1000.0 / float(stride)
+
+            np.save(em_path, em)
+            json.dump(
+                {'vocab': vocab, 'vocab_size': len(vocab), 'pad': tokenizer.pad_token_id,
+                 'blank': blank, 'words': words, 'n_words': len(words)},
+                open(tok_path, 'w', encoding='utf-8'), ensure_ascii=False
+            )
+            em_meta = {
+                'model': MODEL, 'engine': 'torch', 'device': device, 'dtype': dtype_label,
+                'fps': round(fps, 4), 'stride_ms': float(stride),
+                'frames': int(em.shape[0]), 'classes': int(em.shape[1]),
+                'dur': round(dur, 2), 'n_words': len(words),
+                'audio': job['stem'] + '.mp3', 'decode_s': round(t_dec, 2),
+                'load_s': 0.0, 'em_s': round(t_em, 1),
+                'rtf': round(t_em / max(1.0, dur), 4),
+            }
+            json.dump(em_meta, open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+
+            rep = ctc_pure_align.align_one_file(em_path, tok_path, out_align, key, align_args)
+            UPLOAD_POOL.submit(upload_and_finalize, job, out_align, rep)
+            submitted_upload = True
+
+            completed_lessons += 1
+            total_audio_s += dur
+            total_gpu_s += (t_em + rep['align_wall_s'])
+            total_words_aligned += rep['words']
+            rtf_avg = total_gpu_s / max(1.0, total_audio_s)
+
+            state = {
+                'updated_at': datetime.now().isoformat(),
+                'device': device,
+                'completed_lessons': completed_lessons,
+                'total_audio_hours': round(total_audio_s / 3600.0, 2),
+                'total_words_aligned': total_words_aligned,
+                'avg_rtf': round(rtf_avg, 4),
+                'speed_x_realtime': round(1.0 / max(0.0001, rtf_avg), 1),
+                'prefetch_queue_ready': PREFETCH_QUEUE.qsize(),
+                'last_lesson': {
+                    'key': key,
+                    'dur_min': round(dur / 60.0, 1),
+                    'words': rep['words'],
+                    'spoken_align_pct': rep['spoken_align_coverage'],
+                    'audio_span_pct': rep['audio_span_pct'],
+                    'em_s': round(t_em, 1),
+                    'viterbi_s': rep['align_wall_s'],
+                    'dl_s': job.get('dl_s', 0.0),
+                },
+            }
+            with open(STATE_FILE, 'w', encoding='utf-8') as sf:
+                json.dump(state, sf, ensure_ascii=False, indent=2)
+
+            log(
+                f'[✓ محاذاة #{completed_lessons}] {key} ({dur/60:.1f}د · {rep["words"]} كلمة) '
+                f'في {t_em + rep["align_wall_s"]:.1f}ث (GPU={t_em:.1f}ث + فيتربي={rep["align_wall_s"]:.1f}ث · تغطية={rep["spoken_align_coverage"]:.1f}%) '
+                f'| الإجمالي={total_audio_s/3600:.2f}س صوتية بسرعة {state["speed_x_realtime"]}×'
+            )
+        except Exception as e:
+            log(f'[✗ خطأ محاذاة] {key}: {e}')
+        finally:
+            cleanup_paths = [local_opus, local_txt, em_path, tok_path, meta_path, rep_path]
+            if not submitted_upload:
+                cleanup_paths.append(out_align)
+            for p in cleanup_paths:
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except OSError:
+                    pass
+            if not submitted_upload:
+                with LOCK:
+                    IN_FLIGHT_KEYS.discard(key)
+            PREFETCH_QUEUE.task_done()
+            try:
+                if device == 'mps' and hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                    torch.mps.empty_cache()
+                gc.collect()
+            except Exception:
+                pass
+            if COOLDOWN_S > 0:
+                time.sleep(COOLDOWN_S)
+
+
+if __name__ == '__main__':
+    main()

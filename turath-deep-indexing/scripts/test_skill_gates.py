@@ -238,6 +238,39 @@ class TestLectureCourseAndGraphGates(unittest.TestCase):
         self.assertIn("البيهقي", disp_bayhaqi)
         self.assertIn("العربي", disp_ibn_arabi)
 
+    def test_12_ctc_pure_v4_x_key_support(self):
+        """ctc_pure_align.py v4.2 outputs timed words under 'x': [['بسم', 0.2, 0.54, 'a'], ...]. Must map as ctc_forced_alignment."""
+        raw_text = "بسم الله الرحمن الرحيم قال المصنف رحمه الله والموجودات بالنسبة إلى المحل والمخصص أربعة أقسام."
+        with tempfile.NamedTemporaryFile("w", suffix=".align.json", delete=False, encoding="utf-8") as tf:
+            json.dump(
+                {
+                    "cov": 100.0,
+                    "x": [
+                        ["بسم", 0.2, 0.54, "a"],
+                        ["الله", 0.56, 1.06, "a"],
+                        ["الرحمن", 1.08, 1.42, "a"],
+                        ["الرحيم", 1.44, 2.08, "a"],
+                        ["قال", 8.22, 8.82, "a"],
+                        ["المصنف", 8.84, 9.28, "a"],
+                        ["رحمه", 9.3, 9.58, "a"],
+                        ["الله", 9.62, 10.16, "a"],
+                        ["والموجودات", 10.6, 11.86, "a"],
+                    ],
+                },
+                tf,
+                ensure_ascii=False,
+            )
+            aln_path = tf.name
+
+        mapper = ml.build_char_to_time_mapper(raw_text, aln_path, 2650.0)
+        qal_pos = raw_text.find("قال المصنف رحمه الله")
+        s_sec, e_sec, basis = mapper(qal_pos, qal_pos + len("قال المصنف رحمه الله"))
+        self.assertEqual(basis, "ctc_forced_alignment")
+        self.assertAlmostEqual(s_sec, 8.22, places=2)
+        self.assertAlmostEqual(e_sec, 10.16, places=2)
+        Path(aln_path).unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

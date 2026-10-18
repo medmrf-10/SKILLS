@@ -329,8 +329,48 @@ def _log_agy_usage(audio_path, dur_s, words, ar_chars, model, rc, elapsed_s, usa
 from contextlib import contextmanager
 
 
+def _is_quota_safe_for_background(model_hint='gemini'):
+    """فحص الكوتة الحية: إبقاء >=15% في نافذة الـ5 ساعات (حماية 10% للوكيل الرئيسي) وإبقاء >=25% من الأسبوعية إلا في آخر 12 ساعة."""
+    for qpath in ('/root/workspace/ytb-build/live_quota.json', '/tmp/agy_quota_snapshot.json'):
+        if not os.path.exists(qpath):
+            continue
+        try:
+            if time.time() - os.path.getmtime(qpath) > 1800:
+                continue
+            qdata = json.load(open(qpath, encoding='utf-8'))
+            want_claude = any(k in (model_hint or '').lower() for k in ('claude', 'opus', 'sonnet'))
+            for m in qdata.get('models', []):
+                lbl = (m.get('label') or '').lower()
+                if want_claude and ('claude' in lbl or 'opus' in lbl or 'sonnet' in lbl):
+                    target = m
+                    break
+                if not want_claude and ('gemini 3.8 flash' in lbl or 'gemini 4 argon' in lbl):
+                    target = m
+                    break
+            else:
+                continue
+            rem = float(target.get('remainingPercentage') if target.get('remainingPercentage') is not None else 1.0)
+            reset_ms = float(target.get('timeUntilResetMs') or 0.0)
+            reset_hours = reset_ms / (1000.0 * 3600.0)
+            if target.get('isExhausted') or rem < 0.15:
+                return False, f'الكوتة المتبقية ({rem*100:.1f}%) أقل من حد الأمان للخلفية (15% لحماية الـ10% للوكيل الرئيسي)'
+            if reset_hours > 5.5 and reset_hours > 12.0 and rem <= 0.25:
+                return False, f'الكوتة الأسبوعية ({rem*100:.1f}%) وصلت احتياطي الـ25% وباقي {reset_hours:.1f}س (> 12س) على التجديد'
+            return True, ''
+        except Exception:
+            continue
+    return True, ''
+
+
 @contextmanager
-def _global_agy_slot(min_avail_mb=1350):
+def _global_agy_slot(min_avail_mb=1350, model_hint='gemini'):
+    while True:
+        ok_q, reason_q = _is_quota_safe_for_background(model_hint)
+        if ok_q:
+            break
+        print(f'[حارس الكوتة] إيقاف مؤقت لعمال الخلفية لمدة 60ث: {reason_q}', flush=True)
+        time.sleep(60.0)
+
     if not sys.platform.startswith('linux'):
         yield
         return
@@ -696,11 +736,11 @@ def main():
         if sys.platform.startswith('linux') and os.path.exists(txt_path) and os.path.getsize(txt_path) > 50:
             bridge_ready = '/root/workspace/align-bridge/ready'
             align_json_path = os.path.join(args.series_dir, base + '.align.json')
-            if os.path.isdir(bridge_ready) and not os.path.exists(align_json_path) and os.path.exists(mp3_path):
+            if os.path.isdir(bridge_ready) and not os.path.exists(align_json_path) and audio_path and os.path.exists(audio_path):
                 try:
                     import hashlib
                     existing_opus = [x for x in os.listdir(bridge_ready) if x.endswith('.opus')]
-                    if len(existing_opus) < 80:
+                    if len(existing_opus) < 120:
                         s_parts = os.path.normpath(args.series_dir).split(os.sep)
                         sch_slug, ser_slug = s_parts[-2], s_parts[-1]
                         h_key = f'{sch_slug}__{ser_slug}__{base}'
@@ -709,9 +749,10 @@ def main():
                         if not os.path.exists(opus_dst):
                             tmp_opus = opus_dst + '.part.opus'
                             subprocess.run(
-                                ['ffmpeg', '-nostdin', '-y', '-loglevel', 'error', '-i', mp3_path,
+                                ['ffmpeg', '-nostdin', '-y', '-loglevel', 'error', '-i', audio_path,
                                  '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'libopus', '-b:a', '12k',
-                                 '-vbr', 'on', '-application', 'voip', tmp_opus],
+                                 '-vbr', 'on', '-compression_level', '0', '-threads', '1',
+                                 '-application', 'voip', tmp_opus],
                                 timeout=180, check=False
                             )
                             if os.path.exists(tmp_opus) and os.path.getsize(tmp_opus) > 1000:
