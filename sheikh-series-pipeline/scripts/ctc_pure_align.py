@@ -82,8 +82,20 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
     active_idx = [gi for gi in range(i0, i1) if src[gi]]
     if not active_idx:
         return {}
-    text = ' '.join(src[gi] for gi in active_idx)
-    tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
+    n_sub_frames = max(1, int(f1) - int(f0))
+    while len(active_idx) > 1:
+        text = ' '.join(src[gi] for gi in active_idx)
+        tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
+        repeats = sum(1 for k in range(1, len(tokens)) if tokens[k] == tokens[k - 1])
+        if len(tokens) + repeats + 8 < n_sub_frames:
+            break
+        new_len = max(1, int(len(active_idx) * 0.72))
+        if new_len >= len(active_idx):
+            new_len = len(active_idx) - 1
+        active_idx = active_idx[:new_len]
+    else:
+        text = ' '.join(src[gi] for gi in active_idx)
+        tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
     sub = torch.from_numpy(np.array(em[f0:f1], dtype=np.float32, copy=True))
     if star_pen and star_col is not None and 0 <= star_col < sub.shape[1]:
         sub[:, star_col] = sub[:, star_col] + float(star_pen)
@@ -100,7 +112,7 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
 
     # ربط الرموز الصامتة داخل الشريحة بحدّ الكلمة المنطوقة السابقة حتى يتقدم المؤشر بسلاسة
     last_t = None
-    for gi in range(i0, i1):
+    for gi in range(i0, min(i1, (active_idx[-1] + 1) if active_idx else i1)):
         if gi in got:
             last_t = got[gi][1]
         elif not src[gi] and last_t is not None:
@@ -333,22 +345,25 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             cand = B[(B > lo_b) & (np.abs(B - fi1) <= int(a.pause_tol * fps))]
             if len(cand):
                 fi1 = int(cand[np.argmin(np.abs(cand - fi1))])
+        slice_dur = max(1.0, (fi1 - fc) / fps)
+        avg_rate = N / max(1.0, dur)
+        ev_slice = 0
         if fi1 >= T:
             n_est = N - wc
             wi1 = N
             eff_margin = 0
         else:
             ev_before = int(cum_ev[fc - 1]) if fc > 0 else 0
-            ev_slice = max(1, int(cum_ev[min(T - 1, fi1 - 1)] - ev_before))
+            ev_slice = max(0, int(cum_ev[min(T - 1, fi1 - 1)] - ev_before))
             ev_rem = max(1, int(cum_ev[-1] - ev_before))
             ch_before = int(cum_wchars[wc - 1]) if wc > 0 else 0
             ch_rem = max(1, int(cum_wchars[-1] - ch_before))
-            target_ch = ch_before + ch_rem * (ev_slice / float(ev_rem))
+            target_ch = ch_before + ch_rem * (max(1, ev_slice) / float(ev_rem))
             wi_ev = int(np.searchsorted(cum_wchars, target_ch, side='left')) + 1
-            n_est = max(a.min_words, wi_ev - wc)
+            max_phys_words = max(a.min_words, int(round(max(3.6, avg_rate * 2.4) * slice_dur)))
+            n_est = min(max_phys_words, max(a.min_words, wi_ev - wc))
             eff_margin = min(a.margin, max(4, int(round(0.06 * n_est))))
             wi1 = min(N, wc + n_est + eff_margin)
-        slice_dur = max(1.0, (fi1 - fc) / fps)
         slice_rate = n_est / slice_dur
         margin = eff_margin
         while True:                                     # تحصين: عند فشل التثبيت تُقلَّص الشريحة
@@ -366,7 +381,11 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
         if not new:                                     # لا تثبيت: تقدّم اضطراري لضمان التقدّم
             forced += 1
             step_f = int(a.slice * fps / 2)
-            step_w = max(1, n_est // 2)
+            step_dur = max(1.0, step_f / fps)
+            if fi1 < T and ev_slice < max(4, int(slice_dur * 0.4)):
+                step_w = 0
+            else:
+                step_w = max(1, min(n_est // 2, int(round(avg_rate * step_dur))))
             print('[%s]   [!] شريحة %.0fث بلا تثبيت ⇒ تقدّم اضطراري %.0fث / %d كلمة' % (
                 tag, tc, step_f / fps, step_w), flush=True)
             fc += step_f
