@@ -819,6 +819,140 @@ def run_all_3_gates() -> int:
                 f"  [OK] Gate 4.3 (Applied Cases & Newline Anchor Guard): {len(g4_stories)} applied cases verified and newline anchor resolved at offset {nl_pos}."
             )
 
+        # -------------------------------------------------------------------------
+        # GATE 5: Hadith Evidence Source Attribution & Structured Stories/Cases Extraction Gate
+        # -------------------------------------------------------------------------
+        print("\n[Gate 5] Running Hadith Evidence Source Attribution & Structured Stories/Cases Extraction Gate...")
+        g5_dir = tmp_dir / "gate5_hadith_stories"
+        g5_series_dir = g5_dir / "adoudiya_s026"
+        g5_out_dir = g5_dir / "out"
+        g5_series_dir.mkdir(parents=True, exist_ok=True)
+        g5_out_dir.mkdir(parents=True, exist_ok=True)
+
+        g5_meta = {
+            "slug": "dedew__sharh_manzouma_adoudiya",
+            "sheikh": "محمد الحسن الددو",
+            "series": "شرح المنظومة العدودية في العقيدة والفقه",
+            "category": "العقيدة",
+            "videos": [
+                {
+                    "n": 1,
+                    "vid": "vAdoudiya01",
+                    "title": "شرح المنظومة العدودية — الدرس الأول: تحقيق الشواهد الحديثية والوقائع التاريخية والنوازل الفقهية",
+                    "dur_s": 300,
+                }
+            ],
+        }
+        (g5_series_dir / "_meta.json").write_text(json.dumps(g5_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        g5_p1 = (
+            "بسم الله الرحمن الرحيم الحمد لله رب العالمين وصلى الله وسلم على نبينا محمد وعلى آله وصحبه أجمعين. "
+            "قال الناظم رحمه الله تعالى في مطلع المنظومة: والقول في الكتاب والسنة مع إجماع الأمة أصل متبع. "
+            "والقاعدة المقررة عند أهل السنة أن الاحتجاج بالسنة النبوية الصحيحة واجب في العقائد والأحكام، "
+            "وقد روى البخاري ومسلم أن النبي صلى الله عليه وسلم قال: «من أحدث في أمرنا هذا ما ليس منه فهو رد». "
+            "وكذلك حديث إنما الأعمال بالنيات وإنما لكل امرئ ما نوى، وما أخرجه البخاري في الصحيح أن رسول الله صلى الله عليه وسلم قال: «لا تغضب». "
+            "وفي الحديث الصحيح عند مسلم أن رسول الله صلى الله عليه وسلم قال: «الدين النصيحة». "
+            "أما لو قال قائل: قال رسول الله صلى الله عليه وسلم، لا، ما ينفعش، ده حديث مرسل، هات الصحابي، فهذا كلام في شروط الاتصال وليس متناً مرفوعاً. "
+            "وكذلك قولهم في الحديث، فلذلك قال المصنف: «وهو شذوذ في اللغة» إنما هو حكاية لكلام الناظم. "
+            "ولما حاصر النبي صلى الله عليه وسلم خيبر قال يوم خيبر: «لأعطين الراية غداً لرجل يحب الله ورسوله ويحبه الله ورسوله»، فدل ذلك على أن محبة الله ورسوله شعار أهل الإيمان والنصرة."
+        )
+        g5_p2 = (
+            "ثم انتقل الشارح رحمه الله إلى مبحث الصفات الخبرية حيث قال الناظم: وأمرر الآيات والأخبار كما أتت عن سيد الأبرار. "
+            "والضابط الكلي في هذا الباب إمرار النصوص على ظاهرها اللائق بالله مع نفي الكيفية والتشبيه. "
+            "ومنها ما أخرجه أبو داود في السنن من حديث عقبة بن عامر رضي الله عنه قال: سمعت رسول الله صلى الله عليه وسلم يقول: "
+            "(يعجب ربكم من راعي غنم في رأس شظية بجبل يؤذن بالصلاة ويصلي)، "
+            "وفيما ورد عند الترمذي أن رسول الله صلى الله عليه وسلم قال: «ما ضل قوم بعد هدى كانوا عليه إلا أوتوا الجدل». "
+            "وقد سئل الإمام مالك عن الاستواء فقال له رجل: كيف استوى على العرش؟ فقال له: الاستواء معلوم والكيف مجهول والإيمان به واجب والسؤال عنه بدعة. "
+            "وفي خلافة عمر بن عبد العزيز بالدولة الأموية لما رد المظالم وأبطل سب المخالفين على المنابر، فدل ذلك على أن العدل والإنصاف سبب لاجتماع الكلمة. "
+            "ومثاله في الفروع العملية لو باع سلعة بشرط ينافي مقتضى العقد، فالحكم فيها بطلان الشرط المفسد وتصحيح العقد عند من فصل في الشروط."
+        )
+        g5_raw_text = g5_p1 + "\n" + g5_p2
+        (g5_series_dir / "001_vAdoudiya01.txt").write_text(g5_raw_text, encoding="utf-8")
+
+        g5_words = g5_raw_text.split()
+        g5_timed_x = []
+        t5 = 1.0
+        for w in g5_words:
+            dur = round(max(0.22, min(0.75, len(w) * 0.07)), 2)
+            g5_timed_x.append([w, round(t5, 2), round(t5 + dur, 2), "a"])
+            t5 += dur + 0.04
+        (g5_series_dir / "001_vAdoudiya01.align.json").write_text(
+            json.dumps({"cov": 100.0, "x": g5_timed_x}, ensure_ascii=False), encoding="utf-8"
+        )
+
+        g5_intake = yti.intake_series(series_dir=g5_series_dir, out_dir=g5_out_dir)
+        if not g5_intake["passed"]:
+            errors.append(f"Gate 5.1 FAILED: intake_series reported P0 errors: {g5_intake['gate_reports']}")
+
+        g5_db_path = g5_out_dir / "objects.sqlite"
+        g5_stats = bos.build_objects_sqlite(db_path=g5_db_path, work_dir=g5_out_dir)
+        if g5_stats["chars_lost"] != 0:
+            errors.append(f"Gate 5.1 FAILED: chars_lost={g5_stats['chars_lost']}")
+
+        g5_conn = sqlite3.connect(str(g5_db_path))
+        g5_cur = g5_conn.cursor()
+
+        # 5.1 Verify Hadith evidences extraction & exact `hadith_source` attribution
+        g5_cur.execute(
+            """
+            SELECT verbatim_text, hadith_source
+            FROM evidences
+            WHERE evidence_type = 'hadith'
+            ORDER BY evidence_id
+            """
+        )
+        g5_hadiths = g5_cur.fetchall()
+        g5_h_sources = {r[1] for r in g5_hadiths}
+        required_h_sources = {"متفق عليه", "صحيح البخاري", "صحيح مسلم", "أبو داود", "الترمذي"}
+        missing_h_sources = required_h_sources - g5_h_sources
+        if missing_h_sources:
+            errors.append(
+                f"Gate 5.1 FAILED: Missing expected hadith_source attributions {missing_h_sources}; got {g5_hadiths}"
+            )
+
+        # Verify ordinary commentary sentences ('ما ينفعش', 'حديث مرسل', 'وهو شذوذ في اللغة') were NOT extracted as Hadiths
+        for v_txt, h_src in g5_hadiths:
+            if any(bad in v_txt for bad in ("ما ينفعش", "حديث مرسل", "وهو شذوذ", "هات الصحابي")):
+                errors.append(f"Gate 5.1 FAILED: Ordinary commentary sentence leaked into Hadith evidences: {(v_txt, h_src)}")
+            if v_txt not in g5_raw_text:
+                errors.append(f"Gate 5.1 FAILED: Hadith verbatim_text not exact substring of raw_text: {v_txt!r}")
+
+        # 5.2 Verify structured `stories_cases` extraction across all 4 `story_type` categories with grounded `lesson`
+        g5_cur.execute(
+            """
+            SELECT sc.story_type, sc.title, sc.anchor_start, sc.summary, sc.lesson, p.raw_text
+            FROM stories_cases sc
+            JOIN passages p ON p.passage_id = sc.passage_id
+            ORDER BY sc.story_id
+            """
+        )
+        g5_stories = g5_cur.fetchall()
+        g5_story_types = {r[0] for r in g5_stories}
+        required_story_types = {"prophetic_sirah", "scholarly_anecdote", "historical_incident", "fiqhi_case"}
+        missing_story_types = required_story_types - g5_story_types
+        if missing_story_types:
+            errors.append(
+                f"Gate 5.2 FAILED: Missing expected story_type categories {missing_story_types}; got {[(r[0], r[1]) for r in g5_stories]}"
+            )
+        for s_type, s_title, s_anc, s_sum, s_lesson, p_raw_txt in g5_stories:
+            if s_type not in required_story_types:
+                errors.append(f"Gate 5.2 FAILED: Invalid story_type {s_type!r} in stories_cases")
+            if not s_lesson or len(s_lesson.split()) < 5:
+                errors.append(f"Gate 5.2 FAILED: Empty or too-short lesson on story {s_title!r}: {s_lesson!r}")
+            if len(s_anc.split()) < 4 or mr.find_anchor_pos(p_raw_txt, s_anc, 0) == -1:
+                errors.append(f"Gate 5.2 FAILED: Story anchor_start {s_anc!r} not found in linked passage")
+
+        g5_conn.close()
+        if not errors:
+            print(
+                f"  [OK] Gate 5.1 (Hadith Evidence & Source Attribution): {len(g5_hadiths)} Prophetic hadiths extracted "
+                f"with canonical sources {sorted(g5_h_sources)} (0 commentary false positives)."
+            )
+            print(
+                f"  [OK] Gate 5.2 (Structured Stories & Fiqhi Cases): {len(g5_stories)} stories/cases extracted "
+                f"covering all 4 types {sorted(g5_story_types)} with context-grounded lessons."
+            )
+
     print("\n" + "=" * 78)
     if errors:
         print(f"FAIL ({len(errors)} errors):")

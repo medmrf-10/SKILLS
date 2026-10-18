@@ -22,6 +22,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import build_cross_corpus_graph as bcg
 import merge_round as mr
+import ytb_to_usdb_intake as yti
 
 
 KNOWN_PERSON_DEATH_HIJRI = {
@@ -287,9 +288,48 @@ def derive_clean_matn_from_book_passage(p: dict) -> str:
     return raw_text
 
 
-def parse_evidence_fields(ev: dict, passage_fn_refs: list) -> dict:
+VALID_CANONICAL_STORY_TYPES = {
+    "historical_incident",
+    "prophetic_sirah",
+    "fiqhi_case",
+    "scholarly_anecdote",
+}
+
+
+def classify_story_type(
+    raw_type: str | None,
+    title: str = "",
+    anchor: str = "",
+    summary: str = "",
+    science: str = "",
+) -> str:
+    rt = (raw_type or "").strip()
+    if rt in VALID_CANONICAL_STORY_TYPES:
+        return rt
+    probe = f"{title} {anchor} {summary}"
+    for pat, st_type, _, _ in yti.STORY_AND_CASE_MARKERS:
+        if pat.search(probe):
+            return st_type
+    if re.search(r"(?:غزوة|النبي|رسول\s+الله|سيرة|صحابي|يوم\s+بدر|يوم\s+أحد|خيبر)", probe):
+        return "prophetic_sirah"
+    if re.search(r"(?:سئل\s+الإمام|سئل\s+مالك|سئل\s+الشيخ|مناظرة|ناظر|قيل\s+للإمام|نادرة|موقف\s+علمي)", probe):
+        return "scholarly_anecdote"
+    if re.search(r"(?:خلافة|عهد|الدولة\s+الأموية|الدولة\s+العباسية|معاوية|وقعة|معركة|فتنة|تاريخية)", probe):
+        return "historical_incident"
+    if re.search(r"(?:فرائض|وضوء|صلاة|طهارة|بيع|طلاق|نكاح|لو\s+قال|لو\s+باع|مثاله|مسألة|تطبيق|فرع|نازلة)", probe):
+        return "fiqhi_case"
+    if science == "sirah":
+        return "prophetic_sirah"
+    if science in ("tari5",):
+        return "historical_incident"
+    if science in ("tarajim", "tazkia", "tazkiyah"):
+        return "scholarly_anecdote"
+    return "fiqhi_case"
+
+
+def parse_evidence_fields(ev: dict, passage_fn_refs: list, raw_text: str = "") -> dict:
     ev_type_raw = (ev.get("type") or ev.get("evidence_type") or "").strip()
-    ev_src = (ev.get("source") or ev.get("reference") or "").strip()
+    ev_src = (ev.get("source") or ev.get("hadith_source") or ev.get("reference") or "").strip()
     v_txt = (ev.get("text") or ev.get("verbatim_text") or "").strip()
     fn_ref = ev.get("footnote_ref") or (",".join(str(x) for x in passage_fn_refs) if passage_fn_refs else None)
 
@@ -320,14 +360,16 @@ def parse_evidence_fields(ev: dict, passage_fn_refs: list) -> dict:
             "hadith_source": None,
             "footnote_ref": fn_ref,
         }
+    norm_ev_type = "athar" if ev_type_raw in ("athar", "أثر") else "hadith"
+    resolved_h_src = yti.resolve_hadith_source(v_txt, raw_text, ev_src)
     return {
-        "evidence_type": ev_type_raw if ev_type_raw in ("hadith", "athar", "حديث", "أثر") else "hadith",
+        "evidence_type": norm_ev_type,
         "surah_number": None,
         "ayah_start": None,
         "ayah_end": None,
         "surah_ayah_key": None,
         "verbatim_text": v_txt,
-        "hadith_source": ev_src or "مصدر حديثي",
+        "hadith_source": resolved_h_src,
         "footnote_ref": fn_ref,
     }
 
@@ -657,10 +699,22 @@ def build_objects_sqlite(
                         (pid, source_id, hy if isinstance(hy, int) else None, y_raw, is_approx, etag, ev_layer),
                     )
 
-                for ev in p.get("evidences", []):
+                ev_list_book = list(p.get("evidences", []))
+                seen_ev_norms_b = {
+                    bcg.norm_ar(e.get("text") or e.get("verbatim_text") or "")
+                    for e in ev_list_book
+                    if isinstance(e, dict)
+                }
+                for auto_hev in yti.extract_hadith_evidences_from_text(clean_matn):
+                    nh = bcg.norm_ar(auto_hev["text"])
+                    if nh and not any(nh in ex or ex in nh for ex in seen_ev_norms_b if ex):
+                        seen_ev_norms_b.add(nh)
+                        ev_list_book.append(auto_hev)
+
+                for ev in ev_list_book:
                     if not isinstance(ev, dict):
                         continue
-                    ev_parsed = parse_evidence_fields(ev, p.get("fn_refs", []))
+                    ev_parsed = parse_evidence_fields(ev, p.get("fn_refs", []), raw_text=raw_text)
                     cur.execute(
                         """
                         INSERT INTO evidences
@@ -709,7 +763,13 @@ def build_objects_sqlite(
         for st_idx, st in enumerate(bk.get("stories", []), start=1):
             st_pid = str(st.get("pid") or st.get("passage_id") or default_book_pid)
             st_part = int(st.get("part", 1))
-            st_type = st.get("story_type") or ("applied_case" if science in mr.NORMATIVE_SCIENCES else "narrative_story")
+            st_type = classify_story_type(
+                st.get("story_type"),
+                st.get("title", ""),
+                st.get("anchor_start", ""),
+                st.get("summary", ""),
+                science,
+            )
             cur.execute(
                 """
                 INSERT INTO stories_cases
@@ -980,10 +1040,22 @@ def build_objects_sqlite(
                         (pid, src_id, hy if isinstance(hy, int) else None, y_raw, is_approx, etag, ev_layer),
                     )
 
-                for ev in p.get("evidences", []):
+                ev_list_lec = list(p.get("evidences", []))
+                seen_ev_norms_l = {
+                    bcg.norm_ar(e.get("text") or e.get("verbatim_text") or "")
+                    for e in ev_list_lec
+                    if isinstance(e, dict)
+                }
+                for auto_hev in yti.extract_hadith_evidences_from_text(clean_matn):
+                    nh = bcg.norm_ar(auto_hev["text"])
+                    if nh and not any(nh in ex or ex in nh for ex in seen_ev_norms_l if ex):
+                        seen_ev_norms_l.add(nh)
+                        ev_list_lec.append(auto_hev)
+
+                for ev in ev_list_lec:
                     if not isinstance(ev, dict):
                         continue
-                    ev_parsed = parse_evidence_fields(ev, [])
+                    ev_parsed = parse_evidence_fields(ev, [], raw_text=raw_text)
                     cur.execute(
                         """
                         INSERT INTO evidences
@@ -1085,6 +1157,13 @@ def build_objects_sqlite(
                         if anc and (anc in p.get("raw_text", "") or mr.find_anchor_offset(p.get("raw_text", ""), anc, 0)[0] != -1):
                             st_pid = p["passage_id"]
                             break
+                st_type_lec = classify_story_type(
+                    st.get("story_type"),
+                    st.get("title", ""),
+                    st.get("anchor_start", ""),
+                    st.get("summary", ""),
+                    lec_science,
+                )
                 cur.execute(
                     """
                     INSERT INTO stories_cases
@@ -1095,7 +1174,7 @@ def build_objects_sqlite(
                         st_pid,
                         src_id,
                         part_num,
-                        st.get("story_type", "lecture_case"),
+                        st_type_lec,
                         st.get("title", ""),
                         st.get("anchor_start", ""),
                         st.get("summary", ""),

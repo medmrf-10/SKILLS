@@ -364,6 +364,7 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
         merged_stories.append(
             {
                 "case_id": f"{lecture_id}:S{s_idx+1}",
+                "story_type": st.get("story_type") or "fiqhi_case",
                 "title": st.get("title", ""),
                 "anchor_start": s_anc,
                 "summary": st.get("summary", ""),

@@ -379,9 +379,12 @@ def auto_extract_matn_clauses_from_lecture_or_book(
             q_words = q_inner.split()
             if len(q_words) < 4:
                 continue
-            # Avoid pure Hadith quotes if preceded by قال النبي / قال رسول الله
-            pre_ctx = raw_text[max(0, m_q.start() - 55) : m_q.start()]
-            if re.search(r"(?:قال\s+النبي|قال\s+رسول\s+الله|في\s+الحديث|حديث)", pre_ctx):
+            # Avoid pure Hadith quotes if preceded by قال النبي / قال رسول الله / أخرجه / رواه
+            pre_ctx = raw_text[max(0, m_q.start() - 110) : m_q.start()]
+            if re.search(
+                r"(?:قال\s+النبي|قال\s+رسول\s+الله|صلى\s+الله\s+عليه|عليه\s+الصلاة\s+والسلام|ﷺ|في\s+الحديث|حديث|أخرجه|رواه|الصحيحين)",
+                pre_ctx,
+            ):
                 continue
             verb_probe = " ".join(q_words[: min(6, len(q_words))])
             ok_v = (verb_probe in raw_text) or mr.verify_quote_verbatim(verb_probe, raw_text)[0]
@@ -724,6 +727,310 @@ def _extract_exact_surface_mention(p_raw: str, alias_norm: str, disp_name: str) 
     return disp_name
 
 
+KNOWN_HADITH_TAKHRIJ_MAP: list[tuple[str, str]] = [
+    ("انما الاعمال بالنيات", "متفق عليه"),
+    ("من احدث في امرنا هذا", "متفق عليه"),
+    ("من عمل عملا ليس عليه امرنا", "صحيح مسلم"),
+    ("الحلال بين والحرام بين", "متفق عليه"),
+    ("بني الاسلام علي خمس", "متفق عليه"),
+    ("ليس الشديد بالصرعه", "متفق عليه"),
+    ("خير القرون", "متفق عليه"),
+    ("خيركم القرون", "متفق عليه"),
+    ("لم يكذب ابراهيم عليه السلام الا ثلاث", "متفق عليه"),
+    ("خذي ما يكفيك وولدك بالمعروف", "متفق عليه"),
+    ("لا تسبوا اصحابي", "متفق عليه"),
+    ("يخرج من ضيضي هذا", "متفق عليه"),
+    ("الا اخبركم عن النفر الثلاثه", "متفق عليه"),
+    ("يجعل السماوات السبع علي اصبع", "متفق عليه"),
+    ("اعطين الرايه غدا لرجل يحب الله ورسوله", "متفق عليه"),
+    ("قطعت عنق صاحبك", "متفق عليه"),
+    ("يؤتي بالعالم يوم القيامه فيلقي في النار", "متفق عليه"),
+    ("يضحك الله الي رجلين يقتل احدهما الاخر", "متفق عليه"),
+    ("صفه الرحمن فاني احبها", "متفق عليه"),
+    ("من يرد الله به خيرا يفقهه في الدين", "متفق عليه"),
+    ("الايمان بضع وسبعون شعبه", "متفق عليه"),
+    ("لا تغضب", "صحيح البخاري"),
+    ("بضع وستون شعبه", "صحيح البخاري"),
+    ("خيركم من تعلم القران وعلمه", "صحيح البخاري"),
+    ("ان الرجل ليتكلم بالكلمه يضحك بها جلساءه", "صحيح البخاري"),
+    ("الذين يعدلون في حكمهم واهليهم وما ولوا", "صحيح مسلم"),
+    ("الدين النصيحه", "صحيح مسلم"),
+    ("حرم من المسلم دمه وماله وعرضه", "صحيح مسلم"),
+    ("كل المسلم علي المسلم حرام دمه وماله وعرضه", "صحيح مسلم"),
+    ("اتدرون ما الغيبه", "صحيح مسلم"),
+    ("ذكرك اخاك بما يكره", "صحيح مسلم"),
+    ("العظمه ازاري والكبرياء ردايي", "صحيح مسلم"),
+    ("احثوا في وجوه المداحين التراب", "صحيح مسلم"),
+    ("ان الغضب من الشيطان وان الشيطان خلق من النار", "أبو داود"),
+    ("يعجب ربكم من راعي غنم", "أبو داود"),
+    ("يعجب ربكم من عبده اذا قال رب اغفر لي ذنوبي", "أبو داود"),
+    ("رب اغفر لي ذنوبي يعلم انه لا يغفر الذنوب غيري", "أبو داود"),
+    ("اللهم اعني علي ذكرك وشكرك وحسن عبادتك", "أبو داود"),
+    ("لا يخرج الرجلان يضربان الغايط", "أبو داود"),
+    ("ابو بكر في الجنه وعمر في الجنه", "أبو داود"),
+    ("عليكم بسنتي وسنه الخلفاء الراشدين", "أبو داود"),
+    ("المسلمون علي شروطهم", "أبو داود"),
+    ("الخراج بالضمان", "أبو داود"),
+    ("اغتبتها", "أبو داود"),
+    ("ما ضل قوم بعد هدي كانوا عليه الا اوتوا الجدل", "الترمذي"),
+    ("ما ضل قوم بعد هدي الا اوتوا الجدل", "الترمذي"),
+    ("لا تتخذوا الضيعه فترغبوا في الدنيا", "الترمذي"),
+    ("اثقل ما يوضع في الميزان الخلق الحسن", "الترمذي"),
+    ("من كظم غيظا وهو قادر علي ان ينفذه", "الترمذي"),
+    ("من كظم غيظا لو شاء ان يمضيه امضاه", "الترمذي"),
+    ("دب اليكم داء الامم من قبلكم الحسد والبغضاء", "الترمذي"),
+    ("اتق الله حيثما كنت واتبع السييه الحسنه تمحها", "الترمذي"),
+    ("من حسن اسلام المرء تركه ما لا يعنيه", "الترمذي"),
+    ("الصلاه عماد الدين", "الترمذي"),
+    ("لا تمار اخاك ولا تمازحه", "الترمذي"),
+    ("نعم المال الصالح للرجل الصالح", "مسند أحمد"),
+    ("البينه علي المدعي واليمين علي من انكر", "السنن الكبرى للبيهقي"),
+    ("لا ضرر ولا ضرار", "سنن ابن ماجه"),
+]
+
+
+def resolve_hadith_source(h_txt: str, ctx_win: str = "", raw_src: str = "") -> str:
+    """
+    Deterministically classifies the Hadith takhrij source (`hadith_source`) into canonical
+    collections (`متفق عليه`, `صحيح البخاري`, `صحيح مسلم`, `أبو داود`, `الترمذي`, `النسائي`,
+    `سنن ابن ماجه`, `موطأ مالك`, `مسند أحمد`, `السنن الكبرى للبيهقي`) using:
+      1. Explicit attribution in `raw_src` or the local context window `ctx_win`.
+      2. Canonical matn lookup in `KNOWN_HADITH_TAKHRIJ_MAP`.
+    """
+    norm_src = bcg.norm_ar(raw_src or "")
+    norm_ctx = bcg.norm_ar(ctx_win or "")
+    norm_h = bcg.norm_ar(h_txt or "")
+
+    # Guard against multi-collection curriculum lists (e.g. 'الموطأ ثم صحيح البخاري، صحيح مسلم، السنن الأربعة: الترمذي وأبو داود')
+    if sum(1 for kw in ("البخاري", "مسلم", "الترمذي", "داود", "النسايي", "ماجه") if kw in norm_ctx) >= 4:
+        norm_ctx = ""
+
+    for probe in (norm_src, f"{norm_src} {norm_ctx}".strip()):
+        if not probe:
+            continue
+        # 1. Muttafaq 'Alayh (Bukhari & Muslim together)
+        if re.search(
+            r"(?:متفق\s+عليه|في\s+الصحيحين|رواه\s+الشيخان|اخرجه\s+الشيخان|عند\s+الشيخين|اتفق\s+عليه|"
+            r"البخاري\s+ومسلم|البخاري\s+وصحيح\s+مسلم|مسلم\s+والبخاري)",
+            probe,
+        ):
+            return "متفق عليه"
+        # 2. Sahih al-Bukhari
+        if re.search(
+            r"(?:صحيح\s+البخاري|(?:رواه|روي|اخرجه|في|عند|حديث|الامام)\s+(?:الامام\s+)?البخاري\b|^البخاري$)",
+            probe,
+        ):
+            return "صحيح البخاري"
+        # 3. Sahih Muslim (strictly avoiding 'رجل مسلم' / 'كل مسلم')
+        if re.search(
+            r"(?:صحيح\s+مسلم|(?:رواه|روي|اخرجه|في|عند|الامام)\s+(?:الامام\s+)?مسلم\b|^مسلم$)",
+            probe,
+        ):
+            return "صحيح مسلم"
+        # 4. Abu Dawud
+        if re.search(r"\b(?:ابو|ابي|ابا)\s+داود\b", probe):
+            return "أبو داود"
+        # 5. Al-Tirmidhi
+        if re.search(r"\bالترمذي\b", probe):
+            return "الترمذي"
+        # 6. Other canonical collections
+        if re.search(r"\bالنسايي\b", probe):
+            return "النسائي"
+        if re.search(r"\bابن\s+ماجه\b", probe):
+            return "سنن ابن ماجه"
+        if re.search(r"(?:\bموطا\b|(?:رواه|اخرجه|في)\s+مالك\b)", probe):
+            return "موطأ مالك"
+        if re.search(r"(?:مسند\s+(?:الامام\s+)?احمد|(?:رواه|روي|اخرجه)\s+(?:الامام\s+)?احمد\b)", probe):
+            return "مسند أحمد"
+        if re.search(r"\bالبيهقي\b", probe):
+            return "السنن الكبرى للبيهقي"
+        if re.search(r"\bالدارقطني\b", probe):
+            return "سنن الدارقطني"
+        if re.search(r"\b(?:المستدرك|الحاكم)\b", probe):
+            return "المستدرك للحاكم"
+
+    # 7. Canonical Hadith Matn stem lookup
+    if norm_h:
+        for stem_norm, canon_src in KNOWN_HADITH_TAKHRIJ_MAP:
+            if stem_norm in norm_h or (len(norm_h) >= 12 and norm_h in stem_norm):
+                return canon_src
+
+    if raw_src and raw_src.strip() not in ("", "مصدر حديثي", "حديث"):
+        return raw_src.strip()
+    if re.search(r"(?:الحديث\s+الصحيح|حديث\s+صحيح|في\s+الصحيح\b)", f"{norm_src} {norm_ctx}"):
+        return "الحديث الصحيح"
+    return "السنة النبوية"
+
+
+HADITH_QUOTED_LEAD_RE = re.compile(
+    r"(?:"
+    r"(?:قال|يقول|لقول|قوله|وقوله)\s+(?:رسول\s+الله|النبي|المصطفى)?\s*(?:صلى\s+الله\s+عليه(?:\s+وآله)?\s+وسلم|عليه\s+الصلاة\s+والسلام|ﷺ)"
+    r"|(?:سمعت|سمع)\s+(?:رسول\s+الله|النبي)\s+(?:صلى\s+الله\s+عليه(?:\s+وآله)?\s+وسلم|ﷺ)\s+يقول"
+    r"|(?:أن|إن)\s+(?:رسول\s+الله|النبي)\s+(?:صلى\s+الله\s+عليه(?:\s+وآله)?\s+وسلم|ﷺ)\s+قال"
+    r"|في\s+(?:الحديث(?:\s+الصحيح|\s+الشريف|\s+القدسي)?|الصحيحين|صحيح\s+البخاري|صحيح\s+مسلم)"
+    r"|(?:روى|رواه|أخرجه)\s+(?:الإمام\s+)?(?:البخاري(?:\s+ومسلم)?|مسلم|أبو\s+داود|أبي\s+داود|الترمذي|النسائي|ابن\s+ماجه|أحمد|مالك|الشيخان|البيهقي)"
+    r"|حديث\s+(?:أبي\s+هريرة|ابن\s+عمر|ابن\s+عباس|عائشة|أنس|جابر|أبي\s+سعيد|عقبة\s+بن\s+عامر|علي\s+بن\s+أبي\s+طالب|عمر\s+بن\s+الخطاب|النبي|رسول\s+الله)"
+    r")"
+    r"([^.!؟\n«\"()﴿﴾{}]{0,95}?)"
+    r"(?:«([^»\n]{5,260})»|\"([^\"\n]{5,260})\"|\(([^\)\n٠-٩0-9]{12,260})\))"
+)
+
+HADITH_UNQUOTED_LEAD_RE = re.compile(
+    r"(?:"
+    r"(?:قال|يقول|لقول|قوله)\s+(?:رسول\s+الله|النبي)\s+(?:صلى\s+الله\s+عليه(?:\s+وآله)?\s+وسلم|عليه\s+الصلاة\s+والسلام|ﷺ)\s*[:،]\s*"
+    r"|(?:روى|رواه|أخرجه)\s+(?:الإمام\s+)?(?:البخاري(?:\s+ومسلم)?|مسلم|أبو\s+داود|أبي\s+داود|الترمذي|النسائي|ابن\s+ماجه|أحمد|مالك|الشيخان)"
+    r"(?:\s+في\s+(?:صحيحه|سننه|الصحيحين|الصحيح|السنن))?"
+    r"(?:\s+(?:عن|من\s+حديث)\s+[^\n:،.!؟]{3,45})?"
+    r"(?:\s+أن\s+(?:رسول\s+الله|النبي)\s+(?:صلى\s+الله\s+عليه(?:\s+وآله)?\s+وسلم|ﷺ)\s+قال)?\s*[:،]\s*"
+    r"|في\s+(?:الحديث\s+الصحيح|الصحيحين|صحيح\s+البخاري|صحيح\s+مسلم)\s*(?:أنه\s+(?:صلى\s+الله\s+عليه\s+وسلم\s+)?قال\s*)?[:،]\s*"
+    r")"
+    r"([^\n.!؟«»\"﴿﴾{}]{10,180})"
+)
+
+HADITH_FAMOUS_INLINE_RE = re.compile(
+    r"\bحديث\s+[«\"]?("
+    r"(?:إنما\s+الأعمال\s+بالنيات|لا\s+ضرر\s+ولا\s+ضرار|البينة\s+على\s+المدعي|الدين\s+النصيحة|"
+    r"من\s+أحدث\s+في\s+أمرنا\s+هذا|من\s+عمل\s+عملا\s+ليس\s+عليه\s+أمرنا|كل\s+المسلم\s+على\s+المسلم\s+حرام|"
+    r"المسلمون\s+على\s+شروطهم|الخراج\s+بالضمان|الحلال\s+بين\s+والحرام\s+بين|بني\s+الإسلام\s+على\s+خمس|"
+    r"خير\s+القرون\s+قرني|خيركم\s+من\s+تعلم\s+القرآن|من\s+يرد\s+الله\s+به\s+خيرا|"
+    r"الحبر\s+أنه\s+يجعل\s+السماوات\s+السبع\s+على\s+إصبع|الحَبْر\s+أنه\s+يجعل\s+السماوات\s+السبع\s+على\s+إصبع)"
+    r"[^\n.!؟؛«»\"﴿﴾{}]{0,95})"
+)
+
+HADITH_FALSE_COMMENTARY_RE = re.compile(
+    r"(?:"
+    r"\b(?:يعني|طيب|خلي\s+بالك|ما\s+ينفعش|ده\s+حديث|هات\s+الصحابي|كانوا\s+بيعملوا|بتاع|إزاي|عشان|"
+    r"سنتكلم\s+عنها|وهذا\s+يمكن\s+أن|تفسيرها\s+قراءتها|فكيف\s+إذا|إلى\s+آخر\s+ما\s+هنالك|"
+    r"وصل\s+لنا\s+حتى\s+الآن|وعندنا\s+علم|متن\s+الحديث\s+وأصوله|بثلاث\s+روايات|مرسل\b|موضوع\b)\b"
+    r"|^(?:فكيف|فهذا|وهذا|ولذلك|فلهذا|أي\s+|بمعنى|لا\s*،|نعم\s*،|ثم\s+انتقل|قال\s+المصنف|قال\s+الناظم|كذلك\b|شخص\s+الله)"
+    r")"
+)
+
+
+def _build_local_hadith_takhrij_window(p_raw: str, m_start: int, m_end: int) -> str:
+    """
+    Constructs a local context window around `[m_start, m_end]` for hadith source attribution,
+    stopping at boundaries of any previous quote/sentence or subsequent hadith.
+    """
+    pre = p_raw[max(0, m_start - 140) : m_start]
+    # Never bleed across an earlier sentence period or an earlier closing quote («...»)
+    last_sep = max(pre.rfind("."), pre.rfind("\n"), pre.rfind("؛"), pre.rfind("»"), pre.rfind('"'))
+    if last_sep != -1:
+        pre = pre[last_sep + 1 :]
+    post = p_raw[m_end : min(len(p_raw), m_end + 140)]
+    m_next_h = re.search(
+        r"(?:[«\"]|[،.؛]\s*(?:أما\s+حديث|وفي\s+حديث|ومن\s+الأحاديث|وحديث\s+آخر|وقال\s+صلى\s+الله|وقال\s+رسول\s+الله|قال\s+رسول\s+الله|قال\s+النبي|(?:و|ف)?(?:ما\s+)?(?:رواه|أخرجه|روى)\s+))",
+        post,
+    )
+    if m_next_h:
+        post = post[: m_next_h.start()]
+    return f"{pre} {p_raw[m_start:m_end]} {post}"
+
+
+def _clean_and_validate_hadith_span(cand: str, p_raw: str, is_quoted: bool) -> str:
+    s = (cand or "").strip(" \t\r\n،.؛:؟!«»\"'()-")
+    if not s or "{" in s or "}" in s or "﴿" in s or "﴾" in s:
+        return ""
+    if not is_quoted:
+        s = re.split(
+            r"(?:[،؛:]\s*(?:وهذا\s+|فهذا\s+|ولذلك\s+|فلهذا\s+|يعني\s+|أي\s+|والمراد\s+|ومعنى\s+|"
+            r"(?:و|ف)?(?:ما\s+)?(?:رواه|أخرجه|روى|ورد)\s+|متفق\s+عليه|والحديث\s+في|الحديث\s+في|"
+            r"فيكون\s+المقصود|وفي\s+الحديث|وكذلك\s+|ولما\s+|أما\s+)|:)",
+            s,
+        )[0].strip(" \t\r\n،.؛:؟!«»\"'()-")
+    if not s or HADITH_FALSE_COMMENTARY_RE.search(s):
+        return ""
+    words = s.split()
+    min_w = 2 if is_quoted else 3
+    if len(words) < min_w or len(words) > 48:
+        return ""
+    if s not in p_raw:
+        return ""
+    return s
+
+
+def extract_hadith_evidences_from_text(p_raw: str) -> list[dict]:
+    """
+    Deterministically extracts Prophetic Hadith evidences (`type='حديث'`, `evidence_type='hadith'`)
+    from `p_raw` with canonical `hadith_source` attribution (`صحيح البخاري`, `صحيح مسلم`,
+    `أبو داود`, `الترمذي`, `متفق عليه`, etc.) while filtering out ordinary commentary sentences.
+    """
+    hadiths: list[dict] = []
+    seen_norms: set[str] = set()
+
+    # Pass 1: Explicitly quoted Hadiths («...», "...", (...)) following a Prophetic or Takhrij lead-in
+    for m in HADITH_QUOTED_LEAD_RE.finditer(p_raw):
+        bridge = m.group(1) or ""
+        if re.search(r"(?:فلذلك|ولهذا|فلهذا)\s+قال|قال\s+(?:المصنف|الناظم|المؤلف|الشيخ)", bridge):
+            continue
+        raw_q = m.group(2) or m.group(3) or m.group(4) or ""
+        h_txt = _clean_and_validate_hadith_span(raw_q, p_raw, is_quoted=True)
+        if not h_txt:
+            continue
+        nh = bcg.norm_ar(h_txt)
+        if not nh or nh in seen_norms:
+            continue
+        seen_norms.add(nh)
+        ctx_win = _build_local_hadith_takhrij_window(p_raw, m.start(), m.end())
+        h_src = resolve_hadith_source(h_txt, ctx_win, raw_src=p_raw[m.start() : m.end()])
+        hadiths.append(
+            {
+                "type": "حديث",
+                "evidence_type": "hadith",
+                "text": h_txt,
+                "source": h_src,
+                "hadith_source": h_src,
+                "indicative_aspect": f"شاهد حديثي نبوي ({h_src}) في تقرير المسألة المشروحة",
+            }
+        )
+
+    # Pass 2: Unquoted Prophetic statements after explicit colon/comma lead-in
+    for m in HADITH_UNQUOTED_LEAD_RE.finditer(p_raw):
+        h_txt = _clean_and_validate_hadith_span(m.group(1), p_raw, is_quoted=False)
+        if not h_txt:
+            continue
+        nh = bcg.norm_ar(h_txt)
+        if not nh or any(nh in ex or ex in nh for ex in seen_norms):
+            continue
+        seen_norms.add(nh)
+        ctx_win = _build_local_hadith_takhrij_window(p_raw, m.start(), m.end())
+        h_src = resolve_hadith_source(h_txt, ctx_win, raw_src=p_raw[m.start() : m.end()])
+        hadiths.append(
+            {
+                "type": "حديث",
+                "evidence_type": "hadith",
+                "text": h_txt,
+                "source": h_src,
+                "hadith_source": h_src,
+                "indicative_aspect": f"شاهد حديثي نبوي ({h_src}) في تقرير المسألة المشروحة",
+            }
+        )
+
+    # Pass 3: Famous canonical Hadiths cited inline via 'حديث ...'
+    for m in HADITH_FAMOUS_INLINE_RE.finditer(p_raw):
+        h_txt = _clean_and_validate_hadith_span(m.group(1), p_raw, is_quoted=False)
+        if not h_txt:
+            continue
+        nh = bcg.norm_ar(h_txt)
+        if not nh or any(nh in ex or ex in nh for ex in seen_norms):
+            continue
+        seen_norms.add(nh)
+        ctx_win = _build_local_hadith_takhrij_window(p_raw, m.start(), m.end())
+        h_src = resolve_hadith_source(h_txt, ctx_win, raw_src=p_raw[m.start() : m.end()])
+        hadiths.append(
+            {
+                "type": "حديث",
+                "evidence_type": "hadith",
+                "text": h_txt,
+                "source": h_src,
+                "hadith_source": h_src,
+                "indicative_aspect": f"شاهد حديثي نبوي ({h_src}) في تقرير المسألة المشروحة",
+            }
+        )
+
+    return hadiths
+
+
 def detect_passage_entities(p_raw: str, base_matn_text: str = "") -> tuple[list, list, list, list]:
     """Deterministically detects persons, places, chronology, and Quranic/Hadith evidences in `p_raw`."""
     persons = []
@@ -780,6 +1087,11 @@ def detect_passage_entities(p_raw: str, base_matn_text: str = "") -> tuple[list,
             }
         )
 
+    for h_ev in extract_hadith_evidences_from_text(p_raw):
+        if h_ev["text"] not in seen_ev:
+            seen_ev.add(h_ev["text"])
+            evidences.append(h_ev)
+
     return persons, places, chronology, evidences
 
 
@@ -808,18 +1120,88 @@ def _extract_passage_focus_phrase(p_raw: str, idx: int, lec_title: str) -> str:
     return f"مسائل {lec_title} (المقطع {idx + 1})"
 
 
-STORY_AND_CASE_MARKERS: list[tuple[re.Pattern, str, str]] = [
+STORY_AND_CASE_MARKERS: list[tuple[re.Pattern, str, str, str]] = [
     (
-        re.compile(r"(?:قصة|حكاية|وقع\s+لـ|يحكى\s+أن|يروى\s+أن|دخل\s+على|جاء\s+رجل\s+إلى|سئل\s+الإمام|سئل\s+الشيخ|لما\s+دخل|كان\s+الإمام|أخبرني\s+بعض)"),
-        "خبر وواقعة تاريخية",
-        "الاعتبار بسير العلماء والوقائع التاريخية في تحقيق المسألة.",
+        re.compile(
+            r"(?:"
+            r"(?:في\s+)?غزوة\s+(?:بدر|أحد|الخندق|الأحزاب|خيبر|حنين|تبوك|مؤتة|بني\s+قريظة|بني\s+المصطلق|الحديبية)"
+            r"|يوم\s+(?:بدر|أحد|حنين|خيبر|الفتح|الأحزاب|السقيفة)"
+            r"|(?:جاء|دخل|أتى)\s+(?:رجل|أعرابي|جبريل|ضمام|صهيب|معاذ|أبو\s+ذر|عمر|أبو\s+بكر)\s+(?:إلى|على)\s+(?:النبي|رسول\s+الله)"
+            r"|لما\s+(?:حاصر|دخل|هاجر|بعث|قال)\s+(?:النبي|رسول\s+الله)\s+صلى\s+الله\s+عليه\s+وسلم"
+            r"|قصة\s+(?:الإفك|الثلاثة\s+الذين\s+خلفوا|ذي\s+الخويصرة|حاطب\s+بن\s+أبي\s+بلتعة|كعب\s+بن\s+مالك|أسامة\s+بن\s+زيد|خالد\s+بن\s+الوليد|صلح\s+الحديبية|فتح\s+مكة|حجة\s+الوداع)"
+            r"|(?:في|على)\s+عهد\s+(?:النبي|رسول\s+الله)\s+صلى\s+الله\s+عليه\s+وسلم"
+            r"|لما\s+كان\s+(?:محاصر\s+خيبر|يوم\s+بدر|يوم\s+أحد|يوم\s+حنين|بيقاتل\s+الرجل)"
+            r")"
+        ),
+        "prophetic_sirah",
+        "واقعة من السيرة النبوية",
+        "الهدي النبوي والتشريع العملي المستفاد",
     ),
     (
-        re.compile(r"(?:مثاله|مثال\s+ذلك|ومثاله|كمسألة|صورة\s+المسألة|لو\s+قال\s+لها|لو\s+باع|لو\s+اشترى|لو\s+حلف|تقول\s+مثلا|كقولك|نحو\s+قولك|مثل\s+أن\s+يقول)"),
-        "مسألة تطبيقية وتمثيل",
-        "تنزيل القاعدة التأصيلية على الفروع والصور التطبيقية.",
+        re.compile(
+            r"(?:"
+            r"سئل\s+(?:الإمام|الشيخ|العلامة|القاضي|مالك|الشافعي|أبو\s+حنيفة|أحمد|الأوزاعي|سفيان|الجنيد|الحسن|ابن\s+عباس|ابن\s+عمر|علي\s+بن\s+أبي\s+طالب|عن\s+القدر|عن\s+الاستواء)"
+            r"|(?:دخل|جاء)\s+(?:رجل\s+)?(?:إلى|على)\s+(?:الإمام|الشيخ|مالك|الشافعي|أبي\s+حنيفة|أحمد|الحسن\s+البصري|ابن\s+سيرين|سفيان)"
+            r"|(?:مناظرة|ناظر)\s+(?:الإمام|الشيخ|أبو\s+حنيفة|الشافعي|الباقلاني|الغزالي|الأشعري|ابن\s+تيمية|الرازي)"
+            r"|قيل\s+(?:للإمام|لأبي\s+حنيفة|لمالك|للشافعي|لأحمد|للحسن|لبعض\s+الحكماء|لبعض\s+السلف)"
+            r"|(?:يروى|حكي|يحكى|روي)\s+(?:عن|أن)\s+(?:الإمام|الشيخ|بعض\s+العلماء|بعض\s+السلف|الشافعي|مالك|أحمد|أبا\s+حنيفة)"
+            r"|كان\s+(?:الإمام|الشيخ)\s+[^\n.!؟،]{3,35}\s+(?:يقول|إذا\s+سئل|إذا\s+دخل)"
+            r")"
+        ),
+        "scholarly_anecdote",
+        "موقف ونادرة علمية",
+        "المنهج العلمي والأدب التحقيقي للأئمة",
+    ),
+    (
+        re.compile(
+            r"(?:"
+            r"في\s+(?:عهد|خلافة|زمن|أيام|دولة)\s+(?:بني\s+أمية|بني\s+العباس|الدولة\s+الأموية|الدولة\s+العباسية|معاوية|عمر\s+بن\s+الخطاب|عثمان\s+بن\s+عفان|علي\s+بن\s+أبي\s+طالب|أبي\s+بكر\s+الصديق|عمر\s+بن\s+عبد\s+العزيز|هارون\s+الرشيد|المأمون|المعتصم|المتوكل|الحجاج|صلاح\s+الدين)"
+            r"|(?:وقعة|معركة|يوم)\s+(?:الجمل|صفين|اليرموك|القادسية|النهروان|الحرة|حطين|عين\s+جالوت|مرج\s+دابق)"
+            r"|فتنة\s+(?:مقتل\s+عثمان|خلق\s+القرآن|ابن\s+الأشعث|الخوارج)"
+            r"|لما\s+(?:تولى|ولي|دخل\s+على\s+سيدنا\s+معاوية|خرج\s+الخوارج|اختلف\s+أبو\s+بكر\s+وعمر)\b"
+            r"|دخل\s+على\s+(?:سيدنا\s+)?(?:معاوية|عمر\s+بن\s+الخطاب|عمر\s+بن\s+عبد\s+العزيز|هارون\s+الرشيد|المأمون|الحجاج|عبد\s+الملك)"
+            r"|قصة\s+(?:بني\s+أمية|بني\s+العباس|الخوارج|المعتزلة|خلق\s+القرآن|مقتل\s+عثمان|عيسى\s+بن\s+مريم)"
+            r")"
+        ),
+        "historical_incident",
+        "واقعة وخبر تاريخي",
+        "العبرة التاريخية والسنن السياسية والاجتماعية",
+    ),
+    (
+        re.compile(
+            r"(?:"
+            r"(?:مثاله|مثال\s+ذلك|ومثاله|كمسألة|صورة\s+المسألة|فرع\s+فقهي|نازلة\s+فقهية)"
+            r"|لو\s+(?:قال\s+لها|قال\s+لأحدهم|باع|اشترى|حلف|طلق|صلى|توضأ|نذر|أوصى|وقف|اشترط|ترك\s+فرضاً|ترك\s+ركناً|شك\s+في|أحدث)"
+            r"|من\s+(?:ترك\s+فرضاً|ترك\s+شرطاً|ترك\s+ركناً|أحدث\s+في\s+صلاته|تيمم\s+ثم\s+وجد\s+الماء|شك\s+في\s+عدد)"
+            r"|(?:تقول\s+مثلاً|كقولك\s+مثلاً|تقول\s+مثلا|كقولك|نحو\s+قولك|مثل\s+أن\s+يقول)"
+            r")"
+        ),
+        "fiqhi_case",
+        "مسألة ونازلة فقهية تطبيقية",
+        "الحكم الفقهي وتنزيل القاعدة التأصيلية على الفرع",
     ),
 ]
+
+
+def derive_story_lesson(story_type: str, lesson_prefix: str, slice_from: str, snippet: str, sub_heading: str) -> str:
+    """
+    Synthesizes a concrete, context-grounded `lesson` (العبرة / الحكم المستفاد) from the passage context
+    following the story/case marker.
+    """
+    window = (slice_from or "")[:360]
+    m_ruling = re.search(
+        r"(?:فدل\s+ذلك\s+على\s+أن|ويستفاد\s+من\s+هذا|والعبرة\s+من\s+ذلك|والشاهد\s+منه|فالحكم\s+فيها|"
+        r"فيجب\s+على|فلا\s+يجوز|فلا\s+يصح|ولذلك\s+قال\s+العلماء|وهذا\s+يدل\s+على\s+أن|ومحل\s+الشاهد|"
+        r"فمن\s+ترك\s+فرضاً|فقال\s+له\s*:\s*الاستواء\s+معلوم|فقال\s*:\s*«?أقتلته\s+بعدما\s+قال|فإذا\s+ورد\s+الدليل\s+المخصص)"
+        r"([^.!؟\n]{6,130})",
+        window,
+    )
+    if m_ruling:
+        ruling_clause = _sanitize_no_guillemets(strip_spoken_fillers(m_ruling.group(0))).strip(" ،.؛:؟!")
+        if len(ruling_clause.split()) >= 4:
+            return f"{lesson_prefix}: {ruling_clause}."
+    core_words = " ".join(snippet.split()[:12]).strip(" ،.؛:؟!")
+    return f"{lesson_prefix} في ({sub_heading}): {core_words}."
 
 
 def extract_lecture_stories_and_cases(
@@ -830,21 +1212,22 @@ def extract_lecture_stories_and_cases(
     target_stories: int,
 ) -> list[dict]:
     """
-    Extracts real applied fiqhi/usuli/grammatical cases or historical/biographical stories
-    from the lecture passages, avoiding opening jingles/Basmalah in `P1` whenever possible.
-    Guarantees every story's `anchor_start` (>= 4 words) resolves in `raw_text`.
+    Extracts structured stories and applied cases (`story_type` in `{'historical_incident',
+    'prophetic_sirah', 'fiqhi_case', 'scholarly_anecdote'}`) with grounded `lesson` and
+    verified `anchor_start` (>= 4 words), avoiding opening jingles/Basmalah in `P1`.
     """
     stories: list[dict] = []
     used_anchors: set[str] = set()
+    max_explicit_stories = max(target_stories, 6)
 
-    # Pass 1: Look for explicit story/case markers across passages (preferring P2..Pn first, then P1)
+    # Pass 1: Collect explicit story/case markers across passages (preferring P2..Pn first, then P1),
+    # iterating by story_type category first so all distinct story_types present in the lecture are captured.
     order = list(range(1, len(passages))) + ([0] if passages else [])
-    for p_idx in order:
-        c_start, c_end = spans[p_idx]
-        p_raw = raw_text[c_start:c_end]
-        for pat, kind_label, lesson_str in STORY_AND_CASE_MARKERS:
+    for pat, st_type, kind_label, lesson_prefix in STORY_AND_CASE_MARKERS:
+        for p_idx in order:
+            c_start, c_end = spans[p_idx]
+            p_raw = raw_text[c_start:c_end]
             for m in pat.finditer(p_raw):
-                # Start at the match or beginning of its clause
                 slice_from = p_raw[m.start() :]
                 words = slice_from.strip().split()
                 if len(words) < 6:
@@ -852,30 +1235,32 @@ def extract_lecture_stories_and_cases(
                 s_anc = " ".join(words[:6])
                 if MUQADDIMAH_OR_PROCEDURAL_RE.search(s_anc) or s_anc in used_anchors:
                     continue
-                if mr.find_anchor_pos(raw_text, s_anc, 0) == -1:
+                if mr.find_anchor_pos(raw_text, s_anc, c_start) == -1 and mr.find_anchor_pos(raw_text, s_anc, 0) == -1:
                     continue
                 used_anchors.add(s_anc)
                 snippet = _sanitize_no_guillemets(strip_spoken_fillers(" ".join(words[:18])))
+                sub_h = passages[p_idx]["sub_heading"]
+                lesson_str = derive_story_lesson(st_type, lesson_prefix, slice_from, snippet, sub_h)
                 stories.append(
                     {
+                        "story_type": st_type,
                         "title": f"{kind_label}: {' '.join(snippet.split()[:6])}",
                         "anchor_start": s_anc,
-                        "summary": f"{kind_label} في ({passages[p_idx]['sub_heading']}): {snippet}.",
+                        "summary": f"{kind_label} في ({sub_h}): {snippet}.",
                         "lesson": lesson_str,
                     }
                 )
                 break
-            if len(stories) >= target_stories:
+            if len(stories) >= max_explicit_stories:
                 break
-        if len(stories) >= target_stories:
+        if len(stories) >= max_explicit_stories:
             break
 
-    # Pass 2: Fill any remaining slots from substantive non-introductory passages
+    # Pass 2: Fill any remaining required slots up to `target_stories` from substantive non-introductory passages
     if len(stories) < target_stories and passages:
         for p_idx in order:
             c_start, c_end = spans[p_idx]
             p_raw = raw_text[c_start:c_end]
-            # Find a non-muqaddimah sentence inside p_raw
             chosen_anc = ""
             chosen_snip = ""
             for sent_m in re.finditer(r"[^.!؟\n]{25,180}", p_raw):
@@ -896,12 +1281,14 @@ def extract_lecture_stories_and_cases(
                     chosen_snip = _sanitize_no_guillemets(strip_spoken_fillers(p_raw))[:110]
             if chosen_anc:
                 used_anchors.add(chosen_anc)
+                sub_h = passages[p_idx]["sub_heading"]
                 stories.append(
                     {
-                        "title": f"مسألة تطبيقية في {passages[p_idx]['sub_heading']}",
+                        "story_type": "fiqhi_case",
+                        "title": f"مسألة تطبيقية في {sub_h}",
                         "anchor_start": chosen_anc,
-                        "summary": f"بيان تطبيقي وتمثيلي للمسألة المشروحة في ({passages[p_idx]['sub_heading']}): {chosen_snip}.",
-                        "lesson": "ربط القاعدة الكلية في المتن بصورها التطبيقية والعملية.",
+                        "summary": f"بيان تطبيقي وتمثيلي للمسألة المشروحة في ({sub_h}): {chosen_snip}.",
+                        "lesson": f"الحكم الفقهي وتنزيل القاعدة التأصيلية على الفرع في ({sub_h}): {' '.join(chosen_snip.split()[:10])}.",
                     }
                 )
             if len(stories) >= target_stories:
@@ -995,7 +1382,11 @@ def auto_build_deep_lecture_extraction(lecture_id: str, raw_lec: dict) -> dict:
             f"تحرير مسألة: {focus_phrase}",
         ]
         if evidences:
-            topics.append(f"الاستدلال بقوله تعالى في {evidences[0]['source']}")
+            first_ev = evidences[0]
+            if first_ev.get("type") in ("حديث", "hadith", "أثر", "athar") or first_ev.get("evidence_type") in ("hadith", "athar"):
+                topics.append(f"الاستدلال بالحديث النبوي في ({first_ev['source']})")
+            else:
+                topics.append(f"الاستدلال بقوله تعالى في {first_ev['source']}")
         else:
             topics.append(f"الضوابط التأصيلية في {lec_title} (المبحث {idx + 1})")
         if persons:

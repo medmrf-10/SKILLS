@@ -513,21 +513,26 @@ def find_anchor_offset(text: str, anchor: str, min_offset: int = 0):
     if not anchor or not text:
         return -1, "failed"
     anchor = anchor.strip()
-    norm_text_raw, _ = normalize_words_only(text, strip_ed_noise=False)
     norm_anc_raw, _ = normalize_words_only(anchor, strip_ed_noise=False)
-    if not norm_text_raw or not norm_anc_raw:
+    if not norm_anc_raw:
         return -1, "failed"
 
     anc_words = norm_anc_raw.split()
-    text_words = norm_text_raw.split()
-    min_required_words = min(4, len(text_words))
-    if len(anc_words) < min_required_words:
-        return -1, "failed"
+    if len(anc_words) < 4:
+        norm_text_raw, _ = normalize_words_only(text, strip_ed_noise=False)
+        if not norm_text_raw:
+            return -1, "failed"
+        text_words = norm_text_raw.split()
+        if len(anc_words) < min(4, len(text_words)):
+            return -1, "failed"
 
     # 1. Try full exact match first (allowing spaces or newlines between exact tokens)
     idx = text.find(anchor, min_offset)
+    if idx == min_offset:
+        return idx, "exact"
     ws_pat = re.compile(r"\s+".join(re.escape(w) for w in anchor.split()))
-    m_ws = ws_pat.search(text, min_offset)
+    search_end = (idx + len(anchor)) if idx != -1 else len(text)
+    m_ws = ws_pat.search(text, min_offset, search_end)
     if m_ws is not None and (idx == -1 or m_ws.start() < idx):
         idx = m_ws.start()
     if idx != -1:
