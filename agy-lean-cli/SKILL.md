@@ -41,8 +41,12 @@ description: استدعاء أداة Antigravity CLI (agy) في بيئة معز�
    - إذا وُجدت نافذتان (`5h` + `Weekly`) لنفس الفئة، يطبّق `check_quota()` و`select_best_model()` الحارس المزدوج ويمنع الاستدعاء إذا اختلّ أيٌّ من الشرطين.
 3. **التبديل التلقائي متعدد البدائل (`Multi-Hop Smart Model Routing`):**
    - إذا طُلب نموذج محظور الكوتة (مثل `Claude Opus / Sonnet` عند `4.71%`)، يحوّله `select_best_model()` تلقائياً عبر سلسلة البدائل (`gemini-3.8-flash-high` ثم `gemini-4-argon-high` ثم `gemini-3.8-flash-medium`) إلى أعلى نموذج آمن متاح.
-4. **التنظيف الحتمي الشامل بعد كل استدعاء (`Deterministic Session & DB Cleanup`):**
-   - ينظف `_cleanup_lean_conv()` تلقائياً داخل `finally` (حتى عند حدوث `TimeoutExpired`): مجلدات `brain/*`، `conversations/*`، `annotations/*`، `presence/*`، ملفات `implicit/<uuid>.pb` ذات المعرفات المستقلة، قواعد البيانات المتضخمة (`conversation_summaries.db*` و`jetbox_summaries_proto.pb*.tmp`)، وأي ملف `.gemini/config/mcp_config.json` فارغ ينشئه `agy` تلقائياً عند الإقلاع على Linux.
+4. **التهدئة التكيفية للتوازي وتقدير معدل الاستهلاك (`Burn-Rate Prediction & Adaptive Concurrency Throttling`):**
+   - عبر `recommend_concurrency_from_quota()` (والمرادف `compute_quota_burn_rate_and_recommended_workers()`): بدلاً من العمل بـ 16 عاملاً بأقصى سرعة حتى الاصطدام المفاجئ بجدار الـ `15%`، يحسب معدل الاستهلاك بالساعة (`burn_rate_pct_per_hour`) ويقلّص العمال المتوازيين تدريجياً (`16 -> 8` تحت `40%`، و`16 -> 4` تحت `25%`، و`0` تحت `15%`).
+5. **كشف أخطاء `429 / ResourceExhausted / QuotaExceeded` والتراجع الأسي (`Adaptive Rate-Limit Backoff`):**
+   - يميّز `classify_agy_error()` و`run_agy_lean()` أخطاء تجاوز المعدل (`error_type="rate_limit"`) وينتظر بـ `Exponential Backoff + Jitter` (مع احترام `Retry-After`) قبل إعادة المحاولة الذكية بدلاً من الفشل الفوري.
+6. **التنظيف الحتمي الشامل بعد كل استدعاء (`Deterministic Session & DB Cleanup`):**
+   - ينظف `_cleanup_lean_conv()` تلقائياً داخل `finally` (حتى عند حدوث `TimeoutExpired` أو إعادة المحاولة): مجلدات `brain/*`، `conversations/*`، `annotations/*`، `presence/*`، ملفات `implicit/<uuid>.pb` ذات المعرفات المستقلة، قواعد البيانات المتضخمة (`conversation_summaries.db*` و`jetbox_summaries_proto.pb*.tmp`)، وأي ملف `.gemini/config/mcp_config.json` فارغ ينشئه `agy` تلقائياً عند الإقلاع على Linux.
 
 ---
 
@@ -51,8 +55,11 @@ description: استدعاء أداة Antigravity CLI (agy) في بيئة معز�
 ### أ) الاستخدام من سطر الأوامر (`CLI`)
 
 ```bash
-# 1. فحص حالة الكوتة الحية وقرار الحارس لكل المجموعات
+# 1. فحص حالة الكوتة الحية وقرار الحارس وتوصية التوازي لكل المجموعات
 python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/agy_lean.py --check-quota
+
+# 1b. حساب عدد العمال المتوازيين الآمن وفق معدل استهلاك الكوتة الحالي
+python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/agy_lean.py --recommend-workers --max-workers 16
 
 # 2. استدعاء نصي خفيف ومعزول (0 MCP tokens) في وضع القراءة/الاستشارة (--mode ask)
 python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/agy_lean.py \
@@ -71,33 +78,36 @@ python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/agy_lean.py \
 ### ب) الاستخدام كمكتبة بايثون (`Python API`)
 
 ```python
-from agy_lean import check_quota, run_agy_lean
+from agy_lean import check_quota, recommend_concurrency_from_quota, run_agy_lean
 
-# 1. التحقق من الكوتة
-q = check_quota(model_hint="gemini-3.8-flash-high", background=True)
-if not q["safe"]:
-    raise RuntimeError(q["reason"])
+# 1. التحقق من الكوتة وتحديد عدد العمال المتوازيين الآمن
+rec = recommend_concurrency_from_quota(model_hint="gemini-3.8-flash-high", max_workers=16, background=True)
+if not rec["safe"]:
+    raise RuntimeError(rec["reason"])
+safe_workers = rec["recommended_workers"]
 
-# 2. استدعاء رشيق ومعزول
+# 2. استدعاء رشيق ومعزول (مع تراجع أسي تلقائي عند 429 / ResourceExhausted)
 res = run_agy_lean(
     prompt="لخص القاعدة الأصولية في جملة واحدة.",
     model="gemini-3.8-flash-high",
     mode="ask",
     files=["/path/to/sample.txt"],
     background=True,
+    max_retries=2,
 )
 print(res["response"])
 ```
 
 ---
 
-## ٤. بوابة الفحص الحتمية رباعية الطبقات (`4-Layer Quality Gate`)
+## ٤. بوابة الفحص الحتمية خماسية الطبقات (`5-Layer Quality Gate`)
 
 للتحقق من:
 1. منطق الحارس المزدوج (`5h Floor >= 15%` + `Weekly Reserve > 25%`) والتوجيه الذكي متعدد البدائل.
 2. أولوية قراءة `/root/workspace/ytb-build/live_quota.json` وفحص تقادم اللقطة (`Staleness Check`).
 3. سلامة عزل `HOME` (`0 MCP files`) والتنظيف الحتمي الشامل لملفات `brain/*` و`implicit/*.pb` و`conversation_summaries.db*`.
-4. نجاح الاستدعاء الحي ونظافة القرص بعده (`0` بقايا):
+4. نجاح الاستدعاء الحي ونظافة القرص بعده (`0` بقايا).
+5. حساب معدل استهلاك الكوتة وتقليص العمال التكيفي (`16 -> 8 -> 4 -> 0`) وكشف أخطاء `429 / ResourceExhausted` مع انتظار `Exponential Backoff + Jitter`:
 
 ```bash
 python3 /Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/test_agy_lean_gates.py

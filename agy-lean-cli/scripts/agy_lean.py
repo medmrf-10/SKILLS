@@ -15,12 +15,14 @@ import argparse
 import glob
 import json
 import os
+import random
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 def _find_bin(name: str, extra_paths: List[str]) -> str:
@@ -498,6 +500,129 @@ def select_best_model(
     return preferred_model, q_pref
 
 
+def recommend_concurrency_from_quota(
+    model_hint: str = "gemini-3.8-flash-high",
+    max_workers: int = 16,
+    min_workers: int = 1,
+    background: bool = True,
+    qdata: Optional[Dict[str, Any]] = None,
+    prev_qdata: Optional[Dict[str, Any]] = None,
+    window_hours: float = 5.0,
+    soft_throttle_pct: float = 25.0,
+    medium_throttle_pct: float = 40.0,
+    max_stale_age_s: float = 1800.0,
+    fail_on_stale: bool = False,
+) -> Dict[str, Any]:
+    """تقدير معدل استهلاك الكوتة (Burn-Rate Prediction) وتحديد عدد العمال المتوازيين الآمن (Adaptive Concurrency Throttling).
+
+    بدلاً من العمل بأقصى سرعة (مثلاً 16 عاملاً) حتى الاصطدام المفاجئ بجدار الـ15%:
+      - عند هبوط الكوتة تحت حد الأمان (<15% للخلفية أو <10% للأمامي أو كسر الاحتياطي الأسبوعي): recommended_workers = 0.
+      - في المنطقة الحرجة (15% <= remaining_pct < 25%، أو قرب جدار الاحتياطي الأسبوعي بـ <=7%):
+        تقليص العمال إلى الربع max(min_workers, max_workers // 4) (مثلاً من 16 إلى 4).
+      - في المنطقة المتوسطة (25% <= remaining_pct < 40% أو عندما يتوقع معدل الحرق استنفاد الهامش قبل التجديد):
+        تقليص العمال إلى النصف max(min_workers, max_workers // 2) (مثلاً من 16 إلى 8).
+      - في المنطقة الآمنة (>= 40% مع معدل حرق آمن): السماح بكامل العمال (max_workers).
+    """
+    max_w = max(1, int(max_workers))
+    min_w = max(1, min(int(min_workers), max_w))
+
+    q_info = check_quota(
+        model_hint=model_hint,
+        background=background,
+        qdata=qdata,
+        max_stale_age_s=max_stale_age_s,
+        fail_on_stale=fail_on_stale,
+    )
+    rem_pct = float(q_info.get("remaining_pct", 100.0))
+    reset_h = float(q_info.get("reset_hours", 0.0))
+    floor_5h_pct = float(q_info.get("floor_5h_pct", 15.0 if background else 10.0))
+    weekly_locked = bool(q_info.get("weekly_locked", False))
+    weekly_res_pct = float(q_info.get("weekly_reserve_pct", 25.0))
+    effective_floor_pct = max(floor_5h_pct, weekly_res_pct) if weekly_locked else floor_5h_pct
+    usable_headroom_pct = round(max(0.0, rem_pct - effective_floor_pct), 2)
+
+    # حساب معدل الاستهلاك (Burn Rate %/hour)
+    if q_info.get("window_type") == "5h" or reset_h <= 5.5:
+        elapsed_h = max(0.25, window_hours - min(window_hours, reset_h))
+        consumed_pct = max(0.0, 100.0 - rem_pct)
+        burn_rate_pct_per_h = round(consumed_pct / elapsed_h, 2) if reset_h > 0 else 0.0
+    else:
+        # نافذة أسبوعية (168 ساعة)
+        weekly_total_h = 168.0
+        elapsed_h = max(1.0, weekly_total_h - min(weekly_total_h, reset_h))
+        consumed_pct = max(0.0, 100.0 - rem_pct)
+        burn_rate_pct_per_h = round(consumed_pct / elapsed_h, 2)
+
+    # إذا توفرت لقطة سابقة للمقارنة اللحظية، نأخذ الأعلى بين المعدل اللحظي ومعدل النافذة
+    if prev_qdata is not None:
+        prev_q = check_quota(model_hint=model_hint, background=background, qdata=prev_qdata)
+        prev_rem = float(prev_q.get("remaining_pct", rem_pct))
+        prev_ts = _parse_iso_ts(str((prev_qdata or {}).get("timestamp") or ""))
+        curr_ts = _parse_iso_ts(str((qdata or {}).get("timestamp") or ""))
+        if prev_ts is not None and curr_ts is not None and curr_ts > prev_ts:
+            dt_h = max(1.0 / 60.0, (curr_ts - prev_ts) / 3600.0)
+        else:
+            prev_reset_h = float(prev_q.get("reset_hours", reset_h))
+            dt_h = max(1.0 / 60.0, prev_reset_h - reset_h) if prev_reset_h > reset_h else 0.25
+        if prev_rem > rem_pct:
+            instant_burn = round((prev_rem - rem_pct) / dt_h, 2)
+            burn_rate_pct_per_h = max(burn_rate_pct_per_h, instant_burn)
+
+    projected_hours_to_floor = (
+        round(usable_headroom_pct / burn_rate_pct_per_h, 2)
+        if burn_rate_pct_per_h > 0.0
+        else 999.0
+    )
+    will_exhaust_before_reset = bool(
+        reset_h > 0.0 and burn_rate_pct_per_h > 0.0 and projected_hours_to_floor < reset_h
+    )
+
+    if not q_info.get("safe", False) or rem_pct < floor_5h_pct or (weekly_locked and rem_pct <= weekly_res_pct):
+        rec_workers = 0
+        throttle_level = "blocked"
+        reason = q_info.get("reason") or "الكوتة دون حد الأمان؛ إيقاف التوازي (0 عمال)"
+    elif rem_pct < soft_throttle_pct or usable_headroom_pct < 10.0:
+        rec_workers = max(min_w, max_w // 4)
+        throttle_level = "critical"
+        reason = (
+            f"تقليص حرج للعمال ({max_w} -> {rec_workers}): المتبقي {rem_pct:.1f}% تحت عتبة التهدئة "
+            f"({soft_throttle_pct:.0f}%) قبل جدار الإيقاف ({effective_floor_pct:.0f}%)"
+        )
+    elif rem_pct < medium_throttle_pct or (will_exhaust_before_reset and rem_pct < 65.0):
+        rec_workers = max(min_w, max_w // 2)
+        throttle_level = "moderate"
+        reason = (
+            f"تقليص وقائي للعمال ({max_w} -> {rec_workers}): المتبقي {rem_pct:.1f}% "
+            f"(معدل الحرق {burn_rate_pct_per_h:.1f}%/ساعة، يكفي {projected_hours_to_floor:.1f}س مقابل {reset_h:.1f}س للتجديد)"
+        )
+    else:
+        rec_workers = max_w
+        throttle_level = "full"
+        reason = f"كوتة وفيرة ({rem_pct:.1f}%)؛ تشغيل كامل التوازي ({rec_workers} عمال)"
+
+    return {
+        "safe": bool(q_info.get("safe", False) and rec_workers > 0),
+        "model": q_info.get("label") or model_hint,
+        "recommended_workers": rec_workers,
+        "max_workers": max_w,
+        "min_workers": min_w,
+        "throttle_level": throttle_level,
+        "throttle_ratio": round(rec_workers / float(max_w), 4) if max_w > 0 else 0.0,
+        "remaining_pct": rem_pct,
+        "effective_floor_pct": effective_floor_pct,
+        "usable_headroom_pct": usable_headroom_pct,
+        "reset_hours": reset_h,
+        "burn_rate_pct_per_hour": burn_rate_pct_per_h,
+        "projected_hours_to_floor": projected_hours_to_floor,
+        "will_exhaust_before_reset": will_exhaust_before_reset,
+        "reason": reason,
+        "quota": q_info,
+    }
+
+
+compute_quota_burn_rate_and_recommended_workers = recommend_concurrency_from_quota
+
+
 def _safe_symlink(src: str, dst: str) -> None:
     if not os.path.exists(src):
         return
@@ -793,6 +918,135 @@ def normalize_mode(mode: str) -> str:
     return "plan"
 
 
+_RATE_LIMIT_REGEX = re.compile(
+    r"("
+    r"\b429\b"
+    r"|resource[_\s-]*exhausted"
+    r"|quota[_\s-]*exceeded"
+    r"|rate[_\s-]*limit(?:ed|[_\s-]*exceeded)?"
+    r"|too\s+many\s+requests"
+    r"|exhausted\s+your\s+capacity"
+    r"|capacity\s+exhausted"
+    r")",
+    re.IGNORECASE,
+)
+
+_EXPLICIT_RATE_LIMIT_IN_OK_STDOUT_REGEX = re.compile(
+    r"("
+    r"resource[_\s-]*exhausted"
+    r"|quota[_\s-]*exceeded"
+    r"|429\s+too\s+many\s+requests"
+    r"|status[_\s-]*code[\s:=]+429"
+    r"|\"code\"\s*:\s*429"
+    r"|rate\s+limit\s+exceeded"
+    r")",
+    re.IGNORECASE,
+)
+
+_RETRY_AFTER_REGEX = re.compile(
+    r"(?:retry[-_\s]*after|retrydelay)[\"'=:\s]+(\d+(?:\.\d+)?)\s*s?",
+    re.IGNORECASE,
+)
+
+
+def classify_agy_error(
+    stdout_text: str = "",
+    stderr_text: str = "",
+    returncode: int = 0,
+    resp_txt: Optional[str] = None,
+) -> Dict[str, Any]:
+    """تصنيف مخرجات وأخطاء agy لكشف أخطاء 429 / ResourceExhausted / QuotaExceeded بدقة."""
+    out = stdout_text or ""
+    err = stderr_text or ""
+    resp = (resp_txt if resp_txt is not None else out).strip()
+    combined = f"{err}\n{out}\n{resp}"
+
+    retry_after_s: Optional[float] = None
+    m_retry = _RETRY_AFTER_REGEX.search(combined)
+    if m_retry:
+        try:
+            retry_after_s = float(m_retry.group(1))
+        except ValueError:
+            retry_after_s = None
+
+    # فحص أخطاء تجاوز المعدل (429 / ResourceExhausted / QuotaExceeded)
+    is_rate_limit = False
+    matched_token = None
+    if returncode != 0 or not resp:
+        m_rl = _RATE_LIMIT_REGEX.search(combined)
+        if m_rl:
+            is_rate_limit = True
+            matched_token = m_rl.group(1)
+    else:
+        m_rl_explicit = _EXPLICIT_RATE_LIMIT_IN_OK_STDOUT_REGEX.search(combined)
+        if m_rl_explicit:
+            is_rate_limit = True
+            matched_token = m_rl_explicit.group(1)
+
+    if is_rate_limit:
+        return {
+            "is_error": True,
+            "error_type": "rate_limit",
+            "is_rate_limit": True,
+            "matched_pattern": matched_token,
+            "retry_after_s": retry_after_s,
+            "reason": f"تجاوز معدل الطلبات (429 / ResourceExhausted: {matched_token})",
+        }
+
+    if returncode != 0 or not resp:
+        low_comb = combined.lower()
+        if any(k in low_comb for k in ("unauthenticated", "invalid_grant", "oauth", "401 unauthorized")):
+            err_type = "auth_error"
+        else:
+            err_type = "cli_error"
+        return {
+            "is_error": True,
+            "error_type": err_type,
+            "is_rate_limit": False,
+            "matched_pattern": None,
+            "retry_after_s": None,
+            "reason": (err.strip() or out.strip() or f"فشل تنفيذ agy (رمز الخروج {returncode})"),
+        }
+
+    return {
+        "is_error": False,
+        "error_type": None,
+        "is_rate_limit": False,
+        "matched_pattern": None,
+        "retry_after_s": None,
+        "reason": "OK",
+    }
+
+
+def compute_rate_limit_backoff(
+    attempt: int,
+    base_delay_s: float = 2.0,
+    max_delay_s: float = 30.0,
+    jitter_ratio: float = 0.25,
+    retry_after_s: Optional[float] = None,
+    rng: Optional[random.Random] = None,
+) -> float:
+    """حساب زمن الانتظار التصاعدي مع التشتيت العشوائي (Exponential Backoff + Jitter) عند حدوث 429."""
+    att = max(1, int(attempt))
+    base = max(0.05, float(base_delay_s))
+    cap = max(base, float(max_delay_s))
+    exp_delay = min(cap, base * (2 ** (att - 1)))
+
+    rand_src = rng if rng is not None else random
+    j_ratio = max(0.0, min(0.5, float(jitter_ratio)))
+    if j_ratio > 0.0:
+        min_j = exp_delay * min(0.05, j_ratio * 0.25)
+        max_j = exp_delay * j_ratio
+        jitter = rand_src.uniform(min_j, max_j)
+    else:
+        jitter = 0.0
+
+    delay = min(cap, exp_delay + jitter)
+    if retry_after_s is not None and retry_after_s > 0:
+        delay = min(cap, max(delay, float(retry_after_s)))
+    return round(delay, 3)
+
+
 def run_agy_lean(
     prompt: str,
     model: str = "gemini-3.8-flash-high",
@@ -807,8 +1061,13 @@ def run_agy_lean(
     qdata: Optional[Dict[str, Any]] = None,
     max_stale_age_s: float = 1800.0,
     fail_on_stale: bool = False,
+    max_retries: int = 2,
+    backoff_base_s: float = 2.0,
+    backoff_max_s: float = 30.0,
+    sleep_fn: Optional[Callable[[float], None]] = None,
+    runner_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
-    """تشغيل agy في بيئة HOME معزولة ومجلد عمل مؤقت بعد التحقق من حارس الكوتة المزدوج وتنظيف الجلسة."""
+    """تشغيل agy في بيئة HOME معزولة ومجلد عمل مؤقت بعد التحقق من حارس الكوتة المزدوج ودعم التراجع الأسي عند 429 وتنظيف الجلسة."""
     chosen_model, quota_info = select_best_model(
         preferred_model=model,
         background=background,
@@ -821,14 +1080,20 @@ def run_agy_lean(
         return {
             "ok": False,
             "error": quota_info["reason"],
+            "error_type": "quota_guard",
             "quota": quota_info,
             "model": chosen_model,
+            "attempts": 0,
+            "retried_rate_limit": False,
+            "backoff_delays_s": [],
             "response": "",
             "usage": {},
         }
 
     lean_home = prepare_lean_home(lean_home_dir)
     cli_mode = normalize_mode(mode)
+    effective_sleep = sleep_fn if sleep_fn is not None else time.sleep
+    effective_runner = runner_fn if runner_fn is not None else subprocess.run
 
     with tempfile.TemporaryDirectory(prefix="agy_lean_ws_") as raw_ws:
         ws_dir = os.path.realpath(raw_ws)
@@ -856,80 +1121,147 @@ def run_agy_lean(
             if refs:
                 final_prompt = f"{refs}\n\n{final_prompt}"
 
-        cmd = [
-            AGY_BIN,
-            "-p",
-            final_prompt,
-            "--mode",
-            cli_mode,
-            "--dangerously-skip-permissions",
-            "--disable-slash-commands",
-            "--output-format",
-            "json",
-        ]
-        if chosen_model:
-            cmd += ["--model", chosen_model]
-        if effort:
-            cmd += ["--effort", effort]
-        if json_schema:
-            cmd += ["--json-schema", json_schema]
-
         env = dict(os.environ)
         env["HOME"] = lean_home
         env["PAGER"] = "cat"
 
-        pre_snapshot = _snapshot_session_subdirs(lean_home)
-        conv_id: Optional[str] = None
-        t0 = time.time()
-        try:
+        total_allowed_attempts = max(1, 1 + int(max_retries))
+        backoff_delays_s: List[float] = []
+        active_model = chosen_model
+        last_cleanup_info: Dict[str, Any] = {}
+        last_res: Any = None
+        last_resp_txt: str = ""
+        last_usage: Dict[str, Any] = {}
+        last_err_info: Dict[str, Any] = {}
+        t0_total = time.time()
+
+        for attempt_idx in range(1, total_allowed_attempts + 1):
+            cmd = [
+                AGY_BIN,
+                "-p",
+                final_prompt,
+                "--mode",
+                cli_mode,
+                "--dangerously-skip-permissions",
+                "--disable-slash-commands",
+                "--output-format",
+                "json",
+            ]
+            if active_model:
+                cmd += ["--model", active_model]
+            if effort:
+                cmd += ["--effort", effort]
+            if json_schema:
+                cmd += ["--json-schema", json_schema]
+
+            pre_snapshot = _snapshot_session_subdirs(lean_home)
+            conv_id: Optional[str] = None
             try:
-                res = subprocess.run(
-                    cmd,
-                    cwd=ws_dir,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
+                try:
+                    res = effective_runner(
+                        cmd,
+                        cwd=ws_dir,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout_s,
+                    )
+                except subprocess.TimeoutExpired:
+                    last_cleanup_info = _cleanup_lean_conv(
+                        lean_home, conv_id=None, pre_snapshot=pre_snapshot, sweep_all_idle=True
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"انتهت مهلة الاستدعاء ({timeout_s}ث)",
+                        "error_type": "timeout",
+                        "quota": quota_info,
+                        "model": active_model,
+                        "lean_home": lean_home,
+                        "cleanup": last_cleanup_info,
+                        "attempts": attempt_idx,
+                        "retried_rate_limit": len(backoff_delays_s) > 0,
+                        "backoff_delays_s": backoff_delays_s,
+                        "response": "",
+                        "usage": {},
+                    }
+
+                resp_txt, usage, conv_id = _extract_agy_json(res.stdout)
+            finally:
+                last_cleanup_info = _cleanup_lean_conv(
+                    lean_home, conv_id=conv_id, pre_snapshot=pre_snapshot, sweep_all_idle=True
                 )
-                elapsed_s = round(time.time() - t0, 2)
-            except subprocess.TimeoutExpired:
-                cleanup_info = _cleanup_lean_conv(
-                    lean_home, conv_id=None, pre_snapshot=pre_snapshot, sweep_all_idle=True
-                )
+
+            if resp_txt is None:
+                resp_txt = (res.stdout or "").strip()
+
+            err_info = classify_agy_error(
+                stdout_text=res.stdout or "",
+                stderr_text=res.stderr or "",
+                returncode=res.returncode,
+                resp_txt=resp_txt,
+            )
+            last_res = res
+            last_resp_txt = resp_txt
+            last_usage = usage
+            last_err_info = err_info
+
+            if not err_info["is_error"]:
+                elapsed_s = round(time.time() - t0_total, 2)
                 return {
-                    "ok": False,
-                    "error": f"انتهت مهلة الاستدعاء ({timeout_s}ث)",
+                    "ok": True,
+                    "returncode": res.returncode,
+                    "error_type": None,
+                    "model": active_model,
+                    "mode": cli_mode,
+                    "elapsed_s": elapsed_s,
                     "quota": quota_info,
-                    "model": chosen_model,
                     "lean_home": lean_home,
-                    "cleanup": cleanup_info,
-                    "response": "",
-                    "usage": {},
+                    "cleanup": last_cleanup_info,
+                    "attached_files": attached_names,
+                    "attempts": attempt_idx,
+                    "retried_rate_limit": len(backoff_delays_s) > 0,
+                    "backoff_delays_s": backoff_delays_s,
+                    "response": resp_txt,
+                    "usage": usage,
+                    "stderr": "",
                 }
 
-            resp_txt, usage, conv_id = _extract_agy_json(res.stdout)
-        finally:
-            cleanup_info = _cleanup_lean_conv(
-                lean_home, conv_id=conv_id, pre_snapshot=pre_snapshot, sweep_all_idle=True
-            )
+            # إذا كان الخطأ تجاوز معدل الطلبات (429 / ResourceExhausted) ولم نستنفد المحاولات، ننتظر بـ Exponential Backoff + Jitter
+            if err_info["error_type"] == "rate_limit" and attempt_idx < total_allowed_attempts:
+                delay_s = compute_rate_limit_backoff(
+                    attempt=attempt_idx,
+                    base_delay_s=backoff_base_s,
+                    max_delay_s=backoff_max_s,
+                    retry_after_s=err_info.get("retry_after_s"),
+                )
+                backoff_delays_s.append(delay_s)
+                effective_sleep(delay_s)
+                continue
 
-        if resp_txt is None:
-            resp_txt = (res.stdout or "").strip()
+            # أي خطأ آخر غير 429 أو بعد استنفاد محاولات 429 نتوقف فوراً
+            break
 
-        ok = res.returncode == 0 and bool(resp_txt)
+        elapsed_s = round(time.time() - t0_total, 2)
+        stderr_str = (last_res.stderr or "").strip() if last_res is not None else ""
+        error_msg = last_err_info.get("reason") or stderr_str or "فشل استدعاء agy"
         return {
-            "ok": ok,
-            "returncode": res.returncode,
-            "model": chosen_model,
+            "ok": False,
+            "returncode": last_res.returncode if last_res is not None else 1,
+            "error": error_msg,
+            "error_type": last_err_info.get("error_type") or "cli_error",
+            "model": active_model,
             "mode": cli_mode,
             "elapsed_s": elapsed_s,
             "quota": quota_info,
             "lean_home": lean_home,
-            "cleanup": cleanup_info,
+            "cleanup": last_cleanup_info,
             "attached_files": attached_names,
-            "response": resp_txt,
-            "usage": usage,
-            "stderr": (res.stderr or "").strip() if not ok else "",
+            "attempts": len(backoff_delays_s) + 1,
+            "retried_rate_limit": len(backoff_delays_s) > 0,
+            "backoff_delays_s": backoff_delays_s,
+            "response": last_resp_txt,
+            "usage": last_usage,
+            "stderr": stderr_str,
         }
 
 
@@ -941,12 +1273,26 @@ def main() -> int:
     ap.add_argument("--mode", default="ask", help="وضع التشغيل: ask/plan (افتراضي للقراءة فقط) أو auto")
     ap.add_argument("--effort", default="", help="مستوى التفكير: low|medium|high")
     ap.add_argument("--timeout", type=int, default=180, help="المهلة بالثواني")
-    ap.add_argument("--foreground", action="store_true", help="استخدام حد الوكيل الرئيسي (10%) بدلاً من حد الخلفية (15%)")
+    ap.add_argument("--max-retries", type=int, default=2, help="عدد محاولات الإعادة عند أخطاء 429 / ResourceExhausted")
+    ap.add_argument("--max-workers", type=int, default=16, help="الحد الأقصى للعمال عند حساب التوازي الآمن")
+    ap.add_argument("--foreground", action="store_true", help="استخدام حد الوكيل الرئيسي (10%%) بدلاً من حد الخلفية (15%%)")
     ap.add_argument("--no-fallback", action="store_true", help="عدم التبديل التلقائي إلى Gemini عند حظر كوتة Claude")
     ap.add_argument("--check-quota", action="store_true", help="فحص الكوتة الحية وعرض حالة المجموعات فقط")
+    ap.add_argument("--recommend-workers", action="store_true", help="حساب معدل استهلاك الكوتة وعدد العمال المتوازيين الموصى به")
     ap.add_argument("--verify-isolation", action="store_true", help="بناء وفحص بيئة HOME المعزولة فقط")
     ap.add_argument("--json", action="store_true", help="إخراج النتيجة الكاملة بصيغة JSON")
     args = ap.parse_args()
+
+    if args.recommend_workers:
+        qdata = fetch_quota_data(refresh_live=True)
+        rec = recommend_concurrency_from_quota(
+            model_hint=args.model,
+            max_workers=args.max_workers,
+            background=not args.foreground,
+            qdata=qdata,
+        )
+        print(json.dumps(rec, ensure_ascii=False, indent=2))
+        return 0 if rec["safe"] else 1
 
     if args.check_quota:
         qdata = fetch_quota_data(refresh_live=True)
@@ -955,6 +1301,12 @@ def main() -> int:
             "gemini_argon": check_quota("gemini-4-argon-high", background=not args.foreground, qdata=qdata),
             "claude": check_quota("claude-opus-5.5-high", background=not args.foreground, qdata=qdata),
             "gpt": check_quota("gpt-oss-120b", background=not args.foreground, qdata=qdata),
+            "concurrency_recommendation": recommend_concurrency_from_quota(
+                model_hint=args.model,
+                max_workers=args.max_workers,
+                background=not args.foreground,
+                qdata=qdata,
+            ),
         }
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
@@ -966,7 +1318,7 @@ def main() -> int:
         return 0 if iso["isolated"] else 1
 
     if not args.prompt:
-        ap.error("يرجى تمرير --prompt أو --check-quota أو --verify-isolation")
+        ap.error("يرجى تمرير --prompt أو --check-quota أو --recommend-workers أو --verify-isolation")
 
     result = run_agy_lean(
         prompt=args.prompt,
@@ -977,6 +1329,7 @@ def main() -> int:
         auto_fallback=not args.no_fallback,
         timeout_s=args.timeout,
         effort=args.effort,
+        max_retries=args.max_retries,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

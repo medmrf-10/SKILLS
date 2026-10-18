@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""test_agy_lean_gates.py — بوابة الفحص الحتمية رباعية الطبقات (4-Layer Quality Gate) لمهارة agy-lean-cli.
+"""test_agy_lean_gates.py — بوابة الفحص الحتمية خماسية الطبقات (5-Layer Quality Gate) لمهارة agy-lean-cli.
 
 تتحقق من:
   1. [Gate 1: Dual-Window Quota Guard & Multi-Model Smart Routing]:
@@ -17,21 +17,29 @@
        وjetbox_summaries_proto.pb*.tmp وملف mcp_config.json الفارغ الذي قد ينشئه agy على Linux.
   4. [Gate 4: Live End-to-End Lean Execution & Post-Call Disk Audit]:
      - نجاح استدعاء فعلي لـ agy في البيئة المعزولة مع ملفات مرفقة والتحقق من نظافة HOME المعزول بعد الاستدعاء (0 بقايا).
+  5. [Gate 5: Adaptive Concurrency Throttling & Rate-Limit 429 Backoff Gate]:
+     - حساب معدل استهلاك الكوتة (Burn-Rate Prediction) وتقليص العمال المتوازيين تدريجياً (مثلاً من 16 إلى 8 ثم 4 تحت 25% ثم 0 تحت 15%).
+     - كشف أخطاء 429 / ResourceExhausted / QuotaExceeded وتمييزها بـ error_type="rate_limit" مع انتظار Exponential Backoff + Jitter وإعادة المحاولة الذكية.
 """
 import json
 import os
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agy_lean import (  # noqa: E402
     _cleanup_lean_conv,
     _snapshot_session_subdirs,
     check_quota,
+    classify_agy_error,
+    compute_quota_burn_rate_and_recommended_workers,
+    compute_rate_limit_backoff,
     evaluate_quota_entry,
     fetch_quota_data,
     prepare_lean_home,
+    recommend_concurrency_from_quota,
     run_agy_lean,
     select_best_model,
     verify_lean_home_isolation,
@@ -331,13 +339,182 @@ def main() -> int:
             if not iso_live.get("isolated"):
                 errors.append(f"Gate 4.4 Failed: lean_home not isolated after live run: {iso_live}")
 
+    # =========================================================================
+    # Gate 5: Adaptive Concurrency Throttling & Rate-Limit 429 Backoff Gate
+    # =========================================================================
+    # 5.1: حساب معدل الاستهلاك (Burn-Rate) وتقليص العمال التكيفي (16 -> 8 -> 4 -> 0)
+    qdata_abundant = {
+        "models": [
+            {
+                "label": "Gemini 3.8 Flash (High)",
+                "remainingPercentage": 0.75,
+                "timeUntilResetMs": int(3.5 * 3600 * 1000),
+                "isExhausted": False,
+            }
+        ]
+    }
+    rec_full = recommend_concurrency_from_quota(
+        model_hint="gemini-3.8-flash-high", max_workers=16, background=True, qdata=qdata_abundant
+    )
+    if rec_full["recommended_workers"] != 16 or rec_full["throttle_level"] != "full" or not rec_full["safe"]:
+        errors.append(f"Gate 5.1a Failed: expected 16 workers at 75% quota, got {rec_full}")
+
+    qdata_moderate = {
+        "models": [
+            {
+                "label": "Gemini 3.8 Flash (High)",
+                "remainingPercentage": 0.32,
+                "timeUntilResetMs": int(2.5 * 3600 * 1000),
+                "isExhausted": False,
+            }
+        ]
+    }
+    rec_mod = recommend_concurrency_from_quota(
+        model_hint="gemini-3.8-flash-high", max_workers=16, background=True, qdata=qdata_moderate
+    )
+    if rec_mod["recommended_workers"] != 8 or rec_mod["throttle_level"] != "moderate":
+        errors.append(f"Gate 5.1b Failed: expected 8 workers (moderate throttle) at 32% quota, got {rec_mod}")
+
+    # هبوط الكوتة تحت 25% (مثلاً 21%) قبل الوصول إلى جدار الـ 15% -> تقليص العمال من 16 إلى 4
+    qdata_critical = {
+        "models": [
+            {
+                "label": "Gemini 3.8 Flash (High)",
+                "remainingPercentage": 0.21,
+                "timeUntilResetMs": int(2.0 * 3600 * 1000),
+                "isExhausted": False,
+            }
+        ]
+    }
+    rec_crit = compute_quota_burn_rate_and_recommended_workers(
+        model_hint="gemini-3.8-flash-high", max_workers=16, background=True, qdata=qdata_critical
+    )
+    if rec_crit["recommended_workers"] != 4 or rec_crit["throttle_level"] != "critical" or not rec_crit["safe"]:
+        errors.append(f"Gate 5.1c Failed: expected 4 workers when <25% (21%), got {rec_crit}")
+
+    # هبوط الكوتة تحت 15% (مثلاً 13%) -> إيقاف العمال بالكامل (0)
+    qdata_blocked = {
+        "models": [
+            {
+                "label": "Gemini 3.8 Flash (High)",
+                "remainingPercentage": 0.13,
+                "timeUntilResetMs": int(1.5 * 3600 * 1000),
+                "isExhausted": False,
+            }
+        ]
+    }
+    rec_blk = recommend_concurrency_from_quota(
+        model_hint="gemini-3.8-flash-high", max_workers=16, background=True, qdata=qdata_blocked
+    )
+    if rec_blk["recommended_workers"] != 0 or rec_blk["throttle_level"] != "blocked" or rec_blk["safe"]:
+        errors.append(f"Gate 5.1d Failed: expected 0 workers when <15% (13%), got {rec_blk}")
+
+    # 5.2: تصنيف أخطاء 429 / ResourceExhausted / QuotaExceeded وعدم الخلط مع النصوص العادية
+    err_429 = classify_agy_error(
+        stdout_text="",
+        stderr_text="Error: HTTP 429 Too Many Requests: RESOURCE_EXHAUSTED (QuotaExceeded). Retry-After: 5s",
+        returncode=1,
+    )
+    if err_429["error_type"] != "rate_limit" or not err_429["is_rate_limit"] or err_429["retry_after_s"] != 5.0:
+        errors.append(f"Gate 5.2a Failed: expected rate_limit classification with retry_after_s=5.0, got {err_429}")
+
+    normal_ok = classify_agy_error(
+        stdout_text='{"response": "الحديث رقم 429 في صحيح مسلم باب الإيمان"}',
+        stderr_text="",
+        returncode=0,
+        resp_txt="الحديث رقم 429 في صحيح مسلم باب الإيمان",
+    )
+    if normal_ok["is_error"] or normal_ok["error_type"] is not None:
+        errors.append(f"Gate 5.2b Failed: normal Arabic response containing number 429 must not be flagged as error: {normal_ok}")
+
+    # 5.3: فحص Exponential Backoff + Jitter وإعادة المحاولة الذكية داخل run_agy_lean
+    b1 = compute_rate_limit_backoff(1, base_delay_s=2.0, max_delay_s=30.0, jitter_ratio=0.25)
+    b2 = compute_rate_limit_backoff(2, base_delay_s=2.0, max_delay_s=30.0, jitter_ratio=0.25)
+    b3 = compute_rate_limit_backoff(3, base_delay_s=2.0, max_delay_s=30.0, jitter_ratio=0.25)
+    if not (2.0 < b1 < b2 < b3 <= 30.0):
+        errors.append(f"Gate 5.3a Failed: backoff delays not strictly increasing with jitter: b1={b1}, b2={b2}, b3={b3}")
+
+    # محاكاة تعافي run_agy_lean بعد خطأَي 429 متتاليين ثم نجاح في المحاولة الثالثة
+    recorded_sleeps = []
+    call_counter = {"n": 0}
+
+    def fake_runner_recover(cmd, **kwargs):
+        call_counter["n"] += 1
+        if call_counter["n"] == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="google.api_core.exceptions.ResourceExhausted: 429 QuotaExceeded",
+            )
+        if call_counter["n"] == 2:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="Error 429: RESOURCE_EXHAUSTED — rateLimitExceeded",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"response": "نجاح بعد التراجع الأسي", "conversation_id": "fake-conv-1"}),
+            stderr="",
+        )
+
+    res_recover = run_agy_lean(
+        prompt="اختبار التعافي من 429",
+        model="gemini-3.8-flash-high",
+        background=True,
+        qdata=qdata_abundant,
+        max_retries=3,
+        backoff_base_s=1.5,
+        backoff_max_s=20.0,
+        sleep_fn=lambda s: recorded_sleeps.append(s),
+        runner_fn=fake_runner_recover,
+    )
+    if (
+        not res_recover.get("ok")
+        or res_recover.get("attempts") != 3
+        or not res_recover.get("retried_rate_limit")
+        or len(recorded_sleeps) != 2
+        or not (recorded_sleeps[0] < recorded_sleeps[1])
+        or res_recover.get("error_type") is not None
+    ):
+        errors.append(f"Gate 5.3b Failed: expected recovery on attempt 3 with 2 backoff sleeps, got {res_recover}, sleeps={recorded_sleeps}")
+
+    # محاكاة فشل مستمر بـ 429 حتى استنفاد المحاولات والتأكد من إرجاع error_type="rate_limit"
+    exhaust_sleeps = []
+
+    def fake_runner_always_429(cmd, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="HTTP 429 Too Many Requests: RESOURCE_EXHAUSTED",
+        )
+
+    res_exhaust = run_agy_lean(
+        prompt="اختبار استنفاد محاولات 429",
+        model="gemini-3.8-flash-high",
+        background=True,
+        qdata=qdata_abundant,
+        max_retries=2,
+        backoff_base_s=1.0,
+        backoff_max_s=10.0,
+        sleep_fn=lambda s: exhaust_sleeps.append(s),
+        runner_fn=fake_runner_always_429,
+    )
+    if (
+        res_exhaust.get("ok")
+        or res_exhaust.get("error_type") != "rate_limit"
+        or res_exhaust.get("attempts") != 3
+        or len(exhaust_sleeps) != 2
+    ):
+        errors.append(f"Gate 5.3c Failed: expected error_type='rate_limit' after 3 attempts, got {res_exhaust}")
+
     if errors:
         for e in errors:
             print(f"[FAIL] {e}", file=sys.stderr)
         print(f"FAIL ({len(errors)} errors)")
         return 1
 
-    print("PASS (0 errors) — All 4 Quality Gates verified for agy-lean-cli.")
+    print("PASS (0 errors) — All 5 Quality Gates verified for agy-lean-cli.")
     return 0
 
 
