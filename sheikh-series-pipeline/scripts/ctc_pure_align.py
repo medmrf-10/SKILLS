@@ -72,11 +72,112 @@ def shadow_words_1to1(words, use_dict=True, unify=True):
     return out
 
 
+def _norm_len(w):
+    """طول الكلمة بعد نزع الترقيم (يقارب ما يراه المحاذي فعلًا)."""
+    import re as _re
+    return len(_re.sub(r'[^\w\u0600-\u06FF]', '', str(w)))
+
+
+def tighten_word_onsets_against_breath_and_blank(
+    text_starred, spans, blank, sub=None, scores=None, stride_ms=20.0, blank_id=0
+):
+    """شدّ بداية ونهاية الكلمة ضد القفز المبكر على صوت النفس/الشهيق وإطارات <blank> الممتدة (ALIGN-ONSET-BREATH-JUMP).
+
+    يعالج أربعة أسباب جذرية لتمدد الكلمة عبر السكتات والنفس:
+      1. إزالة حشو <blank> الأمامي والخلفي (50%–100% من السكتة) الذي يضيفه get_spans حول الكلمة.
+      2. تقليم الحروف الأولى (1–3 أحرف مثل و/ف/ال) إذا التقطها فيتربي مبكراً على صوت النفس في أول السكتة
+         وتبعتها سلسلة متصلة من إطارات <blank> (أو تمطيط ذاتي) قبل التجمع الفعلي لحروف الكلمة في الذيل.
+      3. تقليم الحرف الأخير إذا قفز عبر فجوة <blank> داخلية إلى نفس لاحق بعد انتهاء نطق الكلمة.
+      4. تطبيق السقف الفيزيائي لطول الكلمة max(0.85, 0.22 * n_chars) بالاعتماد على تمركز الطاقة الصوتية غير الفارغة.
+    """
+    fps = 1000.0 / max(1.0, float(stride_ms))
+    sub_np = None
+    if sub is not None:
+        sub_np = sub.detach().cpu().numpy() if hasattr(sub, 'detach') else np.asarray(sub)
+
+    tightened = list(spans)
+    for i, tok_str in enumerate(text_starred):
+        if tok_str == '<star>' or i >= len(tightened) or not tightened[i]:
+            continue
+        span = tightened[i]
+        c_segs = [seg for seg in span if seg.label != blank]
+        if not c_segs:
+            continue
+        seg_cls = type(c_segs[0])
+        k = len(c_segs)
+        n_chars = max(1, _norm_len(tok_str), k)
+        max_phys_s = max(0.85, 0.22 * n_chars)
+        max_phys_f = max(8, int(round(max_phys_s * fps)))
+
+        # (1) نزع حشو <blank> الخارجي الذي يضيفه get_spans من منتصف السكتة السابقة/اللاحقة
+        cur_start = int(c_segs[0].start)
+        cur_end = int(c_segs[-1].end)
+
+        # (2) كشف القفز المبكر للحروف البادئة (1..3 أحرف) على الشهيق/النفس متبوعاً بفجوة <blank> أو تمطيط
+        if k >= 2:
+            max_prefix = min(3, k - 1)
+            for m in range(1, max_prefix + 1):
+                if m > 1 and (k - m) < m:
+                    break
+                gap_f = int(c_segs[m].start) - (int(c_segs[m - 1].end) + 1)
+                total_f = cur_end - cur_start + 1
+                prefix_f = int(c_segs[m].start) - cur_start
+                tail_f = cur_end - int(c_segs[m].start) + 1
+                if gap_f >= int(round(0.20 * fps)) or (total_f > max_phys_f and gap_f >= int(round(0.10 * fps))):
+                    lead_allow = min(gap_f, m * max(2, int(round(0.06 * fps))))
+                    cur_start = max(cur_start, int(c_segs[m - 1].end) + 1, int(c_segs[m].start) - lead_allow)
+                elif total_f > max_phys_f and tail_f <= max_phys_f and prefix_f > max(int(round(0.32 * fps)) * m, int(0.45 * total_f)):
+                    lead_allow = m * max(3, int(round(0.07 * fps)))
+                    cur_start = max(cur_start, int(c_segs[m].start) - lead_allow)
+
+        # (3) كشف قفز الحرف الأخير عبر فجوة <blank> داخلية إلى نفس بعد انتهاء الكلمة
+        if k >= 2 and int(c_segs[-2].end) >= cur_start:
+            gap_tail = int(c_segs[-1].start) - (int(c_segs[-2].end) + 1)
+            total_f = cur_end - cur_start + 1
+            if gap_tail >= int(round(0.22 * fps)) or (total_f > max_phys_f and gap_tail >= int(round(0.10 * fps))):
+                trail_allow = min(gap_tail, max(2, int(round(0.06 * fps))))
+                cur_end = min(cur_end, int(c_segs[-1].start) - 1, int(c_segs[-2].end) + trail_allow)
+            elif total_f > max_phys_f:
+                last_seg_f = cur_end - int(c_segs[-1].start) + 1
+                head_f = int(c_segs[-2].end) - cur_start + 1
+                if last_seg_f > max(int(round(0.36 * fps)), int(0.45 * total_f)) and head_f <= max_phys_f:
+                    cur_end = min(cur_end, int(c_segs[-2].end) + max(3, int(round(0.08 * fps))))
+
+        # (4) سقف المدة الفيزيائية وفحص تمركز الطاقة الصوتية غير الصامتة داخل النطاق المتبقي
+        if (cur_end - cur_start + 1) > max_phys_f:
+            nat_f = min(max_phys_f, max(12, int(round(max(0.40, 0.14 * n_chars) * fps))))
+            if sub_np is not None and 0 <= cur_start <= cur_end < sub_np.shape[0] and 0 <= blank_id < sub_np.shape[1]:
+                act = -sub_np[cur_start:cur_end + 1, blank_id]
+                # تقليم الإطارات الطرفية ذات احتمال <blank> المرتفع (صمت/شهيق خافت)
+                lo_idx = 0
+                hi_idx = len(act) - 1
+                while lo_idx < hi_idx - nat_f and act[lo_idx] < 0.35:
+                    lo_idx += 1
+                while hi_idx > lo_idx + nat_f and act[hi_idx] < 0.35:
+                    hi_idx -= 1
+                cur_start += lo_idx
+                cur_end = cur_start + (hi_idx - lo_idx)
+                if (cur_end - cur_start + 1) > max_phys_f:
+                    act_rem = -sub_np[cur_start:cur_end + 1, blank_id]
+                    head_e = float(np.mean(act_rem[:nat_f]))
+                    tail_e = float(np.mean(act_rem[-nat_f:]))
+                    if tail_e >= head_e * 0.85:
+                        cur_start = cur_end - max_phys_f + 1
+                    else:
+                        cur_end = cur_start + max_phys_f - 1
+            else:
+                cur_start = cur_end - max_phys_f + 1
+
+        cur_end = max(cur_start, cur_end)
+        tightened[i] = [seg_cls(c_segs[0].label, cur_start, cur_end)]
+    return tightened
+
+
 def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, star_pen=0.0, star_col=None):
     """يحاذي em[f0:f1] على الكلمات المنطوقة في words[i0:i1] ⇒ {فهرس عام: (بداية, نهاية, ثقة)} بأزمنة مطلقة.
 
     يتخطى الرموز الصامتة الخالصة (حيث nwords[gi] == '') أثناء حساب فيتربي ثم يربطها بحدّ الكلمة السابقة،
-    ويطبّق العقوبة اللوغاريتمية `star_pen` على عمود `<star>` المضاف.
+    ويطبّق العقوبة اللوغاريتمية `star_pen` على عمود `<star>` المضاف، ويشدّ بداية/نهاية الكلمات ضد القفز المبكر على النفس.
     """
     src = nwords if nwords is not None else words
     active_idx = [gi for gi in range(i0, i1) if src[gi]]
@@ -100,21 +201,34 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
     if star_pen and star_col is not None and 0 <= star_col < sub.shape[1]:
         sub[:, star_col] = sub[:, star_col] + float(star_pen)
     segments, scores, blank = get_alignments(sub, tokens, tok)
-    spans = get_spans(tokens, segments, blank)
+    orig_spans = get_spans(tokens, segments, blank)
+    orig_out = postprocess_results(text_starred, orig_spans, stride_ms, scores)
+    blank_id = tok.get_vocab().get('<blank>', getattr(tok, 'pad_token_id', 0)) or 0
+    spans = tighten_word_onsets_against_breath_and_blank(
+        text_starred, orig_spans, blank, sub=sub, scores=scores, stride_ms=stride_ms, blank_id=int(blank_id)
+    )
     out = postprocess_results(text_starred, spans, stride_ms, scores)
     off = f0 * stride_ms / 1000.0
     got = {}
+    prev_en = None
     for j, s in enumerate(out):
         if j >= len(active_idx):
             break
         gi = active_idx[j]
         w_st = round(s['start'] + off, 2)
         w_en = round(s['end'] + off, 2)
+        if prev_en is not None and w_st < prev_en:
+            w_st = prev_en
         if j == len(active_idx) - 1:
-            max_w_dur = max(2.5, 0.45 * max(1, len(src[gi])))
+            max_w_dur = max(0.85, 0.22 * max(1, _norm_len(src[gi])))
             if (w_en - w_st) > max_w_dur:
-                w_en = round(w_st + min(1.2, max_w_dur), 2)
-        got[gi] = (w_st, w_en, s.get('score'))
+                w_en = round(w_st + min(1.0, max_w_dur), 2)
+        w_en = max(w_st, w_en)
+        prev_en = w_en
+        sc_val = s.get('score')
+        if j < len(orig_out) and orig_out[j].get('score') is not None:
+            sc_val = max(sc_val, orig_out[j]['score']) if sc_val is not None else orig_out[j]['score']
+        got[gi] = (w_st, w_en, sc_val)
 
     # ربط الرموز الصامتة داخل الشريحة بحدّ الكلمة المنطوقة السابقة حتى يتقدم المؤشر بسلاسة
     last_t = None
@@ -124,12 +238,6 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
         elif not src[gi] and last_t is not None:
             got[gi] = (last_t, last_t, None)
     return got
-
-
-def _norm_len(w):
-    """طول الكلمة بعد نزع الترقيم (يقارب ما يراه المحاذي فعلًا)."""
-    import re as _re
-    return len(_re.sub(r'[^\w\u0600-\u06FF]', '', str(w)))
 
 
 def solid_cut(new, nwords, rate, a):
@@ -179,7 +287,7 @@ def island_demote(times, nwords, rate, a):
 
 
 def interpolate(times, words, min_score, silent_set=None):
-    """استيفاء خطي بفترات متناسبة للكلمات ضعيفة الثقة/المفقودة بين جارتين موثوقتين ⇒ (الأزمنة, العلامات)."""
+    """استيفاء خطي للكلمات ضعيفة الثقة/المفقودة بين جارتين موثوقتين مع منع ابتلاع سكتات النفس ⇒ (الأزمنة, العلامات)."""
     n = len(words)
     silent_set = silent_set or set()
     flags = ['a' if (i in times and i not in silent_set) else '' for i in range(n)]
@@ -192,29 +300,87 @@ def interpolate(times, words, min_score, silent_set=None):
     if not known:                                     # لا ثقة إطلاقًا ⇒ توزيع خطي على المدة
         return times, flags
 
-    for i in range(n):
+    i = 0
+    while i < n:
         if flags[i] == 'a':
+            i += 1
             continue
+        j = i
+        while j < n and flags[j] != 'a':
+            j += 1
         prev = max([k for k in known if k < i], default=None)
-        nxt = min([k for k in known if k > i], default=None)
+        nxt = min([k for k in known if k >= j], default=None)
+        gap_indices = list(range(i, j))
+        spoken_in_gap = [k for k in gap_indices if k not in silent_set]
+
         if prev is None and nxt is None:
-            continue
+            break
         if prev is None:
             t0 = times[nxt][0]
-            times[i] = (round(t0, 2), round(t0, 2), None)
+            if spoken_in_gap and t0 > 0.05:
+                durs = [min(0.60, max(0.35, 0.09 * max(1, _norm_len(words[k])))) for k in spoken_in_gap]
+                tot_d = min(t0, sum(durs))
+                scale = tot_d / max(1e-6, sum(durs))
+                cur_t = max(0.0, t0 - tot_d)
+                sp_map = {}
+                for k, d in zip(spoken_in_gap, durs):
+                    w_e = cur_t + d * scale
+                    sp_map[k] = (round(cur_t, 2), round(max(cur_t, w_e), 2), None)
+                    cur_t = w_e
+                last_anchor = max(0.0, t0 - tot_d)
+                for k in gap_indices:
+                    if k in sp_map:
+                        times[k] = sp_map[k]
+                        last_anchor = sp_map[k][1]
+                    else:
+                        times[k] = (round(last_anchor, 2), round(last_anchor, 2), None)
+                    flags[k] = 'i'
+            else:
+                for k in gap_indices:
+                    times[k] = (round(t0, 2), round(t0, 2), None)
+                    flags[k] = 'i'
         elif nxt is None:
             t0 = times[prev][1]
-            times[i] = (round(t0, 2), round(t0, 2), None)
+            for k in gap_indices:
+                times[k] = (round(t0, 2), round(t0, 2), None)
+                flags[k] = 'i'
         else:
             s0, e0 = times[prev][1], times[nxt][0]
             if e0 < s0:
                 s0 = e0 = times[prev][1]
-            k_interp = max(1, nxt - prev - 1)
-            idx_in_gap = i - prev - 1
-            w_s = s0 + (e0 - s0) * (idx_in_gap / k_interp)
-            w_e = w_s if i in silent_set else (s0 + (e0 - s0) * ((idx_in_gap + 1) / k_interp))
-            times[i] = (round(w_s, 2), round(max(w_s, w_e), 2), None)
-        flags[i] = 'i'
+            gap = e0 - s0
+            n_sp = len(spoken_in_gap)
+            if n_sp == 0:
+                for k in gap_indices:
+                    times[k] = (round(s0, 2), round(s0, 2), None)
+                    flags[k] = 'i'
+            else:
+                durs = [min(0.60, max(0.35, 0.09 * max(1, _norm_len(words[k])))) for k in spoken_in_gap]
+                tot_nat = sum(durs)
+                # إذا كانت الفجوة أكبر من 0.8ث لكل كلمة مستوفاة، لا تجعل الكلمة تبتلع سكتة النفس السابقة
+                # بل ضعها بجوار الكلام الفعلي (قبل nxt مباشرةً) بمدتها الطبيعية (0.35s–0.60s للكلمة)
+                if gap > 0.8 * n_sp and gap > tot_nat:
+                    eff_s0 = e0 - tot_nat
+                    eff_span = tot_nat
+                else:
+                    eff_s0 = s0
+                    eff_span = gap
+                scale = eff_span / max(1e-6, tot_nat)
+                cur_t = eff_s0
+                sp_map = {}
+                for k, d in zip(spoken_in_gap, durs):
+                    w_e = cur_t + d * scale
+                    sp_map[k] = (round(cur_t, 2), round(max(cur_t, w_e), 2), None)
+                    cur_t = w_e
+                last_anchor = s0
+                for k in gap_indices:
+                    if k in sp_map:
+                        times[k] = sp_map[k]
+                        last_anchor = sp_map[k][1]
+                    else:
+                        times[k] = (round(last_anchor, 2), round(last_anchor, 2), None)
+                    flags[k] = 'i'
+        i = j
     return times, flags
 
 
@@ -414,6 +580,17 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
                 new = {i: v for i, v in new.items() if i <= cut_i}
                 if dropped:
                     print('[%s]   ↳ تسليم صلب عند الكلمة %d (أُعيد %d كلمة للشريحة التالية)' % (tag, cut_i, dropped), flush=True)
+        if times:
+            prev_max_e = max(v[1] for k, v in times.items() if k < min(new)) if any(k < min(new) for k in times) else None
+            if prev_max_e is not None:
+                cur_floor = prev_max_e
+                for k_n in sorted(new):
+                    ns_t, ne_t, nsc_t = new[k_n]
+                    if ns_t < cur_floor:
+                        ns_t = cur_floor
+                        ne_t = max(ns_t, ne_t)
+                        new[k_n] = (round(ns_t, 2), round(ne_t, 2), nsc_t)
+                    cur_floor = max(cur_floor, ne_t)
         times.update(new)
         pins += len(new)
         last_end = max(v[1] for v in new.values())
@@ -436,8 +613,12 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star, nwords, a.star_pen, star_col)
         except Exception as e:
             print('[%s]   [!] فشل شريحة الذيل: %s' % (tag, type(e).__name__), flush=True)
-        for i, v in got.items():
-            times.setdefault(i, v)
+        for i, v in sorted(got.items()):
+            if i not in times:
+                prev_e_tail = max((times[k][1] for k in times if k < i), default=None)
+                if prev_e_tail is not None and v[0] < prev_e_tail:
+                    v = (round(prev_e_tail, 2), round(max(prev_e_tail, v[1]), 2), v[2])
+                times[i] = v
         print('[%s] ذيل: أُضيف %d كلمة من أصل %d متبقية' % (tag, len(got), N - wc), flush=True)
 
     wall = time.time() - t_start

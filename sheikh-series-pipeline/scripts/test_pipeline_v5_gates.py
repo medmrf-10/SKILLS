@@ -140,6 +140,13 @@ def run_gate_1_syntax_and_integrity(errors):
             if fn not in funcs:
                 errors.append(f'Gate 1: الدالة {fn} مفقودة في transcribe_selected_smallest_first.py')
 
+    # 4b) فحص ctc_pure_align.py (حارس القفز المبكر على النفس ALIGN-ONSET-BREATH-JUMP)
+    if 'ctc_pure_align.py' in parsed:
+        src, funcs, _, _ = parsed['ctc_pure_align.py']
+        for fn in ('tighten_word_onsets_against_breath_and_blank', 'align_slice', 'interpolate'):
+            if fn not in funcs:
+                errors.append(f'Gate 1: الدالة {fn} مفقودة في ctc_pure_align.py')
+
     # 5) فحص المراجع (01 إلى 11) و SKILL.md
     ref11 = os.path.join(SKILL_ROOT, 'references', '11-hybrid-vps-mac-mps-v5.md')
     if not os.path.exists(ref11) or os.path.getsize(ref11) < 1000:
@@ -437,11 +444,120 @@ def run_gate_3_quota_guard_and_align_schema(errors):
             )
 
 
+def run_gate_4_pre_speech_breath_onset_tightening(errors):
+    print('=== [Gate 4] Pre-Speech Breath Onset Tightening Gate (ALIGN-ONSET-BREATH-JUMP) ===')
+    import ctc_pure_align
+    from ctc_forced_aligner import preprocess_text
+
+    # 1) محاكاة التقاط أول حرف ('ف' في 'فهناك') على صوت الشهيق في أول سكتة طولها 3.1 ثوانٍ قبل النطق الفعلي للكلمة
+    with tempfile.TemporaryDirectory(prefix='v5_gate4_breath_') as tmpd:
+        words = ['الحمد', 'لله.', 'فهناك', 'شهادات']
+        rom_tokens, _ = preprocess_text(' '.join(words), True, 'ara', 'word', 'segment')
+        chars = sorted({ch for tok in rom_tokens if tok != '<star>' for ch in tok.split(' ') if ch})
+        vocab = {'<blank>': 0}
+        for idx_c, ch in enumerate(chars, 1):
+            vocab[ch] = idx_c
+        vocab['<star>'] = len(vocab)
+
+        # 300 إطار = 6.0 ثوانٍ عند 50fps
+        T = 300
+        C = len(vocab)
+        em = np.full((T, C), -10.0, dtype=np.float32)
+        em[:, 0] = 0.0
+        em[:, vocab['<star>']] = -2.0
+
+        def _paint_letters(f_start, letters_list):
+            cur = f_start
+            for ch in letters_list:
+                cid = vocab[ch]
+                em[cur:cur + 3, :] = -10.0
+                em[cur:cur + 3, cid] = 0.0
+                cur += 5
+            return cur
+
+        word_roms = [t.split(' ') for t in rom_tokens if t != '<star>']
+        # الكلمة 0 ('الحمد') عند الإطار 10 (0.20s..0.64s)
+        _paint_letters(10, word_roms[0])
+        # الكلمة 1 ('لله.') عند الإطار 38 (0.76s..1.02s)
+        _paint_letters(38, word_roms[1])
+        # نفس/شهيق مبكر عند الإطار 55 (1.10s) يفعّل الحرف الأول من 'فهناك' ('f')، يليه 3.10 ثوانٍ من الصمت (<blank>)!
+        first_ch_fahanak = word_roms[2][0]
+        em[55:58, :] = -10.0
+        em[55:58, vocab[first_ch_fahanak]] = 0.0
+        # النطق الفعلي لبقية حروف 'فهناك' عند الإطار 212 (4.24s..4.60s) ثم 'شهادات' عند الإطار 238 (4.76s..5.30s)
+        _paint_letters(212, word_roms[2][1:])
+        _paint_letters(238, word_roms[3])
+
+        saved_vocab = {k: v for k, v in vocab.items() if k != '<star>'}
+        em_path = os.path.join(tmpd, 'breath_test.em.npy')
+        tok_path = os.path.join(tmpd, 'breath_test.tokens.json')
+        meta_path = os.path.join(tmpd, 'breath_test.meta.json')
+        out_align = os.path.join(tmpd, 'breath_test.align.json')
+
+        np.save(em_path, em)
+        json.dump(
+            {'vocab': saved_vocab, 'vocab_size': len(saved_vocab), 'pad': 0, 'blank': 0, 'words': words, 'n_words': len(words)},
+            open(tok_path, 'w', encoding='utf-8'), ensure_ascii=False
+        )
+        json.dump(
+            {'model': 'mms-300m-1130-forced-aligner', 'fps': 50.0, 'stride_ms': 20.0, 'frames': T, 'classes': C, 'dur': T / 50.0, 'n_words': len(words), 'audio': 'breath_test.mp3'},
+            open(meta_path, 'w', encoding='utf-8'), ensure_ascii=False
+        )
+
+        ns = argparse.Namespace(
+            em=em_path, tokens=tok_path, out=out_align, series_out='', only='', tag='gate4_breath',
+            slice=120.0, pin=65.0, margin=30, min_words=12, star='segment',
+            pause_cut=1, pause_min_frames=15, pause_tol=10.0, min_score=-3.0, star_pen=-0.9,
+            solid_handoff=1, solid_min_len=2, solid_min_score=-2.0, island_guard=0,
+            v1='', shadow_unify=0, shadow_norm=1, report=''
+        )
+        ctc_pure_align.align_one_file(em_path, tok_path, out_align, 'gate4_breath', ns)
+        al_data = json.load(open(out_align, encoding='utf-8'))
+        x = al_data['x']
+        w1_end = x[1][2]
+        w2_start, w2_end = x[2][1], x[2][2]
+        w2_dur = round(w2_end - w2_start, 2)
+        if w2_start < 4.05:
+            errors.append(f'Gate 4: قفزت بداية الكلمة "فهناك" مبكراً إلى الشهيق ({w2_start}s < 4.05s): {x[2]}')
+        if w2_dur > 0.85:
+            errors.append(f'Gate 4: امتد طول الكلمة "فهناك" عبر السكتة ({w2_dur}s > 0.85s): {x[2]}')
+        if w1_end > 1.20:
+            errors.append(f'Gate 4: تمددت نهاية الكلمة السابقة "لله." داخل السكتة ({w1_end}s > 1.20s): {x[1]}')
+        print(
+            f'  ✓ شدّ بداية الكلمة ضد الشهيق والفراغ (tighten_word_onsets_against_breath_and_blank) سليم: '
+            f'"لله."={x[1][1]}..{w1_end}s -> سكتة نظيفة -> "فهناك"={w2_start}..{w2_end}s (طول={w2_dur}s)'
+        )
+
+    # 2) اختبار عدم ابتلاع الفجوة الصامتة في interpolate() عندما تكون الفجوة > 0.8s
+    raw_times = {
+        0: (1.00, 1.50, -0.2),
+        1: (1.55, 5.80, -5.5),  # ضعيفة الثقة وسط سكتة 4.5 ثانية
+        2: (6.00, 6.55, -0.1),
+    }
+    interp_words = ['الحمد', 'والصلاة', 'والسلام']
+    t_out, fl_out = ctc_pure_align.interpolate(dict(raw_times), interp_words, min_score=-3.0)
+    interp_s, interp_e, _ = t_out[1]
+    interp_dur = round(interp_e - interp_s, 2)
+    if fl_out[1] != 'i':
+        errors.append(f'Gate 4: لم تُوسم الكلمة ضعيفة الثقة بـ "i": {fl_out}')
+    if interp_s < 5.30 or interp_dur > 0.65 or interp_dur < 0.30:
+        errors.append(
+            f'Gate 4: ابتلعت interpolate() سكتة النفس بدل وضع الكلمة بجوار الكلام الفعلي: '
+            f'start={interp_s}s, end={interp_e}s, dur={interp_dur}s'
+        )
+    else:
+        print(
+            f'  ✓ حارس الاستيفاء عبر السكتات (interpolate) سليم: '
+            f'وضع "والصلاة" عند {interp_s}..{interp_e}s (طول={interp_dur}s) بجوار الكلمة التالية (6.00s) دون ابتلاع السكتة'
+        )
+
+
 def main():
     errors = []
     run_gate_1_syntax_and_integrity(errors)
     run_gate_2_silence_math_and_sanitizer(errors)
     run_gate_3_quota_guard_and_align_schema(errors)
+    run_gate_4_pre_speech_breath_onset_tightening(errors)
 
     if errors:
         print(f'\nFAIL ({len(errors)} errors):')
