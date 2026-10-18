@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_pdf_adapter_gates.py — بوابة الفحص الحتمية الشاملة للإصدار v2.0 من مهارة `turath-pdf-to-text`.
+test_pdf_adapter_gates.py — بوابة الفحص الحتمية الشاملة للإصدار v2.1 من مهارة `turath-pdf-to-text`.
 
-تختبر ثلاث بوابات متتابعة:
+تختبر أربع بوابات متتابعة:
   - Gate 1: تشغيل بوابات `test_pdf_gates.py` الأصلية (12 اختباراً هندسياً وبصرياً) والتأكد من عدم كسر أي قاعدة.
   - Gate 2: اختبار `pdf_to_preflight_adapter.py` على 5 صفحات واقعية متعددة التخطيطات (`pages/p0001.json` .. `p0005.json`
             تضم متناً وعناوين أبواب وآيات قرآنية وحواشي سفلية مرقمة 1، 2، 3 وحاشية جدول أزهرية `framed_hashiya`
             ذات متن عمودي مدار 90°) والتحقق التشفيري من حفظ 100% من الحروف والحواشي (`100% Zero-Loss Check`).
   - Gate 3: تمرير مخرجات المحول فعلياً إلى `/Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/manifest_v4.py`
             و`fn_linker_v4.py` والتحقق من توليد الـ Manifest وربط جميع الحواشي الـ 13 بدون أي أخطاء.
+  - Gate 4: اختبار الحالات الحدية الواقعية المستخرجة من الكتب التراثية المصورة:
+            * صيغ الحواشي غير القياسية (`[١]`, `(*)`, `( * )`, `[*]`, `* -`, الأرقام الفوقية `¹²`, الأرقام الملتصقة بالكلمات `هما1`).
+            * الحواشي الأفقية المتعددة في سطر واحد (`(١) ...   (٢) ...   (٣) ...   (٤) ...`) مع عدم شطر الأرقام المرجعية داخل السياق.
+            * حواشي الاستمرار العابرة للصفحات (`= ...` و`(=) ...`) وتطابق عداد `fn_continuation_merged_count`.
+            * الحواشي المشتركة لأكثر من موضع في الصفحة الواحدة، وتعدد الحواشي بنفس الرقم في الصفحة، وتثبيت الإحالة الساقطة مطبعياً دون انزياح عبر الصفحات.
+            * كبح الرؤوس الجارية المتكررة (Running Headers) من تقطيع الأجزاء، ودعم العناوين المركبة متعددة الأسطر والعناوين المدمجة (Run-in Headings).
 
 الخروج القياسي عند النجاح: `PASS (0 errors)`
 """
@@ -159,6 +165,165 @@ def build_realistic_5_pages_fixture(pages_dir: str) -> list[dict]:
                 "uncertain_words": [],
             },
             "gate_report": {"total_words": 72, "warnings": []},
+        },
+    ]
+
+    for p in pages:
+        p_path = os.path.join(pages_dir, f"{p['tag']}.json")
+        with open(p_path, "w", encoding="utf-8") as f:
+            json.dump(p, f, ensure_ascii=False, indent=2)
+
+    return pages
+
+
+def build_real_world_edge_cases_fixture(pages_dir: str) -> list[dict]:
+    """
+    يبني 6 صفحات واقعية مستمدة من الحالات الحدية الفعلية في الكتب التراثية المصورة:
+      - ص 1 (كالمتوهم للمحاسبي ص 9): 4 حواشٍ أفقية في سطر واحد `(١) تحت .    (٢) ...    (٣) ...    (٤) ...`
+        وإشارة مخطوطة نجمية `( * )` في المتن بدون حاشية نجمية.
+      - ص 2 (كالضروري لابن رشد ص 51 + السيرافي): إحالة رقم ملتصق بالكلمة `هما1`، وإحالة معقوفة `[٢]`،
+        وإحالة فوقية `³`، وحاشية نجمية `( * )`، مع بداية حاشية مستمرة عبر الصفحات.
+      - ص 3 (كأدب المفتي ص 86): تكملة الحاشية السابقة بعلامة `(=) ...`، وعنوان مدمج في السطر (Run-in Heading)
+        `القسم الأوَّل: المفتي المستقل، وشَرْطُهُ: ...`، ورقم مرجعي داخلي في الحاشية `طبعة دار الكتب العلمية (٢) ١٣٣٠`
+        لا يجوز شطره كحاشية جديدة، مع تكرار الرأس الجاري في مطلع الصفحة.
+      - ص 4 (كرسالة ابن تيمية ص 152 و154): تكملة حاشية بعلامة `= ...`، وعنوان مركب من سطرين (`الباب الثاني / في آداب الفتوى`)،
+        وحاشية مشتركة لموضعين `[الأنام](١)` و`[الباقي](١)`، وحاشية ثانية `(٢)`.
+      - ص 5 (كرسالة ابن تيمية ص 154 و158): سقوط مطبعي لإحالة `(١)` في المتن مع وجود الكلمة المحققة `يظهرون`
+        وقبل `البرطيل(٢)`، وآية قرآنية متعددة الأرقام `﴿... (٢) ... (٣) ...﴾(٣)`.
+      - ص 6 (كرسالة ابن تيمية ص 160): عنوان معقوف ممتد على 3 أسطر `[موقف من مواقف الشيخ / في / إبطال حيل أهل الطرق الدجالين](١)`
+        مع 3 إحالات مشتركة لنفس الحاشية `(١) من المطبوع .`، وحاشيتين مستقلتين بنفس الرقم `(٢)` في نفس الصفحة.
+    """
+    os.makedirs(pages_dir, exist_ok=True)
+    pages = [
+        {
+            "pdf_page": 1,
+            "tag": "p0001",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "- ٩ -",
+                "running_header": "كتاب التوهم وأصول الفتوى",
+                "matn": (
+                    "كتاب التوهم وأصول الفتوى\n"
+                    "والملائكة ينظرون إليهم قد نكسوا الرؤوس (١) لما دهشهم من ذلك الهول العظيم، "
+                    "وقاموا على أقدامهم شاخصة أبصارهم ينتظرون النداء (٢) من رب العالمين لفصل القضاء ( * ) إلى دار السعادة "
+                    "أو إلى دار الشقاء فلا ينظرون (٣) إلا إلى هول المطلع لقوله: ﴿يَوْمَ يَقُومُ النَّاسُ لِرَبِّ الْعَالَمِينَ﴾ (٤)."
+                ),
+                "margin_notes": "",
+                "footnotes": "(١) تحت .    (٢) منتظر باليد الأولى .    (٣) ينظروا .    (٤) سورة ٨٣: ٦",
+                "uncertain_words": [],
+            },
+        },
+        {
+            "pdf_page": 2,
+            "tag": "p0002",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١٠",
+                "running_header": "كتاب التوهم وأصول الفتوى",
+                "matn": (
+                    "القول في القسم الثالث من الجزء الأول ( * )\n"
+                    "والمعاني التي تشتمل عليها الألفاظ في دلالتها على الأحكام الشرعية شرطان هما1 أن يفهم المعنى "
+                    "الأصلي من السياق العربي الفصيح [٢]، وأن يعرف وجه الاستدلال به عند أئمة الأصول والفقهاء³ "
+                    "من غير تعسف ولا خروج عن قانون اللغة."
+                ),
+                "margin_notes": "",
+                "footnotes": (
+                    "[*] ترجمة هذا الفصل مستفادة من النسخة الخطية المحفوظة في خزانة القرويين.\n"
+                    "( 1 ) في الأصل : منهما ، والتصويب من النسخة المغربية.\n"
+                    "[٢] راجع المستصفى للغزالي والبرهان لإمام الحرمين الجويني.\n"
+                    "³ قال الشافعي في الرسالة: اللسان العربي أوسع الألسنة مذهباً وأكثرها ألفاظاً، وتتمة كلامه في الصفحة التالية"
+                ),
+                "uncertain_words": [],
+            },
+        },
+        {
+            "pdf_page": 3,
+            "tag": "p0003",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١١",
+                "running_header": "كتاب التوهم وأصول الفتوى",
+                "matn": (
+                    "كتاب التوهم وأصول الفتوى\n"
+                    "القسم الأوَّل: المفتي المستقل، وشَرْطُهُ: أنْ يكونَ قيِّماً بمعرفة أدلَّة الأحكام الشَّرعيَّة من الكتاب والسُّنَّة (١) "
+                    "والإجماع والقياس وما التحق بها على التفصيل المبين في كتب الفقه وتيسرت له الملكة الفقهية التامة (٢)."
+                ),
+                "margin_notes": "",
+                "footnotes": (
+                    "(=) ولا يحيط بجميع لسان العرب إلا نبي، ولكن لا يذهب منه شيء على عامتها.\n"
+                    "١. أصل هذا التقسيم ذكره أبو الحسين البصري في المعتمد وتبعه ابن الصلاح.\n"
+                    "(٢) كذا في «ش» ، وكذا في «الأشباه والنظائر» للسيوطي - طبعة دار الكتب العلمية (٢) ١٣٣٠ - ١٣٣١ وقد سقط من بقية النسخ"
+                ),
+                "uncertain_words": [],
+            },
+        },
+        {
+            "pdf_page": 4,
+            "tag": "p0004",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١٢",
+                "running_header": "كتاب التوهم وأصول الفتوى",
+                "matn": (
+                    "الباب الثاني\n"
+                    "في آداب الفتوى وسياسة الأنام\n"
+                    "وهؤلاء هم الخارجون عن شرائع الإسلام وإن تمسكوا ببعض سياسة [الأنام](١)، "
+                    "والصنف [الباقي](١) أهل البدع والأهواء المفارقون للسنة والجماعة الذين حذر العلماء من فتنتهم (٢)."
+                ),
+                "margin_notes": "",
+                "footnotes": (
+                    "= لوروده في حاشية النسخة الدمشقية المعتمدة في المقابلة.\n"
+                    "(١) كذا في الأصل ، وفي المطبوع : الإسلام ، و«الصنف الثاني» بدلاً من «الباقي».\n"
+                    "(٢) انظر مجموع الفتاوى لشيخ الإسلام ابن تيمية ج ٢٨ ص ٤١٠."
+                ),
+                "uncertain_words": [],
+            },
+        },
+        {
+            "pdf_page": 5,
+            "tag": "p0005",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١٣",
+                "running_header": "كتاب التوهم وأصول الفتوى",
+                "matn": (
+                    "وقد حصل بأيدي المسلمين طائفة من كتبهم، وهم مع هذا يظهرون التقية والنفاق، "
+                    "ويتقربون ببذل الأموال إلى من يقبلها منهم ويبذلونه من البرطيل(٢) لمن يقصدهم، "
+                    "وهم يشبهون من ذكرهم الله في قوله: ﴿يُخْرِبُونَ بُيُوتَهُمْ بِأَيْدِيهِمْ وَأَيْدِي الْمُؤْمِنِينَ فَاعْتَبِرُوا يَا أُولِي الْأَبْصَارِ (٢) "
+                    "وَلَوْلَا أَنْ كَتَبَ اللَّهُ عَلَيْهِمُ الْجَلَاءَ لَعَذَّبَهُمْ فِي الدُّنْيَا وَلَهُمْ فِي الْآخِرَةِ عَذَابُ النَّارِ (٣)﴾(٣)."
+                ),
+                "margin_notes": "[ق/ ٥٥ أ]",
+                "footnotes": (
+                    "(١) كذا في الأصل ، وفي المطبوع : ويتظاهرون .\n"
+                    "(٢) الرشوة .\n"
+                    "(٣) [سورة الحشر : ٢-٣] ."
+                ),
+                "uncertain_words": [],
+            },
+        },
+        {
+            "pdf_page": 6,
+            "tag": "p0006",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١٤",
+                "running_header": "كتاب التوهم وأصول الفتوى",
+                "matn": (
+                    "الحمد [لله](١) الذي بنعمته تتم الصالحات وتدوم البركات.\n"
+                    "[موقف من مواقف الشيخ\n"
+                    "في\n"
+                    "إبطال حيل أهل الطرق الدجالين](١)\n"
+                    "حضر جماعة من المشايخ سنة خمس [وسبعمائة](١) في مجلس القضاء بدمشق المحروسة (٢)، "
+                    "فأبطل الشيخ شبهاتهم بالحجة والبرهان الساطع (٢) والحمد لله رب العالمين."
+                ),
+                "margin_notes": "",
+                "footnotes": (
+                    "(١) من المطبوع .\n"
+                    "(٢) في النسخة التيمورية: بدمشق الشام.\n"
+                    "(٢) حاشية ثانية مكررة الرقم في ذيل الصفحة نفسها لبيان تمام الواقعة."
+                ),
+                "uncertain_words": [],
+            },
         },
     ]
 
@@ -320,9 +485,124 @@ def run_gate_2_and_gate_3_adapter_and_manifest_v4() -> tuple[list[str], list[str
     return gate2_errors, gate3_errors, summary_stats
 
 
+def run_gate_4_real_world_edge_cases() -> tuple[list[str], dict]:
+    """
+    Gate 4: اختبار الحالات الحدية الواقعية المستخرجة من الكتب التراثية:
+      - صيغ الحواشي غير القياسية (`[١]`, `(*)`, `( * )`, `[*]`, `¹²³`, `هما1`, `١.`)
+      - الحواشي الأفقية المتعددة في سطر واحد (`(١) ...   (٢) ...   (٣) ...   (٤) ...`)
+      - حواشي الاستمرار العابرة للصفحات (`= ...` و`(=) ...`)
+      - الحواشي المشتركة لأكثر من موضع في الصفحة، وتعدد الحواشي بنفس الرقم في الصفحة، وتثبيت الإحالة الساقطة
+      - كبح الرؤوس الجارية المتكررة، والعناوين المركبة متعددة الأسطر والعناوين المدمجة (Run-in Headings)
+    """
+    gate4_errors = []
+    g4_stats = {}
+
+    with tempfile.TemporaryDirectory(prefix="turath_pdf_gate4_test_") as tmp_root:
+        book_in_dir = os.path.join(tmp_root, "real_world_edge_book")
+        pages_dir = os.path.join(book_in_dir, "pages")
+        preflight_out_dir = os.path.join(tmp_root, "preflight_v4_out")
+
+        build_real_world_edge_cases_fixture(pages_dir)
+
+        adapter_rep = convert_pdf_output_to_preflight(
+            input_path=book_in_dir,
+            out_dir=preflight_out_dir,
+            book_id=9002,
+            science="fiqh",
+            round_num=98,
+            title="كتاب التوهم وأصول الفتوى",
+            author="الحارث المحاسبي وابن تيمية",
+            death="728",
+            juz=1,
+            run_manifest_v4=True,
+            deep_indexing_scripts_dir=DEFAULT_DEEP_INDEXING_SCRIPTS,
+        )
+
+        zl = adapter_rep.get("zero_loss_check", {})
+        if not zl.get("passed") or zl.get("retention_pct") != 100.0:
+            gate4_errors.append(f"Gate 4 Zero-Loss check failed: {zl.get('errors')}")
+
+        mv4 = adapter_rep.get("manifest_v4_verification", {})
+        if not mv4.get("passed"):
+            gate4_errors.extend(mv4.get("errors") or ["Gate 4 manifest_v4_verification failed"])
+
+        norm_totals = adapter_rep.get("normalization_totals", {})
+        if norm_totals.get("horizontal_splits", 0) < 3:
+            gate4_errors.append(f"Expected >= 3 horizontal footnote splits on page 1, got {norm_totals.get('horizontal_splits')}")
+        if norm_totals.get("cross_page_continuations_merged", 0) != 2:
+            gate4_errors.append(
+                f"Expected 2 cross-page continuation footnotes merged, got {norm_totals.get('cross_page_continuations_merged')}"
+            )
+        if norm_totals.get("shared_markers_spaced", 0) < 3:
+            gate4_errors.append(
+                f"Expected >= 3 shared excess footnote markers spaced, got {norm_totals.get('shared_markers_spaced')}"
+            )
+        if norm_totals.get("missing_matn_markers_anchored", 0) != 1:
+            gate4_errors.append(
+                f"Expected 1 missing matn marker anchored on page 5, got {norm_totals.get('missing_matn_markers_anchored')}"
+            )
+
+        # إجمالي الحواشي الفعلية عبر الصفحات الست:
+        # ص1: 4 حواشٍ أفقية | ص2: 4 حواشٍ (*، 1، 2، 3) | ص3: تكملة + حاشيتان (1، 2) | ص4: تكملة + حاشيتان (1، 2)
+        # ص5: 3 حواشٍ (1، 2، 3) | ص6: 3 حواشٍ (1، 2، 2) => المجموع = 18 حاشية
+        if adapter_rep.get("total_footnotes_count") != 18:
+            gate4_errors.append(f"Expected 18 total footnotes in Gate 4, got {adapter_rep.get('total_footnotes_count')}")
+
+        bm = mv4.get("book_manifest", {})
+        if bm.get("fn_linked_count") != 18:
+            gate4_errors.append(f"Expected 18 linked footnotes in manifest_v4, got {bm.get('fn_linked_count')}")
+        if bm.get("fn_continuation_merged_count") != 2:
+            gate4_errors.append(
+                f"Expected fn_continuation_merged_count=2 in manifest_v4, got {bm.get('fn_continuation_merged_count')}"
+            )
+        if bm.get("fn_unlinked_in_window_count") != 0:
+            gate4_errors.append(f"Expected 0 unlinked footnotes in Gate 4, got {bm.get('fn_unlinked_in_window_count')}")
+        if bm.get("unclassified_tokens_count") != 0:
+            gate4_errors.append(f"Expected 0 unclassified tokens in Gate 4, got {bm.get('unclassified_tokens_count')}")
+
+        # التحقق من الفهرس الهيكلي (toc.json):
+        # 1. عدم تقطيع الرأس الجاري المتكرر "كتاب التوهم وأصول الفتوى" في ص 3
+        # 2. استخلاص العنوان المدمج "القسم الأوَّل: المفتي المستقل"
+        # 3. استخلاص العنوان المركب من سطرين "الباب الثاني في آداب الفتوى وسياسة الأنام"
+        # 4. استخلاص العنوان المعقوف الممتد على 3 أسطر "موقف من مواقف الشيخ في إبطال حيل أهل الطرق الدجالين"
+        toc_data = json.loads(Path(adapter_rep["files_generated"]["toc_json"]).read_text(encoding="utf-8"))
+        toc_titles = [e["t"] for e in toc_data.get("toc", [])]
+
+        if "القسم الأوَّل: المفتي المستقل" not in toc_titles:
+            gate4_errors.append(f"Run-in heading 'القسم الأوَّل: المفتي المستقل' missing from TOC: {toc_titles}")
+        if "الباب الثاني في آداب الفتوى وسياسة الأنام" not in toc_titles:
+            gate4_errors.append(
+                f"Two-line compound heading 'الباب الثاني في آداب الفتوى وسياسة الأنام' missing from TOC: {toc_titles}"
+            )
+        if "موقف من مواقف الشيخ في إبطال حيل أهل الطرق الدجالين" not in toc_titles:
+            gate4_errors.append(
+                f"Multi-line bracketed heading 'موقف من مواقف الشيخ في إبطال حيل أهل الطرق الدجالين' missing from TOC: {toc_titles}"
+            )
+        if toc_titles.count("كتاب التوهم وأصول الفتوى") > 1:
+            gate4_errors.append(f"Repeated running header triggered duplicate TOC parts: {toc_titles}")
+
+        # تنظيف الملف المؤقت الذي يكتبه manifest_v4 في /tmp/r98_fiqh.txt
+        tmp_dump = "/tmp/r98_fiqh.txt"
+        if os.path.exists(tmp_dump):
+            try:
+                os.remove(tmp_dump)
+            except OSError:
+                pass
+
+        g4_stats = {
+            "pages": adapter_rep.get("non_blank_pages"),
+            "parts": adapter_rep.get("total_parts_built"),
+            "fn_linked": bm.get("fn_linked_count", 0),
+            "continuations": bm.get("fn_continuation_merged_count", 0),
+            "horiz_splits": norm_totals.get("horizontal_splits", 0),
+        }
+
+    return gate4_errors, g4_stats
+
+
 def main():
     print("======================================================================")
-    print("  turath-pdf-to-text v2.0 — Deterministic Quality & Pre-Flight Gates")
+    print("  turath-pdf-to-text v2.1 — Deterministic Quality & Pre-Flight Gates")
     print("======================================================================")
 
     g1_errors = run_gate_1_original_visual_gates()
@@ -338,7 +618,14 @@ def main():
         f"[parts={stats.get('parts_built')}, fn_linked={stats.get('footnotes_linked')}/13]"
     )
 
-    all_errors = g1_errors + g2_errors + g3_errors
+    g4_errors, g4_stats = run_gate_4_real_world_edge_cases()
+    print(
+        f"[Gate 4] Real-World Multi-Format, Headers & Cont.   : {'PASS' if not g4_errors else 'FAIL'} ({len(g4_errors)} errors) "
+        f"[parts={g4_stats.get('parts')}, fn_linked={g4_stats.get('fn_linked')}/18, "
+        f"cont={g4_stats.get('continuations')}, horiz={g4_stats.get('horiz_splits')}]"
+    )
+
+    all_errors = g1_errors + g2_errors + g3_errors + g4_errors
     if all_errors:
         print("\n[ERRORS DETECTED]:")
         for err in all_errors:

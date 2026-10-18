@@ -384,33 +384,40 @@ def run_quality_gates(extracted: dict, layout_meta: dict) -> dict:
             "y_range": (max(0, fn_sep_y - 20), layout_meta["height"]),
         })
 
-    def to_int_marker(s: str) -> int:
+    def to_int_marker(s: str) -> int | str:
+        if "*" in s:
+            return "*"
         ar_map = str.maketrans("٠١٢٣٤٥٦٧٨٩¹²³⁴⁵⁶⁷⁸⁹", "0123456789123456789")
         return int(s.translate(ar_map))
-
-    matn_without_quran = re.sub(r"﴿[^﴾]*﴾", " ", matn_norm)
-    matn_markers = []
-    for m in re.finditer(
-        r"[\(\[]([٠-٩0-9]{1,2})[\)\]]|([¹²³⁴⁵⁶⁷⁸⁹])|(?<=[ء-ي])([٠-٩0-9]{1,2})(?=\s|[،.؛:]|$)",
-        matn_without_quran,
-    ):
-        raw_num = m.group(1) or m.group(2) or m.group(3)
-        val = to_int_marker(raw_num)
-        if 1 <= val <= 25:
-            matn_markers.append(val)
 
     fn_markers = []
     for ln in fn_lines:
         for m in re.finditer(
-            r"(?:^\s*(?:[\(\[]([٠-٩0-9]{1,2})[\)\]]|([٠-٩0-9]{1,2})\s*[-–—)])|(?<=\s)[\(\[]([٠-٩0-9]{1,2})[\)\]])",
+            r"(?:^\s*(?:[\(\[]\s*([٠-٩0-9]{1,2}|\*+)\s*[\)\]]|([٠-٩0-9]{1,2})\s*[-–—.)]|([¹²³⁴⁵⁶⁷⁸⁹])|(\*+)\s*[-–—.]?(?=\s+\S))"
+            r"|(?:\s{2,}|(?<=[.؛])\s+)[\(\[]\s*([٠-٩0-9]{1,2}|\*+)\s*[\)\]]\s*(?=[\u0621-\u064A«\"\[]))",
             ln,
         ):
-            raw_num = m.group(1) or m.group(2) or m.group(3)
+            raw_num = m.group(1) or m.group(2) or m.group(3) or m.group(4) or m.group(5)
             val = to_int_marker(raw_num)
-            if 1 <= val <= 25 and val not in fn_markers:
+            if (val == "*" or (isinstance(val, int) and 1 <= val <= 25)) and val not in fn_markers:
                 fn_markers.append(val)
 
-    has_continuation_fn = any(ln.startswith("=") or ln.startswith("(=") for ln in fn_lines)
+    has_star_fn = "*" in fn_markers
+    matn_without_quran = re.sub(r"﴿[^﴾]*﴾", " ", matn_norm)
+    matn_markers = []
+    for m in re.finditer(
+        r"[\(\[]\s*([٠-٩0-9]{1,2}|\*+)\s*[\)\]]|([¹²³⁴⁵⁶⁷⁸⁹])|(?<=[\u0621-\u064A\u064B-\u065F])([٠-٩0-9]{1,2})(?=\s|[،.؛:!؟«»\"'\)\]]|$)",
+        matn_without_quran,
+    ):
+        raw_num = m.group(1) or m.group(2) or m.group(3)
+        val = to_int_marker(raw_num)
+        if val == "*":
+            if has_star_fn:
+                matn_markers.append(val)
+        elif isinstance(val, int) and 1 <= val <= 25:
+            matn_markers.append(val)
+
+    has_continuation_fn = any(re.match(r"^\s*(?:=|[\(\[]\s*=\s*[\)\]])", ln) for ln in fn_lines)
 
     if fn_markers and matn_markers:
         missing_in_fn = [m for m in set(matn_markers) if m not in set(fn_markers)]
