@@ -1,14 +1,14 @@
 ---
 name: sheikh-curation
-version: 2.0
-description: "Use when building, auditing, correcting, or automatically curating series and lessons for any scholar / person from raw discovery metadata (<person_id>_raw.json from person-discovery-intake) to curated JSON (<person_id>.json), SQLite database (curated.db), and per-series pipeline directories (<person_id>/sXXX/_meta.json for sheikh-series-pipeline v5) under the zero-error standard (0 Errors). Includes the 9-stage deterministic auto-curator (scripts/auto_curate_person.py) and 3-layer quality gates (scripts/test_curation_v2_gates.py)."
+version: 2.3
+description: "Use when building, auditing, correcting, or automatically curating series and lessons for any scholar / person from raw discovery metadata (<person_id>_raw.json from person-discovery-intake) to curated JSON (<person_id>.json), SQLite database (curated.db), and per-series pipeline directories (<person_id>/sXXX/_meta.json for sheikh-series-pipeline v5) under the zero-error standard (0 Errors). Includes the 9-stage deterministic auto-curator (scripts/auto_curate_person.py) and 5-layer quality gates (scripts/test_curation_v2_gates.py)."
 ---
 
-# مهارة `sheikh-curation` (v2.0): الهندسة والتحقيق الدلالي الآلي لسلاسل ودروس المشايخ والأعلام (معيار 0 خطأ)
+# مهارة `sheikh-curation` (v2.3): الهندسة والتحقيق الدلالي الآلي لسلاسل ودروس المشايخ والأعلام (معيار 0 خطأ)
 
 توثق هذه المهارة القواعد الصارمة، والعلل الجذرية التسع المكتشفة، والخوارزميات المعتمدة لبناء وتدقيق سلاسل المشايخ والأعلام العلمية والدعوية والفكرية من بيانات الاكتشاف الخام (`<person_id>_raw.json` الناتجة عن مهارة `person-discovery-intake` أو `data/curated_sheikhs/<sheikh>_raw.json`) إلى الملفات المنقحة (`data/curated_sheikhs/<person_id>.json`) وهياكل السلاسل الجاهزة للتفريغ (`<output_series_dir>/<person_id>/sXXX/_meta.json` المتوافقة مع `sheikh-series-pipeline v5`) وقاعدة البيانات (`data/curated.db`) وملفات الواجهة (`data/catalog_curated.json` و`data/series_curated/*.json`).
 
-وتشمل أيضًا **جرد التغطية** (ما هو مفرَّغ فعلًا عبر مخزون `ytb`/`irth`، وما هو جاهز للعرض) حين يسأل المالك «ما الموجود؟» أو يطلب اختيار سلاسل لبرنامج دروس — راجع القسم 6 والمرجع [transcription-inventory.md](./references/transcription-inventory.md)، كما تشمل في الإصدار `v2.0` **خط الأنابيب الآلي ذو المراحل التسع** ([auto_curate_person.py](./scripts/auto_curate_person.py)) و**بوابات الفحص الحتمية** ([test_curation_v2_gates.py](./scripts/test_curation_v2_gates.py)) في القسمين 7 و8.
+وتشمل أيضًا **جرد التغطية** (ما هو مفرَّغ فعلًا عبر مخزون `ytb`/`irth`، وما هو جاهز للعرض) حين يسأل المالك «ما الموجود؟» أو يطلب اختيار سلاسل لبرنامج دروس — راجع القسم 6 والمرجع [transcription-inventory.md](./references/transcription-inventory.md)، كما تشمل في الإصدار `v2.3` **خط الأنابيب الآلي ذو المراحل التسع** ([auto_curate_person.py](./scripts/auto_curate_person.py)) و**بوابات الفحص الحتمية الخمس** ([test_curation_v2_gates.py](./scripts/test_curation_v2_gates.py)) في القسمين 7 و8.
 
 ---
 
@@ -338,13 +338,13 @@ assert result["report"]["stage9"]["passed"] is True
 
 ---
 
-## 8. بوابات الجودة الحتمية (`4-Layer Quality Gate`)
+## 8. بوابات الجودة الحتمية (`5-Layer Quality Gate`)
 
 يُفحص المحرك الآلي عبر سكربت الاختبار الحتمي [test_curation_v2_gates.py](./scripts/test_curation_v2_gates.py):
 ```bash
 python3 "${SHEIKH_CURATION_SKILL_DIR}/scripts/test_curation_v2_gates.py"
 ```
-ويتحقق من أربع بوابات إلزامية:
+ويتحقق من خمس بوابات إلزامية:
 1. **`Gate 1 (All 9 Defect Repairs)`**: تمرير ملف `<person_id>_raw.json` اختباري شامل يحتوي على جميع العلل التسع (مقاطع قصيرة داخل سلسلة طويلة، برومو في آخر السلسلة، بث مقلوب الأب=45ث والابن=3600ث، بث ميت 5ث، عنوان مبتور بعد 100 حرف في ذيل السلسلة، دمج خاطئ لدرسين طويلين بعنوان عام، تصفير ترقيم `1..3 -> 1..2` وإزاحة ترقيم يبدأ من الدرس 2، محاضرة ضيف وحفل مسابقة وتصادم كلمة «خطبة» في مسألة فقهية، وسلسلة متوقفة بـ `state=null`) والتأكد الحتمي من إصلاح كل علة منها.
 2. **`Gate 2 (Zero-Error Scanner & Global Audit Gate)`**: تشغيل `deep_scanner_all.py` و`global_audit.py` على المخرجات المنقحة والتحقق من أن النتيجة `0 errors` (`0 SHORT_IN_LONG`, `0 INVERTED_PARENT`, `0 NUM_RESET`, `0 NUM_MISMATCH`, `0 NULL_STATE`).
 3. **`Gate 3 (Series Directory Export)`**: التحقق من توليد مجلدات `<person_id>/sXXX/_meta.json` صالحة ومتوافقة 100% مع متطلبات `sheikh-series-pipeline v5`.
@@ -353,5 +353,10 @@ python3 "${SHEIKH_CURATION_SKILL_DIR}/scripts/test_curation_v2_gates.py"
    - التمييز الدقيق بين محاضرات الضيوف/الكلمات الترحيبية وبين السلاسل المشتركة (`مراجعات مع ...`) وقوائم المؤتمرات والملتقيات.
    - توجيه دروس `غير مصنف` بأسماء المتون المختصرة بين قوسين وتجميع المتون المتكررة غير المصنفة في سلاسل مستقلة (`_extract_unclassified_series_signature`).
    - قلب قوائم التشغيل المعكوسة (`N..1 -> 1..N`) وتحديد حالة السلسلة (`completed` / `stopped` / `ongoing`) دلالياً حتى عندما يكون الحقل الخام افتراضياً `"completed"` مع ملاحظة `"تصنيف: ..."`.
+5. **`Gate 5 (Multi-Part Same-Episode Grouping, Scholar-Token Isolation & Category Inference Gate — v2.3)`**:
+   - استنباط التصنيف العلمي الدقيق للسلسلة (`infer_series_category` عبر `15` حقلاً علمياً) بالاعتماد على `matched_book` وعنوان السلسلة وعناوين الدروس الاحتياطية (تخفيض سلاسل `"مواعظ ولقاءات عامة"` الافتراضية من `502` إلى `56` سلسلة عبر المشايخ الـ `17`).
+   - تجميع أجزاء الدرس الواحد (`- 7 تتمة -`، `| حـ 860 | 2 |`، `الجزء الثاني (2)`) قبل الفرز وبعده (`_merge_same_num_consecutive_groups`) وتجميع مقدمات السلاسل المتعددة (`مقدمة -1-..-6-`) وترقية المقدمات غير المرقمة في أول السلسلة قبل `الدرس 1` لمنع إزاحة الترقيم المتسلسلة `(م X)`.
+   - استثناء اسم الشيخ صاحب القناة (`_build_sheikh_exclude_tokens`) من `_score_series_match` لمنع التوجيه الخاطئ للدروس غير المصنفة، ومنع `[INVERTED_PARENT_CHILD]` عند تشارك مقطع طويل (`>= 300s`) مع كلمة قصيرة (`< 300s`) في السنة الهجرية، والتحقق الشامل (`discover_person` -> `auto_curate_person`) على مدونات `jifri` و`bouti` و`kamali` بـ **`0 errors`**.
+
 
 

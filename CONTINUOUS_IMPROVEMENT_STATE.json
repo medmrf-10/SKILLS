@@ -1,9 +1,9 @@
 {
   "loop_version": "2.0-subagent-driven",
-  "updated_at": "2026-10-18T18:12:00+02:00",
-  "cycle_count": 9,
-  "next_skill_index": 2,
-  "last_improved_skill": "person-discovery-intake",
+  "updated_at": "2026-10-18T19:08:30+02:00",
+  "cycle_count": 10,
+  "next_skill_index": 3,
+  "last_improved_skill": "sheikh-curation",
   "priority_backlog": [
     {
       "skill": "sheikh-series-pipeline",
@@ -24,15 +24,14 @@
     "agy-lean-cli"
   ],
   "last_completed_cycle": {
-    "cycle": 9,
+    "cycle": 10,
     "skills_tested": [
-      "person-discovery-intake"
+      "sheikh-curation"
     ],
     "real_datasets_used": [
-      "All 17 curated sheikh raw JSON inventories in /Users/macm1pro/REPOS/cheikh/data/curated_sheikhs (*_raw.json, 560 classified series)",
-      "Shamela4 8,589-book index (shamela4_books_index.json.gz) and real Archive.org payloads in /Users/macm1pro/REPOS/cheikh/data/missing_episodes_found.json (Aqeeda28, char7.elmowata2, we-Nafs, we-Nafs_A, Islamic_Tape-252_uP_bY_mUSLEm)"
+      "All 17 curated sheikh raw JSON inventories in /Users/macm1pro/REPOS/cheikh/data/curated_sheikhs (*_raw.json, 560+ series, end-to-end discover_person -> auto_curate_person)"
     ],
-    "bugs_fixed": 5,
+    "bugs_fixed": 6,
     "gate_status": "PASS (0 errors)"
   }
 }

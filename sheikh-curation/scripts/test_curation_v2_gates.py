@@ -34,6 +34,19 @@ Verifies:
         d. Reverse-ordered (`N..1`) playlist detection and reversal + semantic `state` resolution (`completed`/`stopped`/`ongoing`)
            even when raw dump defaults to `state="completed"` with `"تصنيف: ..."` notes.
         e. Real multi-sheikh raw corpus curation (`sariri`, `alihani`, `bardoni`, `hawwa`, `sayed`) with 0 scanner/audit errors.
+
+  - Gate 5 (Multi-Part Same-Episode Grouping, Scholar-Token Isolation & Category Inference Gate):
+      Verifies Cycle 10 (v2.3) upgrades across the 17-sheikh corpus:
+        a. `infer_series_category` across `matched_book`, Arabic & foreign-language titles, and lesson-title fallback
+           (reducing `"مواعظ ولقاءات عامة"` fallback from 502 series down to 56 series across 17 sheikhs).
+        b. Multi-part same-episode grouping & cascade-shift prevention (`- 7 تتمة -`, `| حـ 860 | 2 |` & `| 3 |`,
+           out-of-order duplicate lesson numbers merged post-sort without `(م X)` cascade, reverse-playlist unclassified
+           `تتمة الدرس` & duplicate recording attachment, multi-part `مقدمة -1-..-3-` grouped under `مقدمة`, and
+           unnumbered index-0 intro promoted to `مقدمة` before `الدرس 1`).
+        c. `[INVERTED_PARENT_CHILD]` prevention when a `>= 300s` clip-titled video shares a Hijri year/date with a `< 300s`
+           video (`jifri` regression) and end-to-end `discover_person` -> `auto_curate_person` verification on `jifri_raw.json`,
+           `bouti_raw.json`, and `kamali_raw.json` with 0 scanner/audit errors.
+        d. Scholar-name token exclusion in `_score_series_match` preventing false unclassified routing.
 """
 
 from __future__ import annotations
@@ -49,12 +62,20 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+DISCOVERY_SCRIPT_DIR = SCRIPT_DIR.parent.parent / "person-discovery-intake" / "scripts"
+if DISCOVERY_SCRIPT_DIR.exists() and str(DISCOVERY_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(DISCOVERY_SCRIPT_DIR))
 
 from auto_curate_person import (  # noqa: E402
+    _build_sheikh_exclude_tokens,
+    _score_series_match,
     auto_curate_person,
     extract_lesson_num,
+    infer_series_category,
+    is_explicit_part_continuation,
     is_guest_or_event_lesson,
 )
+from discover_person import discover_person  # noqa: E402
 
 
 def build_adversarial_raw_fixture() -> dict[str, Any]:
@@ -895,14 +916,292 @@ def run_gate_4_real_corpus_semantic_fidelity(tmp_path: Path) -> None:
     )
 
 
+def run_gate_5_multipart_same_episode_and_category_inference(tmp_path: Path) -> None:
+    """
+    Gate 5: Multi-Part Same-Episode Grouping, Scholar-Token Isolation & Category Inference Gate (v2.3).
+    Verifies:
+      1. `infer_series_category` across Arabic & foreign-language titles, `matched_book`, and lesson-title fallback.
+      2. `extract_lesson_num` and `is_explicit_part_continuation` on `- 7 تتمة -`, `| حـ 860 | 2 |`,
+         `الجزء الثاني (2)`, `مقدمة -2-`, and leading `80 إعراب ...`.
+      3. Scholar-name token exclusion in `_score_series_match` preventing false routing of unclassified lessons.
+      4. Multi-part same-episode grouping (pre-sort and post-sort), multi-part `مقدمة -1-..-3-`, unnumbered
+         index-0 intro promotion, reverse-playlist `تتمة الدرس` child attachment, and `[INVERTED_PARENT_CHILD]`
+         prevention when a `>= 300s` clip-titled video shares a Hijri year with a `< 300s` video.
+      5. End-to-end `discover_person` -> `auto_curate_person` on real `jifri_raw.json`, `bouti_raw.json`,
+         and `kamali_raw.json` with 0 scanner/audit errors and minimal `(م X)` rewrites.
+    """
+    # 5a. Category inference tests (matched_book, Arabic titles, multilingual titles, lesson fallback)
+    assert infer_series_category("شرح السلم المنورق في علم المنطق") == "المنطق والفلسفة"
+    assert infer_series_category("شرح كبرى اليقينيات الكونية") == "العقيدة وعلم الكلام"
+    assert infer_series_category("شرح جمع الجوامع") == "أصول الفقه وقواعده"
+    assert infer_series_category("إعراب القرآن الكريم") == "التفسير وعلوم القرآن"
+    assert infer_series_category("شرح متن الصرف الصغير") == "اللغة العربية وعلومها"
+    assert infer_series_category("مجالس صحيح البخاري") == "الحديث وعلومه"
+    assert infer_series_category("فقه المعاملات المالية") == "الفقه وأصوله"
+    assert infer_series_category("دورة التأهيل الأسري وفقه الأسرة") == "التربية والأسرة وفقه النفس"
+    assert infer_series_category("أيها المريد - تزكية النفس") == "التزكية والأخلاق"
+    assert infer_series_category("فقه السيرة النبوية") == "السيرة والتراجم والتاريخ"
+    assert infer_series_category("برنامج أندلسيات") == "السيرة والتراجم والتاريخ"
+    assert infer_series_category("خطب الجمعة المنبرية") == "الخطب والمنبر"
+    assert infer_series_category("وعي المسلم المعاصر والغزو الفكري") == "الفكر والوعي الحضاري"
+    assert infer_series_category("Bouti - English Subtitle") == "مواد مترجمة للغات أخرى"
+    assert infer_series_category("مقتطفات وفوائد قصيرة") == "الفوائد والمقتطفات العلمية"
+    # Fallback to lesson titles when series title is generic
+    assert (
+        infer_series_category(
+            "دروس جامع التوبة",
+            lessons=[
+                {"title": "تفسير سورة البقرة - الدرس 1"},
+                {"title": "تفسير سورة البقرة - الدرس 2"},
+            ],
+        )
+        == "التفسير وعلوم القرآن"
+    )
+
+    # 5b. Multi-part extraction & continuation detection tests
+    assert extract_lesson_num("شرح جمع الجوامع - 7 تتمة -", "شرح جمع الجوامع") == 7
+    assert is_explicit_part_continuation("شرح جمع الجوامع - 7 تتمة -") is True
+    assert extract_lesson_num("شرح رياض الصالحين | حـ 860 | 2 | باب التوبة", "شرح رياض الصالحين") == 860
+    assert is_explicit_part_continuation("شرح رياض الصالحين | حـ 860 | 2 | باب التوبة") is True
+    assert extract_lesson_num("شرح البردة - المجلس الأول - الجزء الثاني (2)", "شرح البردة") == 1
+    assert extract_lesson_num("شرح البردة - الفصل الأول - الجزء الثاني (2)", "شرح البردة") is None
+    assert is_explicit_part_continuation("شرح البردة - الفصل الأول - الجزء الثاني (2)") is True
+    assert extract_lesson_num("80 إعراب سورة آل عمران الآية 120", "إعراب القرآن الكريم") == 80
+    assert extract_lesson_num("شرح كبرى اليقينيات الكونية - مقدمة -2-", "شرح كبرى اليقينيات الكونية") is None
+
+    # 5c. Scholar-name token exclusion in _score_series_match
+    bouti_info = {"name": "محمد سعيد رمضان البوطي", "id": "bouti"}
+    bouti_excl = _build_sheikh_exclude_tokens(bouti_info)
+    assert "البوطي" in bouti_excl and "سعيد" in bouti_excl
+    false_score = _score_series_match(
+        "محاضرة عامة عن أزمة الشباب | الدكتور محمد سعيد رمضان البوطي",
+        {"title": "ندوات تلفزيونية | الدكتور محمد سعيد رمضان البوطي"},
+        sheikh_info=bouti_info,
+    )
+    assert false_score < 0.70, f"Gate 5 Failed: Scholar-name tokens caused false series match score={false_score}"
+
+    # 5d. End-to-end synthetic fixture for multi-part grouping, intro promotion, and inverted-parent prevention
+    gate5_raw: dict[str, Any] = {
+        "person_id": "gate5sh",
+        "sheikh": {
+            "id": "gate5sh",
+            "name": "الشيخ الخامس",
+            "bio": "اختبار التجميع متعدد الأجزاء ومنع إزاحة الترقيم.",
+        },
+        "series": [
+            # Series 1: Multi-part intro (مقدمة -1-..-2-) + out-of-order multi-part episode (Lesson 2 part 1 & part 2 separated)
+            {
+                "id": "gate5sh__s001",
+                "title": "شرح كبرى اليقينيات الكونية",
+                "category": "مواعظ ولقاءات عامة",
+                "state": "completed",
+                "lessons": [
+                    {
+                        "pos": 1,
+                        "yt_id": "vid_ky_i1",
+                        "title": "شرح كبرى اليقينيات الكونية - مقدمة -1- د. الشيخ الخامس",
+                        "duration": 2100,
+                        "is_child": False,
+                        "display_no": "1",
+                    },
+                    {
+                        "pos": 2,
+                        "yt_id": "vid_ky_i2",
+                        "title": "شرح كبرى اليقينيات الكونية - مقدمة -2- د. الشيخ الخامس",
+                        "duration": 2050,
+                        "is_child": False,
+                        "display_no": "2",
+                    },
+                    {
+                        "pos": 3,
+                        "yt_id": "vid_ky_01",
+                        "title": "شرح كبرى اليقينيات الكونية - الدرس 1 - وجود الخالق",
+                        "duration": 2400,
+                        "is_child": False,
+                        "display_no": "3",
+                    },
+                    {
+                        "pos": 4,
+                        "yt_id": "vid_ky_02a",
+                        "title": "شرح كبرى اليقينيات الكونية | حـ 2 | 1 | دليل الاختراع",
+                        "duration": 2300,
+                        "is_child": False,
+                        "display_no": "4",
+                    },
+                    {
+                        "pos": 5,
+                        "yt_id": "vid_ky_03",
+                        "title": "شرح كبرى اليقينيات الكونية | حـ 3 | حقيقة النبوة",
+                        "duration": 2350,
+                        "is_child": False,
+                        "display_no": "5",
+                    },
+                    {
+                        "pos": 6,
+                        "yt_id": "vid_ky_02b",
+                        "title": "شرح كبرى اليقينيات الكونية | حـ 2 | 2 | تتمة دليل الاختراع",
+                        "duration": 2200,
+                        "is_child": False,
+                        "display_no": "6",
+                    },
+                    {
+                        "pos": 7,
+                        "yt_id": "vid_ky_04",
+                        "title": "شرح كبرى اليقينيات الكونية | حـ 4 | خاتمة الكتاب وتمام الشرح",
+                        "duration": 2500,
+                        "is_child": False,
+                        "display_no": "7",
+                    },
+                ],
+            },
+            # Series 2: Unnumbered index-0 behind-the-scenes intro before Lesson 1..3 + Hijri clip collision test
+            {
+                "id": "gate5sh__s002",
+                "title": "برنامج أيها المريد",
+                "category": "مواعظ ولقاءات عامة",
+                "state": "completed",
+                "lessons": [
+                    {
+                        "pos": 1,
+                        "yt_id": "vid_mr_intro",
+                        "title": "كواليس برنامج أيها المريد",
+                        "duration": 900,
+                        "is_child": False,
+                        "display_no": "1",
+                    },
+                    {
+                        "pos": 2,
+                        "yt_id": "vid_mr_01",
+                        "title": "أيها المريد - الحلقة 1 - بداية الطريق",
+                        "duration": 1800,
+                        "is_child": False,
+                        "display_no": "2",
+                    },
+                    {
+                        "pos": 3,
+                        "yt_id": "vid_mr_02",
+                        "title": "أيها المريد - الحلقة 2 - محاسبة النفس",
+                        "duration": 1850,
+                        "is_child": False,
+                        "display_no": "3",
+                    },
+                    {
+                        "pos": 4,
+                        "yt_id": "vid_mr_03",
+                        "title": "أيها المريد - الحلقة 3 - الحلقة الأخيرة وتمام البرنامج",
+                        "duration": 1900,
+                        "is_child": False,
+                        "display_no": "4",
+                    },
+                ],
+            },
+            # Series 3: General chronological series with a <300s video and a >=300s "مقطع من..." sharing Hijri year 1435
+            {
+                "id": "gate5sh__s003",
+                "title": "محاضرات عامة",
+                "category": "مواعظ ولقاءات عامة",
+                "state": "ongoing",
+                "lessons": [
+                    {
+                        "pos": 1,
+                        "yt_id": "vid_gen_short",
+                        "title": "كلمة قصيرة في عام 1435 هـ",
+                        "duration": 120,
+                        "is_child": False,
+                        "display_no": "1",
+                    },
+                    {
+                        "pos": 2,
+                        "yt_id": "vid_gen_long_clip",
+                        "title": "مقطع من محاضرة في عام 1435 هـ عن تزكية القلوب",
+                        "duration": 650,
+                        "is_child": False,
+                        "display_no": "2",
+                    },
+                    {
+                        "pos": 3,
+                        "yt_id": "vid_gen_full",
+                        "title": "محاضرة كاملة في عام 1436 هـ عن آداب طالب العلم",
+                        "duration": 2400,
+                        "is_child": False,
+                        "display_no": "3",
+                    },
+                ],
+            },
+        ],
+    }
+    g5_dir = tmp_path / "gate5_syn"
+    g5_dir.mkdir(parents=True, exist_ok=True)
+    g5_raw_file = g5_dir / "gate5sh_raw.json"
+    with open(g5_raw_file, "w", encoding="utf-8") as f:
+        json.dump(gate5_raw, f, ensure_ascii=False, indent=2)
+
+    g5_res = auto_curate_person(
+        raw_input=g5_raw_file,
+        output_json_path=g5_dir / "gate5sh.json",
+        output_series_dir=g5_dir / "series_export",
+        db_path=g5_dir / "curated.db",
+    )
+    assert g5_res["report"]["stage9"]["passed"] is True, f"Gate 5 Synthetic Failed Stage 9: {g5_res['report']['stage9']}"
+    g5_series_list = g5_res["curated_data"]["series"]
+
+    # Verify Series 1: Category inferred as العقيدة وعلم الكلام, intro-2 attached under مقدمة, 2b attached under Lesson 2, 0 `(م X)` rewrites!
+    s1 = next(s for s in g5_series_list if "اليقينيات" in s["title"])
+    assert s1["category"] == "العقيدة وعلم الكلام", f"Expected العقيدة وعلم الكلام, got {s1['category']}"
+    s1_parents = [ep for ep in s1["lessons"] if not ep.get("is_child")]
+    assert [ep["display_no"] for ep in s1_parents] == ["مقدمة", "1", "2", "3", "4"], (
+        f"Gate 5 Failed: Unexpected parent display_nos in s001: {[ep['display_no'] for ep in s1_parents]}"
+    )
+    assert not any("(م " in ep["title"] for ep in s1["lessons"]), (
+        f"Gate 5 Failed: Unexpected (م X) cascade rewrite in s001: {[ep['title'] for ep in s1['lessons']]}"
+    )
+
+    # Verify Series 2: Unnumbered index-0 promoted to مقدمة, lessons 1..3 keep clean numbers without `(م X)`
+    s2 = next(s for s in g5_series_list if "المريد" in s["title"])
+    assert s2["category"] == "التزكية والأخلاق", f"Expected التزكية والأخلاق, got {s2['category']}"
+    assert [ep["display_no"] for ep in s2["lessons"]] == ["مقدمة", "1", "2", "3"], (
+        f"Gate 5 Failed: Unexpected display_nos in s002: {[ep['display_no'] for ep in s2['lessons']]}"
+    )
+    assert not any("(م " in ep["title"] for ep in s2["lessons"])
+
+    # 5e. End-to-end discover_person -> auto_curate_person verification on real jifri, bouti, and kamali corpora
+    cheikh_raw_dir = Path("/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs")
+    tested_v23 = []
+    if cheikh_raw_dir.exists():
+        for pid in ("jifri", "bouti", "kamali"):
+            raw_p = cheikh_raw_dir / f"{pid}_raw.json"
+            if not raw_p.exists():
+                continue
+            p_dir = tmp_path / f"real_v23_{pid}"
+            p_dir.mkdir(parents=True, exist_ok=True)
+            disc_path = p_dir / f"{pid}_discovered.json"
+            discover_person(name="", person_id=pid, offline_fixture=raw_p, output_path=disc_path)
+            p_res = auto_curate_person(
+                raw_input=disc_path,
+                output_json_path=p_dir / f"{pid}.json",
+                output_series_dir=p_dir / "series_export",
+                db_path=p_dir / "curated.db",
+            )
+            assert p_res["report"]["stage9"]["passed"] is True, f"Gate 5 Real Corpus Failed on {pid}: {p_res['report']['stage9']}"
+            assert p_res["report"]["stage9"]["scanner_flaws_total"] == 0
+            assert p_res["report"]["stage9"]["audit_returncode"] == 0
+            tested_v23.append(pid)
+
+    print(
+        f"  [Gate 5] PASS — Category inference (15 scholarly domains), multi-part episode grouping, "
+        f"intro promotion, scholar-token isolation, and end-to-end discovery->curation ({', '.join(tested_v23)}) verified with 0 errors."
+    )
+
+
 def main() -> None:
-    print("=== Running sheikh-curation v2.1 4-Layer Quality Gates ===")
+    print("=== Running sheikh-curation v2.3 5-Layer Quality Gates ===")
     with tempfile.TemporaryDirectory(prefix="sheikh_curation_v2_gate_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         curation_res = run_gate_1_all_9_defects(tmp_path)
         run_gate_2_scanner_and_global_audit(tmp_path, curation_res)
         run_gate_3_series_meta_export(curation_res)
         run_gate_4_real_corpus_semantic_fidelity(tmp_path)
+        run_gate_5_multipart_same_episode_and_category_inference(tmp_path)
     print("\nPASS (0 errors)")
 
 
