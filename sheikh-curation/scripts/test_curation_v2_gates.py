@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_curation_v2_gates.py — 4-Layer Deterministic Quality Gate for sheikh-curation v2.1.
+test_curation_v2_gates.py — 6-Layer Deterministic Quality Gate for sheikh-curation v2.4.
 
 Verifies:
   - Gate 1 (All 9 Defect Repairs):
@@ -47,6 +47,16 @@ Verifies:
            video (`jifri` regression) and end-to-end `discover_person` -> `auto_curate_person` verification on `jifri_raw.json`,
            `bouti_raw.json`, and `kamali_raw.json` with 0 scanner/audit errors.
         d. Scholar-name token exclusion in `_score_series_match` preventing false unclassified routing.
+
+  - Gate 6 (Stopped Series Boundary Extraction & Subset Playlist Deduplication Gate):
+      Verifies Cycle 19 (v2.4) upgrades across the 17-sheikh corpus:
+        a. `_extract_topic_boundary` and `_extract_stopped_boundary_note`: accurate extraction of stopping boundaries
+           from the last lesson title of `stopped` series across chapters (`إلى باب شروط الصلاة`), Quranic ayahs/surahs
+           (`إلى الآية 45 من سورة البقرة`), poetry/matn verses (`إلى البيت 120`), parenthesized commentary quotes
+           (`(قوله ...)`), while stripping scholar names and avoiding false series-title `كتاب ...` matches.
+        b. `_deduplicate_identical_or_subset_series`: automatic merging of duplicate or subset playlists (`>= 75%` `yt_id`
+           overlap) for the same commentary into a single complete series, eliminating 1-lesson duplicate stubs and
+           recovering complementary missing lessons (`ayman`, `dedew`, `gomaa`, `kamali`, `sayed`).
 """
 
 from __future__ import annotations
@@ -68,6 +78,9 @@ if DISCOVERY_SCRIPT_DIR.exists() and str(DISCOVERY_SCRIPT_DIR) not in sys.path:
 
 from auto_curate_person import (  # noqa: E402
     _build_sheikh_exclude_tokens,
+    _deduplicate_identical_or_subset_series,
+    _extract_stopped_boundary_note,
+    _extract_topic_boundary,
     _score_series_match,
     auto_curate_person,
     extract_lesson_num,
@@ -1193,8 +1206,191 @@ def run_gate_5_multipart_same_episode_and_category_inference(tmp_path: Path) -> 
     )
 
 
+def run_gate_6_stopped_boundary_and_subset_series_dedup(tmp_path: Path) -> None:
+    """
+    Gate 6: Stopped Series Boundary Extraction & Subset Playlist Deduplication Gate.
+    Verifies:
+      - `_extract_topic_boundary` and `_extract_stopped_boundary_note` across chapters, Quranic ayahs/surahs,
+        poetry/matn verses, parenthesized commentary quotes, scholar-name stripping, and book-title disambiguation.
+      - `_deduplicate_identical_or_subset_series` across identical/subset playlists (`>= 75%` `yt_id` overlap)
+        with complementary lesson recovery and zero stub series.
+      - Real-corpus verification on `ayman_raw.json` and `dedew_raw.json` with 0 errors in Stage 9.
+    """
+    # 6a. Stopped boundary extraction unit checks
+    b_fiqh = _extract_stopped_boundary_note(
+        last_lesson_title="شرح عمدة الفقه - الدرس 15 - باب شروط الصلاة | الشيخ محمد الحسن الددو",
+        series_title="شرح عمدة الفقه",
+        first_lesson_title="شرح عمدة الفقه - الدرس 1 - كتاب الطهارة",
+        main_lessons_count=15,
+    )
+    assert "إلى باب شروط الصلاة" in b_fiqh, f"Gate 6 Failed: Expected 'إلى باب شروط الصلاة' in '{b_fiqh}'"
+
+    b_tafsir = _extract_stopped_boundary_note(
+        last_lesson_title="مجلس التفسير - الدرس 12 - الآية 45 من سورة البقرة | د. سعيد الكملي",
+        series_title="مجلس التفسير",
+        first_lesson_title="مجلس التفسير - الدرس 1 - الفاتحة",
+        main_lessons_count=12,
+    )
+    assert "إلى الآية 45 من سورة البقرة" in b_tafsir, (
+        f"Gate 6 Failed: Expected 'إلى الآية 45 من سورة البقرة' in '{b_tafsir}'"
+    )
+
+    b_surah_range = _extract_stopped_boundary_note(
+        last_lesson_title="تفسير القرآن - سورة البقرة (174-176) - الدرس 22 | الشيخ محمد البردوني",
+        series_title="تفسير القرآن",
+        first_lesson_title="تفسير القرآن - الدرس 1 - الفاتحة",
+        main_lessons_count=22,
+    )
+    assert "إلى الآية 174-176 من سورة البقرة" in b_surah_range, (
+        f"Gate 6 Failed: Expected 'إلى الآية 174-176 من سورة البقرة' in '{b_surah_range}'"
+    )
+
+    b_alfiyyah = _extract_stopped_boundary_note(
+        last_lesson_title="شرح ألفية ابن مالك - الدرس 30 - البيت 120 | الشيخ مولود السريري",
+        series_title="شرح ألفية ابن مالك",
+        first_lesson_title="شرح ألفية ابن مالك - الدرس 1 - المقدمة",
+        main_lessons_count=30,
+    )
+    assert "إلى البيت 120" in b_alfiyyah, f"Gate 6 Failed: Expected 'إلى البيت 120' in '{b_alfiyyah}'"
+
+    b_qawl = _extract_stopped_boundary_note(
+        last_lesson_title="شرح كفاية الطالب الرباني (315) (قوله ومن حلف لا...) | الشيخ مولود السريري",
+        series_title="شرح كفاية الطالب الرباني",
+        first_lesson_title="شرح كفاية الطالب الرباني (1) المقدمة",
+        main_lessons_count=315,
+    )
+    assert "إلى قوله ومن حلف لا" in b_qawl and "مولود السريري" not in b_qawl, (
+        f"Gate 6 Failed: Expected 'إلى قوله ومن حلف لا' without scholar name in '{b_qawl}'"
+    )
+
+    b_ibn_salah = _extract_topic_boundary(
+        "49 - أقسام طرق نقل الحديث - كتاب علوم الحديث لابن الصلاح",
+        fallback="الدرس 49",
+        series_title="شرح كتاب علوم الحديث لابن الصلاح",
+    )
+    assert b_ibn_salah == "أقسام طرق نقل الحديث", (
+        f"Gate 6 Failed: Expected 'أقسام طرق نقل الحديث' (not series book title), got '{b_ibn_salah}'"
+    )
+
+    # 6b. Subset playlist deduplication unit & synthetic end-to-end checks
+    gate6_raw: dict[str, Any] = {
+        "person_id": "gate6sh",
+        "sheikh": {
+            "id": "gate6sh",
+            "name": "المهندس أيمن عبد الرحيم",
+            "bio": "اختبار دمج السلاسل الفرعية وتوثيق حدود التوقف.",
+        },
+        "series": [
+            # Primary playlist missing Lesson 1 (has Lessons 2..5)
+            {
+                "id": "gate6sh__s001",
+                "title": "مدخل إلي علوم اللغة",
+                "category": "اللغة العربية وعلومها",
+                "state": "completed",
+                "lessons": [
+                    {"pos": 1, "yt_id": "vid_lang_02", "title": "مدخل إلى علوم اللغة - المحاضرة 2 - علم الأصوات", "duration": 3600},
+                    {"pos": 2, "yt_id": "vid_lang_03", "title": "مدخل إلى علوم اللغة - المحاضرة 3 - علم الصرف", "duration": 3500},
+                    {"pos": 3, "yt_id": "vid_lang_04", "title": "مدخل إلى علوم اللغة - المحاضرة 4 - علم النحو", "duration": 3700},
+                    {"pos": 4, "yt_id": "vid_lang_05", "title": "مدخل إلى علوم اللغة - المحاضرة 5 - البلاغة والمعاجم وختام الدورة", "duration": 3800},
+                ],
+            },
+            # Subset duplicate playlist (80% overlap: 4/5 shared + Lesson 1 unique)
+            {
+                "id": "gate6sh__s002",
+                "title": "دورة مدخل إلى علوم اللغة العربية | م. أيمن عبد الرحيم",
+                "category": "اللغة العربية وعلومها",
+                "state": "completed",
+                "lessons": [
+                    {"pos": 1, "yt_id": "vid_lang_01", "title": "مدخل إلى علوم اللغة - المحاضرة 1 - مقدمة علوم اللغة", "duration": 3550},
+                    {"pos": 2, "yt_id": "vid_lang_02", "title": "مدخل إلى علوم اللغة - المحاضرة 2 - علم الأصوات", "duration": 3600},
+                    {"pos": 3, "yt_id": "vid_lang_03", "title": "مدخل إلى علوم اللغة - المحاضرة 3 - علم الصرف", "duration": 3500},
+                    {"pos": 4, "yt_id": "vid_lang_04", "title": "مدخل إلى علوم اللغة - المحاضرة 4 - علم النحو", "duration": 3700},
+                ],
+            },
+            # Stopped Fiqh commentary ending at باب شروط الصلاة
+            {
+                "id": "gate6sh__s003",
+                "title": "شرح عمدة الفقه",
+                "category": "الفقه وأصوله",
+                "state": None,
+                "lessons": [
+                    {"pos": 1, "yt_id": "vid_fq_01", "title": "شرح عمدة الفقه - الدرس 1 - كتاب الطهارة | م. أيمن عبد الرحيم", "duration": 2800},
+                    {"pos": 2, "yt_id": "vid_fq_02", "title": "شرح عمدة الفقه - الدرس 2 - باب شروط الصلاة | م. أيمن عبد الرحيم", "duration": 2900},
+                ],
+            },
+        ],
+    }
+
+    g6_dir = tmp_path / "gate6_syn"
+    g6_dir.mkdir(parents=True, exist_ok=True)
+    g6_raw_file = g6_dir / "gate6sh_raw.json"
+    with open(g6_raw_file, "w", encoding="utf-8") as f:
+        json.dump(gate6_raw, f, ensure_ascii=False, indent=2)
+
+    g6_res = auto_curate_person(
+        raw_input=g6_raw_file,
+        output_json_path=g6_dir / "gate6sh.json",
+        output_series_dir=g6_dir / "series_export",
+        db_path=g6_dir / "curated.db",
+    )
+    assert g6_res["report"]["stage9"]["passed"] is True, f"Gate 6 Synthetic Failed Stage 9: {g6_res['report']['stage9']}"
+    assert g6_res["report"]["stage1"]["subset_series_merged_count"] == 1
+    g6_series = g6_res["curated_data"]["series"]
+    assert len(g6_series) == 2, f"Gate 6 Failed: Expected 2 series after subset merge, got {len(g6_series)}"
+
+    lang_s = next(s for s in g6_series if "علوم اللغة" in s["title"])
+    assert [ep["yt_id"] for ep in lang_s["lessons"]] == [
+        "vid_lang_01",
+        "vid_lang_02",
+        "vid_lang_03",
+        "vid_lang_04",
+        "vid_lang_05",
+    ], f"Gate 6 Failed: Expected merged lessons 1..5 in order, got {[ep['yt_id'] for ep in lang_s['lessons']]}"
+    assert [ep["display_no"] for ep in lang_s["lessons"]] == ["1", "2", "3", "4", "5"]
+
+    fiqh_s = next(s for s in g6_series if "عمدة الفقه" in s["title"])
+    assert fiqh_s["state"] == "stopped"
+    assert "إلى باب شروط الصلاة" in fiqh_s["note"], f"Gate 6 Failed: Missing stopping boundary in note: {fiqh_s['note']}"
+    assert "إلى باب شروط الصلاة" in fiqh_s["title"], f"Gate 6 Failed: Missing stopping boundary in title: {fiqh_s['title']}"
+
+    # 6c. Real corpus verification on ayman_raw.json and dedew_raw.json
+    cheikh_raw_dir = Path("/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs")
+    tested_v24 = []
+    if cheikh_raw_dir.exists():
+        for pid, min_merges in (("ayman", 3), ("dedew", 1)):
+            raw_p = cheikh_raw_dir / f"{pid}_raw.json"
+            if not raw_p.exists():
+                continue
+            p_dir = tmp_path / f"real_v24_{pid}"
+            p_dir.mkdir(parents=True, exist_ok=True)
+            p_res = auto_curate_person(
+                raw_input=raw_p,
+                output_json_path=p_dir / f"{pid}.json",
+                output_series_dir=p_dir / "series_export",
+                db_path=p_dir / "curated.db",
+            )
+            assert p_res["report"]["stage9"]["passed"] is True, f"Gate 6 Real Corpus Failed on {pid}: {p_res['report']['stage9']}"
+            assert p_res["report"]["stage9"]["scanner_flaws_total"] == 0
+            assert p_res["report"]["stage9"]["audit_returncode"] == 0
+            assert p_res["report"]["stage1"]["subset_series_merged_count"] >= min_merges, (
+                f"Gate 6 Failed on {pid}: Expected >= {min_merges} subset series merges, got {p_res['report']['stage1']['subset_series_merged_count']}"
+            )
+            if pid == "ayman":
+                ayman_series = p_res["curated_data"]["series"]
+                lang_series = [s for s in ayman_series if "علوم اللغة" in s["title"]]
+                assert len(lang_series) == 1 and len(lang_series[0]["lessons"]) == 10, (
+                    f"Gate 6 Failed on ayman: Expected single 10-lesson 'مدخل إلى علوم اللغة' series, got {len(lang_series)} series"
+                )
+            tested_v24.append(pid)
+
+    print(
+        f"  [Gate 6] PASS — Stopped series boundary extraction (_extract_stopped_boundary_note) and "
+        f"subset playlist deduplication (_deduplicate_identical_or_subset_series on {', '.join(tested_v24)}) verified with 0 errors."
+    )
+
+
 def main() -> None:
-    print("=== Running sheikh-curation v2.3 5-Layer Quality Gates ===")
+    print("=== Running sheikh-curation v2.4 6-Layer Quality Gates ===")
     with tempfile.TemporaryDirectory(prefix="sheikh_curation_v2_gate_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         curation_res = run_gate_1_all_9_defects(tmp_path)
@@ -1202,6 +1398,7 @@ def main() -> None:
         run_gate_3_series_meta_export(curation_res)
         run_gate_4_real_corpus_semantic_fidelity(tmp_path)
         run_gate_5_multipart_same_episode_and_category_inference(tmp_path)
+        run_gate_6_stopped_boundary_and_subset_series_dedup(tmp_path)
     print("\nPASS (0 errors)")
 
 

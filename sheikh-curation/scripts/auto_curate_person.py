@@ -1594,8 +1594,239 @@ def infer_series_category(
 
 
 # ---------------------------------------------------------------------------
-# Stage 1: Duration Import, Video Normalization & Dead Livestream Purge
+# Stage 1: Duration Import, Video Normalization, Subset Playlist Dedup & Dead Livestream Purge
 # ---------------------------------------------------------------------------
+
+
+def _stem_ar_word(w: str) -> str:
+    """Strip leading Arabic definite article 'ال' from words of length >= 5 for stem comparison."""
+    return w[2:] if w.startswith("ال") and len(w) >= 5 else w
+
+
+def _extract_commentary_stems(title: str, sheikh_info: dict[str, Any] | None = None) -> set[str]:
+    """
+    Extract normalized Arabic core stems identifying the book/commentary/course subject,
+    stripping scholar names, classical author attributions, and generic series/playlist qualifiers.
+    """
+    raw_excl = _build_sheikh_exclude_tokens(sheikh_info)
+    excl = {_stem_ar_word(w) for w in raw_excl} | raw_excl
+    nt = normalize_ar(title)
+    for ca in CLASSICAL_AUTHORS_STOP:
+        nt = nt.replace(normalize_ar(ca), " ")
+    nt = re.sub(r"\b(?:صيف|خريف|شتاء|ربيع|عام|سنه|رمضان)\s+\d{4}\b", " ", nt)
+    nt = re.sub(r"\b(?:شيخ العمود|لشباب الجيل الصاعد|الجيل الصاعد)\b", " ", nt)
+    nt = nt.replace("علوم اللغه العربيه", "علم اللغه").replace("علوم اللغه", "علم اللغه")
+    stop = SERIES_STOPWORDS | excl | {
+        "كامله",
+        "كاملا",
+        "كامل",
+        "مكتمل",
+        "مكتمله",
+        "دوره",
+        "برامج",
+        "برنامج",
+        "سلسله",
+        "مجالس",
+        "حلقات",
+        "دروس",
+        "محاضرات",
+        "مهندس",
+        "المهندس",
+        "اصول",
+        "الفقه",
+        "فقه",
+        "عقيده",
+        "اعتقاد",
+        "اهل",
+        "السنه",
+        "الجماعه",
+        "العربيه",
+        "قائمه",
+        "القائمه",
+        "مختصره",
+        "المختصره",
+        "نسخه",
+        "النسخه",
+        "مجموعه",
+        "المجموعه",
+        "فرعيه",
+        "الفرعيه",
+        "جزئيه",
+        "الجزئيه",
+        "ناقله",
+        "مكرره",
+        "المكرره",
+    }
+    stems: set[str] = set()
+    for w in re.split(r"[^\u0621-\u064a0-9]+", nt):
+        sw = _stem_ar_word(w)
+        if len(sw) >= 3 and w not in stop and sw not in stop:
+            stems.add(sw)
+    return stems
+
+
+def _deduplicate_identical_or_subset_series(
+    series_list: list[dict[str, Any]],
+    sheikh_info: dict[str, Any] | None = None,
+    video_catalog: dict[str, dict[str, Any]] | None = None,
+    raw_pos_map: dict[str, dict[str, int]] | None = None,
+    overlap_threshold: float = 0.75,
+) -> list[dict[str, Any]]:
+    """
+    Detect and merge duplicate or subset playlists for the same commentary/book/course
+    when the smaller playlist shares `>= overlap_threshold` (default 75%) of its `yt_id`s
+    with the fuller parent playlist.
+    """
+    merged_records: list[dict[str, Any]] = []
+    absorbed_indices: set[int] = set()
+
+    def _get_eps(s_obj: dict[str, Any]) -> list[dict[str, Any]]:
+        return s_obj.get("lessons") if s_obj.get("lessons") is not None else (s_obj.get("videos") or [])
+
+    def _set_eps(s_obj: dict[str, Any], eps: list[dict[str, Any]]) -> None:
+        if "lessons" in s_obj or "videos" not in s_obj:
+            s_obj["lessons"] = eps
+        else:
+            s_obj["videos"] = eps
+
+    n_series = len(series_list)
+    for i in range(n_series):
+        if i in absorbed_indices:
+            continue
+        s_i = series_list[i]
+        if s_i.get("is_unclassified") or "غير مصنف" in str(s_i.get("title", "")):
+            continue
+        for j in range(i + 1, n_series):
+            if j in absorbed_indices or i in absorbed_indices:
+                continue
+            s_j = series_list[j]
+            if s_j.get("is_unclassified") or "غير مصنف" in str(s_j.get("title", "")):
+                continue
+
+            t_i = str(s_i.get("title") or "")
+            t_j = str(s_j.get("title") or "")
+            if is_general_series_title(t_i) != is_general_series_title(t_j):
+                continue
+            nt_i, nt_j = normalize_ar(t_i), normalize_ar(t_j)
+            if any(w in nt_i for w in ["مقاطع قصيره", "مقتطفات"]) != any(
+                w in nt_j for w in ["مقاطع قصيره", "مقتطفات"]
+            ):
+                continue
+
+            y_i = {ep.get("yt_id") for ep in _get_eps(s_i) if ep.get("yt_id")}
+            y_j = {ep.get("yt_id") for ep in _get_eps(s_j) if ep.get("yt_id")}
+            if not y_i or not y_j:
+                continue
+
+            inter = len(y_i & y_j)
+            min_len = min(len(y_i), len(y_j))
+            max_len = max(len(y_i), len(y_j))
+            overlap_ratio = inter / min_len
+            if overlap_ratio < overlap_threshold:
+                continue
+
+            st_i = _extract_commentary_stems(t_i, sheikh_info)
+            st_j = _extract_commentary_stems(t_j, sheikh_info)
+            if not st_i or not st_j:
+                continue
+            jacc = len(st_i & st_j) / len(st_i | st_j)
+            is_same_commentary = (jacc >= 0.75) or (
+                (inter / max_len >= 0.50) and (jacc >= 0.50 or st_i.issubset(st_j) or st_j.issubset(st_i))
+            )
+            if not is_same_commentary:
+                continue
+
+            if len(y_j) > len(y_i):
+                primary_idx, sub_idx = j, i
+            elif len(y_i) > len(y_j):
+                primary_idx, sub_idx = i, j
+            else:
+                j_has_comp = any(w in nt_j for w in ["كامل", "كامله", "مكتمل", "مكتمله"]) and not any(
+                    w in nt_i for w in ["كامل", "كامله", "مكتمل", "مكتمله"]
+                )
+                primary_idx, sub_idx = (j, i) if j_has_comp else (i, j)
+
+            s_primary = series_list[primary_idx]
+            s_sub = series_list[sub_idx]
+            primary_groups = lessons_to_groups(_get_eps(s_primary))
+            sub_groups = lessons_to_groups(_get_eps(s_sub))
+            primary_yt_set = {ep["yt_id"] for grp in primary_groups for ep in grp}
+
+            added_yt_ids: list[str] = []
+            target_raw_id = s_primary.get("raw_series_id") or s_primary.get("id") or ""
+
+            for grp in sub_groups:
+                p_yt = grp[0]["yt_id"]
+                if p_yt in primary_yt_set:
+                    continue
+                belongs_elsewhere = False
+                p_sc_primary = _score_series_match(grp[0].get("title", ""), s_primary, sheikh_info)
+                for k, s_other in enumerate(series_list):
+                    if k in absorbed_indices or k in (primary_idx, sub_idx) or s_other.get("is_unclassified"):
+                        continue
+                    other_yts = {ep.get("yt_id") for ep in _get_eps(s_other)}
+                    if p_yt in other_yts:
+                        p_sc_other = _score_series_match(grp[0].get("title", ""), s_other, sheikh_info)
+                        if p_sc_other > p_sc_primary + 0.10:
+                            belongs_elsewhere = True
+                            break
+                if belongs_elsewhere:
+                    continue
+
+                filtered_grp = [ep for ep in grp if ep["yt_id"] not in primary_yt_set]
+                if not filtered_grp:
+                    continue
+                filtered_grp[0]["is_child"] = False
+                filtered_grp[0]["parent_yt_id"] = None
+                for ch in filtered_grp[1:]:
+                    ch["is_child"] = True
+                    ch["parent_yt_id"] = filtered_grp[0]["yt_id"]
+
+                primary_groups.append(filtered_grp)
+                for ep in filtered_grp:
+                    primary_yt_set.add(ep["yt_id"])
+                    added_yt_ids.append(ep["yt_id"])
+                    if video_catalog is not None and ep["yt_id"] in video_catalog and target_raw_id:
+                        v_rec = video_catalog[ep["yt_id"]]
+                        if not any(a.get("raw_series_id") == target_raw_id for a in v_rec.get("appearances", [])):
+                            v_rec.setdefault("appearances", []).append(
+                                {
+                                    "raw_series_id": target_raw_id,
+                                    "raw_series_title": s_primary.get("title", ""),
+                                    "pos": len(primary_yt_set),
+                                    "is_unclassified": False,
+                                }
+                            )
+                    if raw_pos_map is not None and target_raw_id:
+                        raw_pos_map.setdefault(ep["yt_id"], {}).setdefault(target_raw_id, len(primary_yt_set))
+
+            _set_eps(s_primary, groups_to_lessons(primary_groups))
+            if s_primary.get("state") is None and s_sub.get("state") in ("completed", "ongoing", "stopped"):
+                s_primary["state"] = s_sub["state"]
+            if not s_primary.get("matched_book") and s_sub.get("matched_book"):
+                s_primary["matched_book"] = s_sub["matched_book"]
+
+            absorbed_indices.add(sub_idx)
+            merged_records.append(
+                {
+                    "primary_series_id": s_primary.get("id"),
+                    "primary_title": s_primary.get("title"),
+                    "absorbed_series_id": s_sub.get("id"),
+                    "absorbed_title": s_sub.get("title"),
+                    "overlap_count": inter,
+                    "subset_size": min_len,
+                    "overlap_ratio": round(overlap_ratio, 3),
+                    "added_unique_lessons": len(added_yt_ids),
+                    "added_yt_ids": added_yt_ids,
+                }
+            )
+
+    if absorbed_indices:
+        series_list[:] = [s for idx, s in enumerate(series_list) if idx not in absorbed_indices]
+        for new_idx, s in enumerate(series_list, 1):
+            s["order_no"] = new_idx
+
+    return merged_records
 
 
 def stage1_import_durations_and_purge_dead(
@@ -1852,65 +2083,83 @@ def stage1_import_durations_and_purge_dead(
             }
         )
 
-    series_priority = sorted(
-        range(len(series_list)),
-        key=lambda idx: (
-            2 if series_list[idx].get("is_unclassified") else (
-                1 if is_general_series_title(series_list[idx]["title"]) else 0
-            ),
-            idx,
-        ),
+    # First deduplicate identical or subset playlists (>= 75% yt_id overlap) for the same commentary
+    subset_merges = _deduplicate_identical_or_subset_series(
+        series_list,
+        sheikh_info=sheikh_info,
+        video_catalog=video_catalog,
+        raw_pos_map=raw_pos_map,
     )
+
+    # Global yt_id deduplication across series:
+    # Prefer structured specific series over general playlists over unclassified.
+    def series_priority(s: dict[str, Any]) -> tuple[int, int, int]:
+        if s.get("is_unclassified"):
+            return (3, 0, s.get("order_no", 9999))
+        if is_general_series_title(s.get("title", "")):
+            return (2, -len(s.get("lessons", [])), s.get("order_no", 9999))
+        return (1, -len(s.get("lessons", [])), s.get("order_no", 9999))
+
     seen_yt: set[str] = set()
-    duplicates_removed = 0
-    for idx in series_priority:
-        s = series_list[idx]
+    dedup_removed = 0
+    for s in sorted(series_list, key=series_priority):
         groups = lessons_to_groups(s["lessons"])
         dedup_groups: list[list[dict[str, Any]]] = []
         for grp in groups:
-            kept = []
-            for item in grp:
-                if item["yt_id"] in seen_yt:
-                    duplicates_removed += 1
-                else:
-                    seen_yt.add(item["yt_id"])
-                    kept.append(item)
-            if kept:
-                kept[0]["is_child"] = False
-                kept[0]["parent_yt_id"] = None
-                for ch in kept[1:]:
-                    ch["is_child"] = True
-                    ch["parent_yt_id"] = kept[0]["yt_id"]
-                dedup_groups.append(kept)
+            kept = [ep for ep in grp if ep["yt_id"] not in seen_yt]
+            dedup_removed += len(grp) - len(kept)
+            if not kept:
+                continue
+            for ep in kept:
+                seen_yt.add(ep["yt_id"])
+            kept[0]["is_child"] = False
+            kept[0]["parent_yt_id"] = None
+            for ch in kept[1:]:
+                ch["is_child"] = True
+                ch["parent_yt_id"] = kept[0]["yt_id"]
+            dedup_groups.append(kept)
         s["lessons"] = groups_to_lessons(dedup_groups)
 
-    raw_data["unique_videos"] = list(video_catalog.values())
-    if not raw_data.get("raw_series"):
-        raw_data["raw_series"] = [
-            {
-                "id": s["raw_series_id"],
-                "title": s["title"],
-                "yt_playlist_id": None if s.get("is_unclassified") else s["raw_series_id"],
-                "videos": [
-                    {
-                        "pos": ep.get("pos", i),
-                        "yt_id": ep["yt_id"],
-                        "title": ep["title"],
-                        "duration": ep["duration"],
-                    }
-                    for i, ep in enumerate(s["lessons"], 1)
-                ],
-            }
-            for s in series_list
+    purged_yt_set = {p["yt_id"] for p in dead_removed}
+    if "unique_videos" in raw_data and isinstance(raw_data["unique_videos"], list):
+        raw_data["unique_videos"] = [
+            uv
+            for uv in raw_data["unique_videos"]
+            if str(uv.get("yt_id") or "").strip() not in purged_yt_set
+            and not (
+                isinstance(uv.get("duration"), (int, float))
+                and 0 < int(round(float(uv["duration"]))) <= dead_threshold_s
+            )
         ]
+    if "raw_series" in raw_data and isinstance(raw_data["raw_series"], list):
+        for rs in raw_data["raw_series"]:
+            for key in ("videos", "lessons"):
+                if isinstance(rs.get(key), list):
+                    rs[key] = [
+                        v
+                        for v in rs[key]
+                        if str(v.get("yt_id") or "").strip() not in purged_yt_set
+                        and not (
+                            isinstance(v.get("duration"), (int, float))
+                            and 0 < int(round(float(v["duration"]))) <= dead_threshold_s
+                        )
+                    ]
 
     stage1_report = {
-        "unique_videos_indexed": len(video_catalog),
-        "dead_removed_count": len(dead_removed),
-        "dead_removed": dead_removed,
-        "duplicates_removed": duplicates_removed,
+        "person_id": person_id,
+        "catalog_videos_count": len(video_catalog),
+        "dead_livestreams_purged_count": len(dead_removed),
+        "dead_livestreams_purged": dead_removed,
+        "purged_dead_livestreams_count": len(dead_removed),
+        "purged_dead_livestreams": dead_removed,
+        "subset_series_merged_count": len(subset_merges),
+        "subset_series_merged": subset_merges,
+        "cross_series_duplicates_removed": dedup_removed,
     }
     return person_id, sheikh_info, series_list, video_catalog, raw_pos_map, stage1_report
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -3494,24 +3743,252 @@ def stage7_strict_monotonic_numbering(
 # ---------------------------------------------------------------------------
 
 
-def _extract_topic_boundary(lesson_title: str, fallback: str) -> str:
-    """Extract a clean chapter/topic phrase from a lesson title for boundary documentation."""
-    t = str(lesson_title or "").strip()
-    m = re.search(
-        r"((?:كتاب|باب|فصل|مبحث|قاعدة|القطب|المقدمة|خاتمة)[^|\-–—\(\)\n]{3,55})",
+def _truncate_words_clean(s: str, max_chars: int = 75) -> str:
+    """Truncate a phrase cleanly on a word boundary without cutting words in half."""
+    s = re.sub(r"\s+", " ", s).strip(" -–—|:،,.()[]«»")
+    if len(s) <= max_chars:
+        return s
+    cut = s[:max_chars].rsplit(" ", 1)[0]
+    return cut.strip(" -–—|:،,.()[]«»") or s[:max_chars]
+
+
+def _strip_Trailing_scholar_and_meta(
+    text: str,
+    sheikh_info: dict[str, Any] | None = None,
+) -> str:
+    """Remove trailing scholar names, honorifics, dates, hashtags, and channel tags."""
+    s = str(text or "").strip()
+    s = re.sub(r"#[^\s]+", " ", s)
+    s = re.sub(r"\b\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\b", " ", s)
+    s = re.sub(r"\b\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2}\b", " ", s)
+    s = re.sub(
+        r"(?:^|(?:[-–—|:/،]+\s*)|\s+)(?:فضيلة\s+|معالي\s+|سماحة\s+)?(?:الشيخ|الأستاذ|الدكتور|العلامة|المحدث|الفقيه|المهندس|أ\.?\s*د\.|د\.|م\.|ش\.)\s*[\u0621-\u064a\s\.]{3,45}$",
+        "",
+        s,
+    ).strip()
+    if sheikh_info:
+        for key in ("name", "short_name", "full_name"):
+            val = str(sheikh_info.get(key) or "").strip()
+            if val and len(val) >= 4:
+                s = re.sub(rf"(?:^|(?:[-–—|:/،]+\s*)|\s+){re.escape(val)}\s*$", "", s).strip()
+    s = re.sub(
+        r"(?:^|(?:[-–—|:/،]+\s*)|\s+)(?:أحمد السيد|احمد السيد|محمد البردوني|مولود السريري|سعيد الكملي|محمد الحسن الددو|أيمن عبد الرحيم|ايمن عبد الرحيم|يسري جبر|علي جمعة|عدنان إبراهيم|عبد الله رشدي|رشيد الذاكر|محمد الخضير|أحمد الشريف)\s*$",
+        "",
+        s,
+    ).strip()
+    return s.strip(" -–—|:،,._")
+
+
+def _extract_topic_boundary(
+    lesson_title: str,
+    fallback: str = "المقدمة",
+    series_title: str = "",
+    sheikh_info: dict[str, Any] | None = None,
+) -> str:
+    """
+    Extract a clean, accurate chapter/section/surah/ayah/verse boundary phrase from a lesson title.
+    Supports:
+    - Quranic Ayah + Surah boundaries (e.g. «الآية 45 من سورة البقرة», «سورة البقرة الآيات (174-176)»)
+    - Poetry/Matn verse boundaries (e.g. «البيت 120», «الأبيات 28-30»)
+    - Classical commentary markers (`(قوله ...)`, `حديث ((...))`, `{...}`, `[من ... إلى ...]`)
+    - Explicit chapter/section headings (`باب ...`, `فصل ...`, `مبحث ...`, `قاعدة ...`, `المقصد ...`, `الأصل ...`)
+      while avoiding false matches where `كتاب ...` is just the series book title.
+    - Segment-level topic extraction after stripping series title, lesson numbers, and scholar names.
+    """
+    raw_t = str(lesson_title or "").strip()
+    if not raw_t:
+        return fallback
+
+    t = _strip_Trailing_scholar_and_meta(raw_t, sheikh_info)
+    nt_series = normalize_ar(series_title) if series_title else ""
+    series_stems = _extract_commentary_stems(series_title, sheikh_info) if series_title else set()
+
+    # 1. Explicit Ayah + Surah pattern
+    m_ayah_surah = re.search(
+        r"(?:من\s+|تفسير\s+)?(?:الآية|الآيات|آية|آيات|الايه|الايات)\s*\(?([\d\u0660-\u0669]+(?:\s*[-–—إلىالىو]\s*[\d\u0660-\u0669]+)?)\)?\s*(?:من\s+)?(سورة\s+[\u0621-\u064a]+)",
         t,
     )
-    if m:
-        return m.group(1).strip()
-    cleaned = re.sub(
-        r"^(?:بث مباشر\s*[\-–—:|]*\s*|#مباشر\s*[\-–—:|]*\s*)?(?:الدرس|درس|المجلس|مجلس|الحلقة|حلقة)\s*(?:[\d\u0660-\u0669]+|الأول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر|الأخير)\s*[\-–—:|_]*\s*",
-        "",
+    if m_ayah_surah:
+        return f"الآية {m_ayah_surah.group(1).strip()} من {m_ayah_surah.group(2).strip()}"
+
+    m_surah_ayah = re.search(
+        r"(سورة\s+[\u0621-\u064a]+)\s*[-–—|،:]*\s*(?:من\s+)?(?:الآية|الآيات|آية|آيات|الايه|الايات)?\s*\(([\d\u0660-\u0669]+\s*[-–—]\s*[\d\u0660-\u0669]+)\)",
         t,
-    ).strip()
-    parts = [p.strip() for p in re.split(r"[\|\-–—_:]", cleaned) if len(p.strip()) >= 4]
-    if parts:
-        return parts[-1][:55]
+    )
+    if m_surah_ayah:
+        return f"الآية {m_surah_ayah.group(2).strip()} من {m_surah_ayah.group(1).strip()}"
+
+    m_ayah_only = re.search(
+        r"(?:من\s+)?(?:الآية|الآيات|آية|آيات)\s*\(?([\d\u0660-\u0669]+(?:\s*[-–—إلىالى]\s*[\d\u0660-\u0669]+)?)\)?",
+        t,
+    )
+    if m_ayah_only:
+        surah_in_t = re.search(r"(سورة\s+[\u0621-\u064a]+)", t) or re.search(r"(سورة\s+[\u0621-\u064a]+)", series_title)
+        if surah_in_t:
+            return f"الآية {m_ayah_only.group(1).strip()} من {surah_in_t.group(1).strip()}"
+        return f"الآية {m_ayah_only.group(1).strip()}"
+
+    # 2. Explicit Poetry / Matn Verse (البيت / الأبيات)
+    m_bayt = re.search(
+        r"((?:البيت|الأبيات|أبيات|ابيات|الابيات)\s*\(?[\d\u0660-\u0669]+(?:\s*[-–—و،]\s*[\d\u0660-\u0669]+)*\)?)",
+        t,
+    )
+    if m_bayt:
+        return _truncate_words_clean(m_bayt.group(1))
+
+    # 3. Bracketed range `[من ... إلى ...]` or `{...}` Quranic quote or `((...))` Hadith quote or `(قوله ...)`
+    m_bracket = re.search(r"\[\s*(من\s+[^\]]{4,65})\s*\]", t)
+    if m_bracket:
+        return _truncate_words_clean(m_bracket.group(1))
+
+    m_qawl = re.search(r"\(\s*(قوله[^\)]{4,65})\s*\)", t)
+    if m_qawl:
+        return _truncate_words_clean(m_qawl.group(1))
+
+    m_hadith_dbl = re.search(r"(حديث\s*\(\([^\)]{4,60}\)\))", t)
+    if m_hadith_dbl:
+        return _truncate_words_clean(m_hadith_dbl.group(1))
+
+    m_brace = re.search(r"\{\s*([^\}]{4,60})\s*\}", t)
+    if m_brace:
+        return _truncate_words_clean(f"قوله تعالى: {m_brace.group(1)}")
+
+    # 4. Explicit structural chapter keywords (`باب`, `فصل`, `مبحث`, `مسألة`, `قاعدة`, `القطب`, `المقصد`, `الأصل`, `المقدمة`, `خاتمة`)
+    for m_chap in re.finditer(
+        r"((?:تتمة\s+|تكملة\s+|تابع\s+)?(?:باب|فصل|مبحث|مسألة|قاعدة|القاعدة|القطب|المقصد|الأصل|المقدمة|خاتمة)\b[^|\n]{2,65})",
+        t,
+    ):
+        cand = _strip_Trailing_scholar_and_meta(m_chap.group(1), sheikh_info)
+        cand = re.split(r"\s+[-–—|]\s+", cand)[0].strip(" ()[]")
+        if len(cand) >= 4:
+            return _truncate_words_clean(cand)
+
+    # Check `كتاب ...` only if it is NOT part of the series title itself (e.g. `كتاب الصيام` inside `شرح عمدة الفقه`)
+    for m_kitab in re.finditer(r"((?:تتمة\s+|تكملة\s+|ختام\s+)?كتاب\s+[\u0621-\u064a\s]{3,45})", t):
+        cand = _strip_Trailing_scholar_and_meta(m_kitab.group(1), sheikh_info)
+        cand = re.split(r"\s+[-–—|:\(\)]\s*", cand)[0].strip()
+        nt_cand = normalize_ar(cand)
+        cand_stems = _extract_commentary_stems(cand, sheikh_info)
+        if (
+            len(cand) >= 6
+            and (not nt_series or nt_cand not in nt_series)
+            and not (series_stems and cand_stems and cand_stems.issubset(series_stems))
+        ):
+            return _truncate_words_clean(cand)
+
+    # 5. Surah name if present and not identical to series title
+    m_surah = re.search(
+        r"((?:تفسير\s+)?سورة\s+[\u0621-\u064a]+(?:\s+الجزء\s+[\u0621-\u064a0-9]+)?)",
+        t,
+    )
+    if m_surah:
+        cand = m_surah.group(1).strip()
+        if not nt_series or normalize_ar(cand) not in nt_series:
+            return _truncate_words_clean(cand)
+
+    # 6. Parenthetical topic after lesson number, e.g. `الدرس 107 (الحال - تتمة)`
+    for m_paren in re.finditer(r"\(\s*([^\)]{4,60})\s*\)", t):
+        inner = m_paren.group(1).strip()
+        if re.fullmatch(r"[\d\u0660-\u0669\s\-–—/\.]+", inner):
+            continue
+        if any(w in normalize_ar(inner) for w in ["الدرس", "المجلس", "الحلقه", "بث مباشر"]):
+            continue
+        if nt_series and normalize_ar(inner) in nt_series:
+            continue
+        return _truncate_words_clean(inner)
+
+    # 7. Quoted topic `"..."` or `«...»`
+    m_quote = re.search(r"[\"«”‟]([^\"»”‟]{5,60})[\"»”‟]", t)
+    if m_quote:
+        inner = m_quote.group(1).strip()
+        if not nt_series or normalize_ar(inner) not in nt_series:
+            return _truncate_words_clean(inner)
+
+    # 8. Segment-based extraction: split on `|`, ` - `, ` – `, ` — `, `:` (preserving parenthesized ranges)
+    segments = [
+        _strip_Trailing_scholar_and_meta(seg, sheikh_info)
+        for seg in re.split(r"\s*(?:\||[-–—]{1,2}|:)\s*", t)
+    ]
+    meaningful_segments: list[str] = []
+    for seg in segments:
+        s_clean = re.sub(
+            r"^(?:بث مباشر|🔴|🟢|#\S+|\s)+",
+            "",
+            seg,
+        ).strip()
+        s_clean = re.sub(
+            r"^(?:الدرس|درس|المجلس|مجلس|الحلقة|حلقة|المحاضرة|محاضرة|اللقاء|لقاء|اليوم|الجزء|جزء)\s*(?:رقم\s*)?(?:\(?[\d\u0660-\u0669]+\)?|الأول|الأولى|الثاني|الثانية|الثالث|الثالثة|الرابع|الرابعة|الخامس|الخامسة|السادس|السادسة|السابع|السابعة|الثامن|الثامنة|التاسع|التاسعة|العاشر|العاشرة|الحادي عشر|الثاني عشر|الأخير|الأخيرة)\s*[-–—:|_]*\s*",
+            "",
+            s_clean,
+        ).strip()
+        s_clean = re.sub(r"^\(?[\d\u0660-\u0669]+\)?\s*[-–—:|_\.]*\s*", "", s_clean).strip()
+        s_clean = _strip_Trailing_scholar_and_meta(s_clean, sheikh_info)
+        if len(s_clean) < 4:
+            continue
+        if re.fullmatch(r"[\d\u0660-\u0669\s\-–—/\.]+", s_clean):
+            continue
+        nt_seg = normalize_ar(s_clean)
+        if nt_seg in {
+            "بث مباشر",
+            "مباشر",
+            "درس",
+            "الدرس",
+            "مجلس",
+            "المجلس",
+            "الحلقه",
+            "حلقه",
+        }:
+            continue
+        seg_stems = _extract_commentary_stems(s_clean, sheikh_info)
+        # Skip segments that just repeat the series title
+        if nt_series and (
+            nt_seg == nt_series
+            or (len(nt_seg) >= 8 and nt_seg in nt_series)
+            or (series_stems and seg_stems and seg_stems.issubset(series_stems))
+        ):
+            continue
+        meaningful_segments.append(s_clean)
+
+    if meaningful_segments:
+        return _truncate_words_clean(meaningful_segments[-1])
+
     return fallback
+
+
+def _extract_stopped_boundary_note(
+    last_lesson_title: str,
+    series_title: str = "",
+    first_lesson_title: str = "",
+    main_lessons_count: int = 1,
+    total_lessons_count: int | None = None,
+    sheikh_info: dict[str, Any] | None = None,
+    state: str = "stopped",
+) -> str:
+    """
+    Build a canonical Arabic boundary note for a `stopped` (or `ongoing`) series from its
+    first and last lesson titles, explicitly documenting the stopping boundary
+    (e.g., «إلى باب شروط الصلاة», «إلى الآية 45 من سورة البقرة», «إلى البيت 120»).
+    """
+    if total_lessons_count is None:
+        total_lessons_count = main_lessons_count
+    start_bound = _extract_topic_boundary(
+        first_lesson_title,
+        fallback="المقدمة",
+        series_title=series_title,
+        sheikh_info=sheikh_info,
+    )
+    end_bound = _extract_topic_boundary(
+        last_lesson_title,
+        fallback=f"الدرس {main_lessons_count}",
+        series_title=series_title,
+        sheikh_info=sheikh_info,
+    )
+    end_clean = re.sub(r"^(?:إلى|الى)\s+", "", end_bound).strip()
+    return (
+        f"حالة السلسلة ({state}): تغطي الأبواب المشروحة من ({start_bound}) "
+        f"إلى ({end_bound}) — حد التوقف: إلى {end_clean} — "
+        f"بإجمالي {main_lessons_count} درساً رئيسياً ({total_lessons_count} ملفاً)."
+    )
 
 
 def _resolve_series_state(
@@ -3797,16 +4274,31 @@ def stage8_resolve_states_and_export(
         resolved_state = _resolve_series_state(s_title, s_note, raw_state, main_lessons)
         s["state"] = resolved_state
 
-        start_bound = _extract_topic_boundary(first_ep.get("title", ""), "المقدمة")
-        end_bound = _extract_topic_boundary(last_ep.get("title", ""), f"الدرس {len(main_lessons)}")
+        start_bound = _extract_topic_boundary(
+            first_ep.get("title", ""),
+            "المقدمة",
+            series_title=s_title,
+            sheikh_info=sheikh_info,
+        )
+        end_bound = _extract_topic_boundary(
+            last_ep.get("title", ""),
+            f"الدرس {len(main_lessons)}",
+            series_title=s_title,
+            sheikh_info=sheikh_info,
+        )
 
         if resolved_state in ("stopped", "ongoing"):
             if "من " not in s_title and "إلى " not in s_title:
                 s_title = f"{s_title} (من {start_bound} إلى {end_bound} — {len(main_lessons)} درساً)"
                 s["title"] = s_title
-            boundary_note = (
-                f"حالة السلسلة ({resolved_state}): تغطي الأبواب المشروحة من ({start_bound}) "
-                f"إلى ({end_bound}) بإجمالي {len(main_lessons)} درساً رئيسياً ({len(lessons)} ملفاً)."
+            boundary_note = _extract_stopped_boundary_note(
+                last_lesson_title=last_ep.get("title", ""),
+                series_title=s_title,
+                first_lesson_title=first_ep.get("title", ""),
+                main_lessons_count=len(main_lessons),
+                total_lessons_count=len(lessons),
+                sheikh_info=sheikh_info,
+                state=resolved_state,
             )
             if boundary_note not in s_note:
                 s["note"] = f"{s_note} — {boundary_note}".strip(" —") if s_note else boundary_note
