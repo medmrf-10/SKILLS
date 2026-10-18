@@ -1,8 +1,8 @@
 {
   "loop_version": "2.0-subagent-driven",
-  "updated_at": "2026-10-18T14:43:30+02:00",
-  "cycle_count": 1,
-  "next_skill_index": 1,
+  "updated_at": "2026-10-18T15:16:00+02:00",
+  "cycle_count": 2,
+  "next_skill_index": 2,
   "skills_rotation": [
     "turath-deep-indexing",
     "person-discovery-intake",
@@ -14,19 +14,18 @@
     "agy-lean-cli"
   ],
   "last_completed_cycle": {
-    "cycle": 1,
+    "cycle": 2,
     "skills_tested": [
-      "turath-deep-indexing",
-      "sheikh-curation",
-      "person-to-knowledge-orchestrator",
-      "sheikh-series-pipeline"
+      "person-discovery-intake"
     ],
     "real_datasets_used": [
-      "hermes-vps:/root/workspace/ytb/daddo/sharh_manzouma_adoudiya (3 aligned lessons, 91,293 chars)",
-      "/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/*_raw.json (all 17 real sheikhs)",
-      "hermes-vps:/root/workspace/ytb/bardouni-husaymi/984/010_W_2g8HoIJTY (CTC token-budget overflow fix)"
+      "/Users/macm1pro/.gemini/antigravity/brain/a66db81b-9ed5-46c9-a1da-c3de34a35d9c/scratch/jamhara.pdf (real Jamharat A'mal PDF index, 129 deduplicated links)",
+      "/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs/*_raw.json (all 17 real sheikhs, 1,340 playlists)",
+      "/Users/macm1pro/REPOS/cheikh/data/full_channels/tankert-shared.json + sariri-personal.json + bardoni-personal.json",
+      "/Users/macm1pro/REPOS/cheikh/data/raw_playlists/*.json (playlist summary fixtures)",
+      "/Users/macm1pro/REPOS/swe/Shamela4_Full_DB (8,589 books indexed into shamela4_books_index.json.gz)"
     ],
-    "bugs_fixed": 6,
+    "bugs_fixed": 9,
     "gate_status": "PASS (0 errors)"
   }
 }

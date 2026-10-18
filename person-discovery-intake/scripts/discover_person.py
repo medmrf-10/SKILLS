@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import gzip
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,7 @@ KNOWN_PERSON_SLUGS: dict[str, str] = {
     "محمد متولي الشعراوي": "shaarawy",
     "الشعراوي": "shaarawy",
     "محمد سعيد رمضان البوطي": "bouti",
+    "محمد سعيد البوطي": "bouti",
     "البوطي": "bouti",
     "فاضل السامرائي": "samarrai",
     "فاضل صالح السامرائي": "samarrai",
@@ -59,10 +61,13 @@ KNOWN_PERSON_SLUGS: dict[str, str] = {
     "علي العمري": "omari",
     "أدهم العاسمي": "asimi",
     "معاذ سعيد حوى": "hawwa",
+    "معاذ سعيد حوا": "hawwa",
     "سعيد الكملي": "kamali",
     "محمد الحسن الددو": "dedew",
+    "محمد الحسن الددو الشنقيطي": "dedew",
     "علي جمعة": "gomaa",
     "عبد الرحمن ذاكر الهاشمي": "hashemi",
+    "ذاكر الهاشمي": "hashemi",
     "أحمد السيد": "sayed",
     "أيمن عبد الرحيم": "ayman",
     "المهندس أيمن عبد الرحيم": "ayman",
@@ -75,6 +80,33 @@ KNOWN_PERSON_SLUGS: dict[str, str] = {
     "عبد الفتاح أبو غدة": "abughuddah",
     "نور الدين عتر": "itr",
     "محمد محمد أبو موسى": "abumusa",
+    "وهبة الزحيلي": "zuhayli",
+    "محمد الطاهر بن عاشور": "ibnashur",
+    "ابن عاشور": "ibnashur",
+    "جلال الدين السيوطي": "suyuti",
+    "أبو إسحاق الشاطبي": "shatibi",
+    "أبو حامد الغزالي": "ghazali",
+    "يحيى بن شرف النووي": "nawawi",
+}
+
+SHEIKH_PHOTOS: dict[str, str] = {
+    "sayed": "https://medmrf-10.github.io/hawshat/playlists/img/ahmed-alsayed.jpg",
+    "asimi": "https://medmrf-10.github.io/hawshat/playlists/img/adham-alasimi.jpg",
+    "bardoni": "https://medmrf-10.github.io/hawshat/playlists/img/bardouni-husaymi.jpg",
+    "jifri": "https://medmrf-10.github.io/hawshat/playlists/img/habib-ali-aljifri.jpg",
+    "hafiz": "https://medmrf-10.github.io/hawshat/playlists/img/habib-omar-ibn-hafiz.jpg",
+    "gomaa": "https://medmrf-10.github.io/hawshat/playlists/img/ali-gomaa.jpg",
+    "bouti": "https://medmrf-10.github.io/hawshat/playlists/img/said-bouti.jpg",
+    "shaarawy": "https://medmrf-10.github.io/hawshat/playlists/img/sharawi.jpg",
+    "hawwa": "https://medmrf-10.github.io/hawshat/playlists/img/maath-hawa.jpg",
+    "sariri": "https://medmrf-10.github.io/hawshat/playlists/img/mouloud-sariri.jpg",
+    "omari": "https://medmrf-10.github.io/hawshat/playlists/img/ali-mahmoud-alomari.jpg",
+    "hashemi": "https://medmrf-10.github.io/hawshat/playlists/img/dhaker-alhashimi.jpg",
+    "kamali": "https://medmrf-10.github.io/hawshat/playlists/img/said-kamali.jpg",
+    "samarrai": "https://medmrf-10.github.io/hawshat/playlists/img/fadhel-samarrai.jpg",
+    "ayman": "https://medmrf-10.github.io/hawshat/playlists/img/ayman-abdelrahim.jpg",
+    "dedew": "https://medmrf-10.github.io/hawshat/playlists/img/daddo.jpg",
+    "alihani": "https://yt3.googleusercontent.com/dNA40wR5QtnNoK1ilEriqsLa16RdGAXBgN-dXxDQzF0CxP5ET9itcRC4gjPRPL99kuHFsO4ApA=s900-c-k-c0x00ffffff-no-rj",
 }
 
 AR_TO_LATIN_MAP: dict[str, str] = {
@@ -156,10 +188,28 @@ RAW_URL_RE = re.compile(
     re.IGNORECASE,
 )
 SHORTLINK_NO_SCHEME_RE = re.compile(
-    r"\b(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co|youtu\.be)/[A-Za-z0-9_\-]+",
+    r"(?<!://)(?<!\.)\b(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co|youtu\.be)/[A-Za-z0-9_\-]+",
     re.IGNORECASE,
 )
 BARE_PLAYLIST_ID_RE = re.compile(r"\b(PL[A-Za-z0-9_\-]{16,34})\b")
+
+# Filter out embedded TrueType font licenses, PKI certificates, and XMP schema URIs inside PDFs
+PDF_NOISE_URL_RE = re.compile(
+    r"(?:"
+    r"microsoft\.com/(?:pki|typography)"
+    r"|crl\.microsoft\.com"
+    r"|linotype\.com"
+    r"|lucasfonts\.com"
+    r"|wikipedia\.org/wiki/MIT_License"
+    r"|scripts\.sil\.org/OFL"
+    r"|w3\.org/[0-9]{4}/"
+    r"|purl\.org/dc/"
+    r"|ns\.adobe\.com/"
+    r"|iptc\.org/std/"
+    r"|^https?://(?:bit|bit\.ly|goo\.gl|tinyurl\.com|t\.co)/?$"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _unescape_pdf_string(raw_bytes: bytes) -> str:
@@ -167,6 +217,33 @@ def _unescape_pdf_string(raw_bytes: bytes) -> str:
     s = raw_bytes.decode("latin-1", errors="ignore")
     s = s.replace(r"\(", "(").replace(r"\)", ")").replace(r"\\", "\\")
     return s.strip()
+
+
+def unwrap_redirect_wrapper_url(url: str) -> str:
+    """
+    Unwrap Google Docs/Sheets (`https://www.google.com/url?q=...`), YouTube (`youtube.com/redirect?q=...`),
+    or Facebook (`l.facebook.com/l.php?u=...`) redirect wrapper URLs into their actual target URL.
+    """
+    s = (url or "").strip()
+    if not s:
+        return s
+    try:
+        parsed = urllib.parse.urlsplit(s)
+        host = (parsed.netloc or "").lower()
+        path = parsed.path or ""
+        if (
+            ("google." in host and path == "/url")
+            or ("youtube.com" in host and path == "/redirect")
+            or ("facebook.com" in host and path == "/l.php")
+        ):
+            qs = urllib.parse.parse_qs(parsed.query)
+            for key in ("q", "url", "u"):
+                vals = qs.get(key)
+                if vals and vals[0]:
+                    return urllib.parse.unquote(vals[0]).strip()
+    except Exception:
+        pass
+    return s
 
 
 def resolve_http_redirect(url: str, timeout: int = 8) -> str:
@@ -197,40 +274,42 @@ def resolve_http_redirect(url: str, timeout: int = 8) -> str:
 
 def classify_extracted_url(url: str, resolved_url: str | None = None) -> dict[str, Any]:
     """Classify a discovered URL into playlist, video, archive_item, shortlink, or other."""
-    target = (resolved_url or url).strip().rstrip(".,;)]}>'\"")
+    clean_orig = url.strip().rstrip(".,;)]}>'\"")
+    target = unwrap_redirect_wrapper_url(resolved_url or clean_orig).strip().rstrip(".,;)]}>'\"")
     playlist_id = None
     video_id = None
     archive_id = None
     link_type = "other"
 
-    # 1. Check YouTube Playlist
-    m_pl = re.search(r"[?&]list=((?:PL|UU|OLAK5uy_)[A-Za-z0-9_\-]+)", target)
+    # Extract both playlist_id and video_id if present (e.g., watch?v=VID&list=PL_ID)
+    m_pl = re.search(r"(?:[?&]|%3[Ff]|%26)list(?:=|%3[Dd])((?:PL|UU|OLAK5uy_)[A-Za-z0-9_\-]+)", target)
     if m_pl:
         playlist_id = m_pl.group(1)
+
+    m_vid = re.search(
+        r"(?:youtube\.com/(?:watch\?.*?v=|live/|shorts/|embed/)|youtu\.be/)([A-Za-z0-9_\-]{11})",
+        target,
+    )
+    if m_vid:
+        video_id = m_vid.group(1)
+
+    if playlist_id:
         link_type = "youtube_playlist"
+    elif video_id:
+        link_type = "youtube_video"
     else:
-        # 2. Check YouTube Video
-        m_vid = re.search(
-            r"(?:youtube\.com/(?:watch\?.*?v=|live/|shorts/|embed/)|youtu\.be/)([A-Za-z0-9_\-]{11})",
+        m_arch = re.search(
+            r"archive\.org/(?:details|download|metadata)/([A-Za-z0-9_.\-]+)",
             target,
         )
-        if m_vid:
-            video_id = m_vid.group(1)
-            link_type = "youtube_video"
-        else:
-            # 3. Check Archive.org Item
-            m_arch = re.search(
-                r"archive\.org/(?:details|download|metadata)/([A-Za-z0-9_.\-]+)",
-                target,
-            )
-            if m_arch:
-                archive_id = m_arch.group(1)
-                link_type = "archive_item"
-            elif re.search(r"^https?://(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co)/", target, re.I):
-                link_type = "shortlink"
+        if m_arch:
+            archive_id = m_arch.group(1)
+            link_type = "archive_item"
+        elif re.search(r"^https?://(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co)/[A-Za-z0-9_\-]+", target, re.I):
+            link_type = "shortlink"
 
     return {
-        "url": url.strip().rstrip(".,;)]}>'\""),
+        "url": clean_orig,
         "resolved_url": target,
         "link_type": link_type,
         "playlist_id": playlist_id,
@@ -330,26 +409,28 @@ def extract_links_from_pdf(
         clean_u = raw_u.strip().rstrip(".,;)]}>'\"\\")
         if not clean_u or len(clean_u) < 8:
             continue
-        resolved = clean_u
+        if PDF_NOISE_URL_RE.search(clean_u):
+            continue
+        resolved = unwrap_redirect_wrapper_url(clean_u)
+        if PDF_NOISE_URL_RE.search(resolved):
+            continue
         if resolve_redirects and re.search(
-            r"^https?://(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co)/", clean_u, re.I
+            r"^https?://(?:bit\.ly|goo\.gl|tinyurl\.com|t\.co)/[A-Za-z0-9_\-]+", resolved, re.I
         ):
-            resolved = resolve_http_redirect(clean_u)
+            resolved = resolve_http_redirect(resolved)
 
         info = classify_extracted_url(clean_u, resolved)
-        dedup_key = (
-            f"pl:{info['playlist_id']}"
-            if info["playlist_id"]
-            else (
-                f"vid:{info['video_id']}"
-                if info["video_id"]
-                else (
-                    f"arch:{info['archive_id']}"
-                    if info["archive_id"]
-                    else info["resolved_url"]
-                )
-            )
-        )
+        if info["playlist_id"]:
+            dedup_key = f"pl:{info['playlist_id']}"
+        elif info["video_id"]:
+            dedup_key = f"vid:{info['video_id']}"
+        elif info["archive_id"]:
+            dedup_key = f"arch:{info['archive_id']}"
+        elif info["link_type"] == "shortlink":
+            dedup_key = "short:" + re.sub(r"^https?://", "", info["resolved_url"], flags=re.I)
+        else:
+            dedup_key = "url:" + re.sub(r"^https?://", "", info["resolved_url"], flags=re.I)
+
         if dedup_key in seen_keys:
             continue
         seen_keys.add(dedup_key)
@@ -361,7 +442,7 @@ def extract_links_from_pdf(
 
 
 # ---------------------------------------------------------------------------
-# 3. Classical & Modern Books Knowledge Base & Matn Matching Engine
+# 3. Classical & Modern Books Knowledge Base, Shamela4 Index & Matn Matcher
 # ---------------------------------------------------------------------------
 
 MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
@@ -371,7 +452,7 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "مختصر خليل في الفقه المالكي",
         "author": "خليل بن إسحاق الجندي",
         "science": "الفقه المالكي",
-        "keywords": ["مختصر خليل", "المختصر الفقهي لخليل"],
+        "keywords": ["مختصر خليل", "المختصر الفقهي لخليل", "سلسلة شرح المختصر", "سلسة شرح مختصر خليل"],
         "exclude_keywords": ["الشرح الكبير", "مواهب الجليل"],
     },
     {
@@ -400,14 +481,19 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "رسالة ابن أبي زيد القيرواني",
         "author": "ابن أبي زيد القيرواني",
         "science": "الفقه المالكي",
-        "keywords": ["رسالة ابن أبي زيد", "رساله ابن ابي زيد", "الرسالة الفقهية"],
+        "keywords": [
+            "رسالة ابن أبي زيد",
+            "رساله ابن ابي زيد",
+            "الرسالة الفقهية",
+            "ابواب الصيام لابن ابي زيد القيرواني",
+        ],
     },
     {
         "book_id": "maliki:murshid_muin_ibn_ashir",
         "title": "المرشد المعين على الضروري من علوم الدين (متن ابن عاشر)",
         "author": "عبد الواحد بن عاشر",
         "science": "الفقه المالكي",
-        "keywords": ["المرشد المعين", "متن ابن عاشر", "نظم ابن عاشر", "ميارة الصغير"],
+        "keywords": ["المرشد المعين", "متن ابن عاشر", "نظم ابن عاشر", "ميارة الصغير", "الضروري من علوم الدين"],
     },
     {
         "book_id": "maliki:mukhtasar_akhdari",
@@ -421,7 +507,7 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "المنهج المنتخب إلى قواعد المذهب",
         "author": "علي بن قاسم الزقاق",
         "science": "الفقه المالكي",
-        "keywords": ["المنهج المنتخب", "منهج الزقاق", "قواعد الزقاق"],
+        "keywords": ["المنهج المنتخب", "منهج الزقاق", "قواعد الزقاق", "الزقاقية"],
     },
     {
         "book_id": "maliki:idah_al_masalik",
@@ -429,6 +515,133 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "author": "أحمد بن يحيى الونشريسي",
         "science": "الفقه المالكي",
         "keywords": ["إيضاح المسالك", "ايضاح المسالك"],
+    },
+    {
+        "book_id": "maliki:tuhfat_al_hukkam",
+        "title": "تحفة الحكام في نكت العقود والأحكام (عاصمية ابن عاصم)",
+        "author": "أبو بكر بن عاصم الأندلسي",
+        "science": "الفقه المالكي",
+        "keywords": ["تحفة الحكام", "عاصمية ابن عاصم"],
+    },
+    {
+        "book_id": "maliki:bidayat_al_mujtahid",
+        "title": "بداية المجتهد ونهاية المقتصد",
+        "author": "ابن رشد الحفيد",
+        "science": "الفقه المقارن والمالكي",
+        "keywords": ["بداية المجتهد"],
+    },
+    # --- الفقه الحنفي والشافعي والعام ---
+    {
+        "book_id": "hanafi:mukhtasar_quduri",
+        "title": "مختصر القدوري في الفقه الحنفي",
+        "author": "أبو الحسين أحمد بن محمد القدوري",
+        "science": "الفقه الحنفي",
+        "keywords": ["مختصر القدوري", "متن القدوري"],
+    },
+    {
+        "book_id": "hanafi:al_lubab_sharh_al_kitab",
+        "title": "اللباب في شرح الكتاب",
+        "author": "عبد الغني الغنيمي الميداني",
+        "science": "الفقه الحنفي",
+        "keywords": ["اللباب في شرح الكتاب", "كتاب اللباب"],
+    },
+    {
+        "book_id": "hanafi:al_ikhtiyar_li_talil_al_mukhtar",
+        "title": "الاختيار لتعليل المختار",
+        "author": "عبد الله بن محمود الموصلي",
+        "science": "الفقه الحنفي",
+        "keywords": ["الاختيار لتعليل المختار", "كتاب الاختيار"],
+    },
+    {
+        "book_id": "hanafi:sharh_al_wiqaya",
+        "title": "شرح الوقاية في مسائل الهداية",
+        "author": "عبيد الله بن مسعود المحبوبي (صدر الشريعة)",
+        "science": "الفقه الحنفي",
+        "keywords": ["شرح الوقاية"],
+    },
+    {
+        "book_id": "hanafi:uqud_rasm_al_mufti",
+        "title": "عقود رسم المفتي (وإسعاد المفتي)",
+        "author": "محمد أمين بن عابدين",
+        "science": "الفقه الحنفي وأصول الإفتاء",
+        "keywords": ["عقود رسم المفتي", "إسعاد المفتي", "أصول الإفتاء"],
+    },
+    {
+        "book_id": "hanafi:ghurra_munifa",
+        "title": "الغرة المنيفة في تحقيق بعض مسائل الإمام أبي حنيفة",
+        "author": "سراج الدين الغزنوي",
+        "science": "الفقه الحنفي",
+        "keywords": ["الغرة المنيفة"],
+    },
+    {
+        "book_id": "shafii:matn_abi_shuja",
+        "title": "متن الغاية والتقريب (متن أبي شجاع)",
+        "author": "أبو شجاع أحمد بن الحسين الأصفهاني",
+        "science": "الفقه الشافعي",
+        "keywords": ["متن الغاية والتقريب", "الغاية والتقريب", "متن أبي شجاع"],
+    },
+    {
+        "book_id": "shafii:safwat_al_zubad",
+        "title": "صفوة الزبد (متن الزبد في الفقه الشافعي)",
+        "author": "أحمد بن رسلان الرملي",
+        "science": "الفقه الشافعي",
+        "keywords": ["صفوة الزبد", "متن الزبد"],
+    },
+    {
+        "book_id": "shafii:muqaddimat_al_majmu",
+        "title": "مقدمة المجموع شرح المهذب",
+        "author": "محيي الدين يحيى بن شرف النووي",
+        "science": "الفقه الشافعي",
+        "keywords": ["مقدمة المجموع"],
+    },
+    {
+        "book_id": "shafii:sullam_al_tawfiq",
+        "title": "سلم التوفيق إلى محبة الله على التحقيق",
+        "author": "عبد الله بن حسين بن طاهر باعلوي",
+        "science": "الفقه الشافعي والتزكية",
+        "keywords": ["سلم التوفيق", "سلم التحقيق إلى محبة الله"],
+    },
+    {
+        "book_id": "shafii:al_risala_al_jamia",
+        "title": "الرسالة الجامعة والتذكرة النافعة",
+        "author": "أحمد بن زين الحبشي",
+        "science": "الفقه الشافعي والتزكية",
+        "keywords": ["الرسالة الجامعة"],
+    },
+    {
+        "book_id": "shafii:fawaid_thamina",
+        "title": "الفوائد الثمينة في فقه الشافعية",
+        "author": "أحمد بن عمر الشاطري",
+        "science": "الفقه الشافعي",
+        "keywords": ["الفوائد الثمينة"],
+    },
+    {
+        "book_id": "fiqh:nubdha_mashhur",
+        "title": "النبذة فيما يجب تعلمه وتعليمه",
+        "author": "عبد الرحمن بن محمد المشهور",
+        "science": "الفقه الشافعي",
+        "keywords": ["النبذة فيما يجب تعلمه", "النبذه فيما يجب علي الانسان تعلمه"],
+    },
+    {
+        "book_id": "fiqh:takmilat_zubdat_al_hadith",
+        "title": "تكملة زبدة الحديث في فقه المواريث",
+        "author": "محمد بن سالم بن حفيظ التريمي",
+        "science": "الفرائض والمواريث",
+        "keywords": ["تكملة زبدة الحديث", "تفصيل أحكام المواريث"],
+    },
+    {
+        "book_id": "fiqh:siyasa_shariyya_ibn_taymiyya",
+        "title": "السياسة الشرعية في إصلاح الراعي والرعية",
+        "author": "أحمد بن عبد الحليم بن تيمية",
+        "science": "السياسة الشرعية والفقه",
+        "keywords": ["السياسة الشرعية لابن تيمية", "كتاب السياسة الشرعية"],
+    },
+    {
+        "book_id": "9awa3idFi9h:ashbah_wa_nazair",
+        "title": "الأشباه والنظائر في قواعد وفروع الفقه",
+        "author": "جلال الدين السيوطي",
+        "science": "القواعد الفقهية",
+        "keywords": ["الأشباه والنظائر", "الأشباه و النظائر"],
     },
     # --- أصول الفقه (مفصول بدقة عن مقاصد الشريعة) ---
     {
@@ -471,7 +684,14 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "الورقات في أصول الفقه",
         "author": "إمام الحرمين الجويني",
         "science": "أصول الفقه",
-        "keywords": ["متن الورقات", "شرح الورقات"],
+        "keywords": ["متن الورقات", "شرح الورقات", "نظم الورقات"],
+    },
+    {
+        "book_id": "ossoul:lubb_al_usul",
+        "title": "لب الأصول (وغاية الوصول شرح لب الأصول)",
+        "author": "زكريا الأنصاري",
+        "science": "أصول الفقه",
+        "keywords": ["لب الأصول", "غاية الوصول شرح لب الأصول"],
     },
     # --- مقاصد الشريعة (مفصول تماماً عن أصول الفقه) ---
     {
@@ -487,7 +707,7 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "شرح مقدمات الإمام السنوسي في التوحيد وأقسام الأحكام",
         "author": "أبو عبد الله محمد بن يوسف السنوسي",
         "science": "العقيدة وعلم الكلام",
-        "keywords": ["مقدمات السنوسي", "مقدمات الإمام السنوسي", "المقدمات للسنوسي"],
+        "keywords": ["مقدمات السنوسي", "مقدمات الإمام السنوسي", "المقدمات للسنوسي", "متن المقدمات"],
     },
     {
         "book_id": "akida:umm_al_barahin",
@@ -495,6 +715,69 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "author": "أبو عبد الله محمد بن يوسف السنوسي",
         "science": "العقيدة وعلم الكلام",
         "keywords": ["أم البراهين", "العقيدة الصغرى", "صغرى السنوسي"],
+    },
+    {
+        "book_id": "akida:sughra_al_sughra_sanusi",
+        "title": "صغرى الصغرى في علم التوحيد",
+        "author": "أبو عبد الله محمد بن يوسف السنوسي",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["صغرى الصغرى"],
+    },
+    {
+        "book_id": "akida:kubra_sanusi",
+        "title": "عمدة أهل التوفيق والتسديد (العقيدة الكبرى للسنوسي وحواشي اليوسي)",
+        "author": "أبو عبد الله محمد بن يوسف السنوسي",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["كبرى السنوسي", "حواشي اليوسي على كبرى السنوسي", "العقيدة الكبرى للسنوسي"],
+    },
+    {
+        "book_id": "akida:aqaid_nasafiyya",
+        "title": "العقائد النسفية وشرحها للتفتازاني",
+        "author": "نجم الدين عمر النسفي",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["العقائد النسفية", "شرح العقائد النسفية"],
+    },
+    {
+        "book_id": "akida:aqidat_al_awam",
+        "title": "منظومة عقيدة العوام",
+        "author": "أحمد المرزوقي المالكي",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["عقيدة العوام"],
+    },
+    {
+        "book_id": "akida:kharida_bahiyya",
+        "title": "الخريدة البهية في العقيدة التوحيدية",
+        "author": "أبو البركات أحمد الدردير",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["الخريدة البهية"],
+    },
+    {
+        "book_id": "akida:jawharat_al_tawhid",
+        "title": "جوهرة التوحيد",
+        "author": "إبراهيم اللقاني",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["جوهرة التوحيد"],
+    },
+    {
+        "book_id": "akida:manzuma_adudiyya_dedew",
+        "title": "المنظومة العدودية في عقيدة أهل السنة والجماعة",
+        "author": "محمد سالم ولد عدود",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["المنظومة العدودية"],
+    },
+    {
+        "book_id": "akida:manzumat_al_ajhuri",
+        "title": "منظومة الأجهوري في أصول الدين",
+        "author": "علي الأجهوري",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["منظومة الأجهوري"],
+    },
+    {
+        "book_id": "akida:iqbar_al_intisar_bardoni",
+        "title": "إقبار الانتصار (مناقشة كتاب الانتصار للتدمرية)",
+        "author": "محمد البردوني الحسيمي",
+        "science": "العقيدة وعلم الكلام",
+        "keywords": ["إقبار الانتصار"],
     },
     {
         "book_id": "akida:kubra_yaqiniyyat",
@@ -530,14 +813,78 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "الحكم العطائية",
         "author": "ابن عطاء الله السكندري",
         "science": "التزكية والسلوك",
-        "keywords": ["الحكم العطائية", "الحكم العطائيه"],
+        "keywords": ["الحكم العطائية", "الحكم العطائيه", "رسائل الحكم"],
+    },
+    {
+        "book_id": "tazkia:mukatabat_ataiyya",
+        "title": "المكاتبات والمناجاة الإلهية",
+        "author": "ابن عطاء الله السكندري",
+        "science": "التزكية والسلوك",
+        "keywords": ["المكاتبات والمناجاة الإلهية"],
+    },
+    {
+        "book_id": "tazkia:taj_al_arus",
+        "title": "تاج العروس الحاوي لتهذيب النفوس",
+        "author": "ابن عطاء الله السكندري",
+        "science": "التزكية والسلوك",
+        "keywords": ["تاج العروس الحاوي لتهذيب النفوس", "تاج العروس"],
     },
     {
         "book_id": "tazkia:qabas_al_nur_al_mubin",
         "title": "قبس النور المبين من إحياء علوم الدين",
-        "author": "الحبيب عمر بن حفيظ (مختصر الإحياء للغزالي)",
+        "author": "الحبيب عمر بن حفيظ",
         "science": "التزكية والسلوك",
         "keywords": ["قبس النور المبين"],
+    },
+    {
+        "book_id": "tazkia:ihya_ulum_al_din",
+        "title": "إحياء علوم الدين (وموعظة المؤمنين)",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والسلوك",
+        "keywords": ["إحياء علوم الدين", "موعظة المؤمنين من إحياء علوم الدين"],
+        "exclude_keywords": ["قبس النور المبين"],
+    },
+    {
+        "book_id": "tazkia:bidayat_al_hidaya",
+        "title": "بداية الهداية",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والسلوك",
+        "keywords": ["بداية الهداية"],
+    },
+    {
+        "book_id": "tazkia:ayyuha_al_walad",
+        "title": "أيها الولد",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والسلوك",
+        "keywords": ["أيها الولد"],
+    },
+    {
+        "book_id": "tazkia:munqidh_min_al_dalal",
+        "title": "المنقذ من الضلال",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والفكر الإسلامي",
+        "keywords": ["المنقذ من الضلال"],
+    },
+    {
+        "book_id": "tazkia:mizan_al_amal",
+        "title": "ميزان العمل",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والسلوك",
+        "keywords": ["ميزان العمل"],
+    },
+    {
+        "book_id": "tazkia:arbain_fi_usul_al_din",
+        "title": "الأربعين في أصول الدين",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والعقيدة",
+        "keywords": ["الأربعين في أصول الدين"],
+    },
+    {
+        "book_id": "tazkia:al_adab_fi_al_din",
+        "title": "الأدب في الدين",
+        "author": "أبو حامد الغزالي",
+        "science": "التزكية والسلوك",
+        "keywords": ["الأدب في الدين"],
     },
     {
         "book_id": "tazkia:risalat_al_muawanah",
@@ -547,19 +894,227 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "keywords": ["رسالة المعاونة", "رساله المعاونه"],
     },
     {
+        "book_id": "tazkia:ithaf_al_sail",
+        "title": "إتحاف السائل بجواب المسائل",
+        "author": "الحبيب عبد الله بن علوي الحداد",
+        "science": "التزكية والسلوك",
+        "keywords": ["إتحاف السائل"],
+    },
+    {
         "book_id": "tazkia:risala_qushayriyya",
         "title": "الرسالة القشيرية",
         "author": "أبو القاسم القشيري",
         "science": "التزكية والسلوك",
         "keywords": ["الرسالة القشيرية", "الرساله القشيريه"],
     },
-    # --- الحديث النبوي والسيرة ---
+    {
+        "book_id": "tazkia:manazil_al_sairin",
+        "title": "منازل السائرين (وسبيل المبتدئين)",
+        "author": "أبو إسماعيل عبد الله الأنصاري الهروي",
+        "science": "التزكية والسلوك",
+        "keywords": ["منازل السائرين", "سبيل المبتدئين في شرح البدايات من منازل السائرين"],
+    },
+    {
+        "book_id": "tazkia:maqasid_al_riaya",
+        "title": "مقاصد الرعاية لحقوق الله عز وجل",
+        "author": "العز بن عبد السلام (مختصر الرعاية للمحاسبي)",
+        "science": "التزكية والسلوك",
+        "keywords": ["مقاصد الرعاية لحقوق الله", "مقاصد الرعاية"],
+    },
+    {
+        "book_id": "tazkia:qawaid_al_tasawwuf",
+        "title": "قواعد التصوف",
+        "author": "أحمد زروق الفاسي",
+        "science": "التزكية والسلوك",
+        "keywords": ["قواعد التصوف"],
+    },
+    {
+        "book_id": "tazkia:futuh_al_ghayb",
+        "title": "فتوح الغيب",
+        "author": "عبد القادر الجيلاني",
+        "science": "التزكية والسلوك",
+        "keywords": ["فتوح الغيب"],
+    },
+    {
+        "book_id": "tazkia:lawaqih_al_anwar",
+        "title": "لواقح الأنوار القدسية في بيان العهود المحمدية",
+        "author": "عبد الوهاب الشعراني",
+        "science": "التزكية والسلوك",
+        "keywords": ["لواقح الأنوار القدسية"],
+    },
+    {
+        "book_id": "tazkia:kashf_al_ghumma",
+        "title": "كشف الغمة عن جميع الأمة",
+        "author": "عبد الوهاب الشعراني",
+        "science": "الحديث والتزكية والفقه",
+        "keywords": ["كشف الغمة عن جميع الأمة", "كشف الغمة"],
+    },
+    {
+        "book_id": "tazkia:tanwir_al_qulub",
+        "title": "تنوير القلوب في معاملة علام الغيوب",
+        "author": "محمد أمين الكردي",
+        "science": "التزكية والفقه والعقيدة",
+        "keywords": ["تنوير القلوب"],
+    },
+    {
+        "book_id": "tazkia:kibrit_al_ahmar",
+        "title": "الكبريت الأحمر والإكسير الأكبر",
+        "author": "عبد الله بن أبي بكر العيدروس",
+        "science": "التزكية والسلوك",
+        "keywords": ["الكبريت الأحمر"],
+    },
+    {
+        "book_id": "tazkia:idah_asrar_ulum_al_muqarrabin",
+        "title": "إيضاح أسرار علوم المقربين",
+        "author": "محمد بن عبد الله العيدروس",
+        "science": "التزكية والسلوك",
+        "keywords": ["إيضاح أسرار علوم المقربين"],
+    },
+    {
+        "book_id": "tazkia:qamie_al_tughyan",
+        "title": "قامع الطغيان على منظومة شعب الإيمان",
+        "author": "محمد نووي الجاوي",
+        "science": "التزكية والسلوك",
+        "keywords": ["قامع الطغيان", "منظومة شعب الإيمان"],
+    },
+    {
+        "book_id": "tazkia:akhlaq_wa_siyar_ibn_hazm",
+        "title": "الأخلاق والسير في مداواة النفوس",
+        "author": "ابن حزم الأندلسي",
+        "science": "الأخلاق والتزكية",
+        "keywords": ["الأخلاق والسير", "الأخلاق و السير"],
+    },
+    {
+        "book_id": "tazkia:maharim_al_lisan",
+        "title": "نظم محارم اللسان (مطهرة القلوب)",
+        "author": "محمد مولود بن أحمد فال اليعقوبي",
+        "science": "التزكية والآداب",
+        "keywords": ["نظم محارم اللسان", "محارم اللسان"],
+    },
+    {
+        "book_id": "tazkia:jami_fi_adab_shariyya",
+        "title": "نظم الجامع في الآداب الشرعية",
+        "author": "محمد سالم ولد عدود",
+        "science": "التزكية والآداب",
+        "keywords": ["الجامع في الآداب الشرعية"],
+    },
+    {
+        "book_id": "tazkia:tadhkirat_al_sami",
+        "title": "تذكرة السامع والمتكلم في أدب العالم والمتعلم",
+        "author": "بدر الدين بن جماعة",
+        "science": "التزكية وآداب الطلب",
+        "keywords": ["تذكرة السامع والمتكلم", "آداب المتعلم والمعلم"],
+    },
+    {
+        "book_id": "tazkia:mustakhlas_fi_tazkiyat_al_anfus",
+        "title": "المستخلص في تزكية الأنفس",
+        "author": "سعيد حوى",
+        "science": "التزكية والسلوك",
+        "keywords": ["المستخلص في تزكية الأنفس"],
+    },
+    {
+        "book_id": "tazkia:fadhlakat_al_haqiqa",
+        "title": "فذلكة الحقيقة في أحكام الطريقة",
+        "author": "محمد مهدي الصيادي الرواس",
+        "science": "التزكية والسلوك",
+        "keywords": ["فذلكة الحقيقة"],
+    },
+    {
+        "book_id": "tazkia:ubudiyya_ibn_taymiyya",
+        "title": "كتاب العبودية (والفوائد لابن القيم)",
+        "author": "ابن تيمية / ابن القيم",
+        "science": "التزكية والعقيدة",
+        "keywords": ["كتاب العبودية لابن تيمية", "كتاب الفوائد لابن القيم"],
+    },
+    {
+        "book_id": "tazkia:khuluquna_hafiz",
+        "title": "خلقنا",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والأخلاق",
+        "keywords": ["كتاب خلقنا", "ختم كتاب: خلقنا"],
+    },
+    {
+        "book_id": "tazkia:silat_al_aqrabin_hafiz",
+        "title": "صلة الأقربين",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والآداب",
+        "keywords": ["صلة الأقربين"],
+    },
+    # --- التفسير وعلوم القرآن والتجويد ---
+    {
+        "book_id": "tafsir:madarik_al_tanzil_nasafi",
+        "title": "مدارك التنزيل وحقائق التأويل (تفسير النسفي)",
+        "author": "أبو البركات عبد الله بن أحمد النسفي",
+        "science": "التفسير وعلوم القرآن",
+        "keywords": ["تفسير النسفي", "مدارك التنزيل"],
+    },
+    {
+        "book_id": "tafsir:durr_masun_samin_halabi",
+        "title": "الدر المصون في علوم الكتاب المكنون",
+        "author": "السمين الحلبي",
+        "science": "التفسير وإعراب القرآن",
+        "keywords": ["الدر المصون"],
+    },
+    {
+        "book_id": "tafsir:iklil_fi_istinbat_tanzil",
+        "title": "الإكليل في استنباط التنزيل",
+        "author": "جلال الدين السيوطي",
+        "science": "التفسير وعلوم القرآن",
+        "keywords": ["الإكليل في استنباط التنزيل", "الاكليل في استباط التنزيل"],
+    },
+    {
+        "book_id": "tafsir:khawatir_shaarawy",
+        "title": "تفسير وخواطر الشيخ محمد متولي الشعراوي حول القرآن الكريم",
+        "author": "محمد متولي الشعراوي",
+        "science": "التفسير وعلوم القرآن",
+        "keywords": [
+            "تفسير الشعراوي",
+            "خواطر الشيخ محمد متولي الشعراوي",
+            "سلسلة تفسير القرآن الكريم للشيخ محمد متولي الشعراوي",
+        ],
+    },
+    {
+        "book_id": "tafsir:lamasat_bayaniyya_samarrai",
+        "title": "لمسات بيانية في نصوص من التنزيل",
+        "author": "فاضل صالح السامرائي",
+        "science": "البلاغة القرآنية والتفسير البياني",
+        "keywords": ["لمسات بيانية"],
+    },
+    {
+        "book_id": "3olomQuran:tibyan_nawawi",
+        "title": "التبيان في آداب حملة القرآن",
+        "author": "محيي الدين يحيى بن شرف النووي",
+        "science": "علوم القرآن والآداب",
+        "keywords": ["التبيان في آداب حملة القرآن"],
+    },
+    {
+        "book_id": "3olomQuran:ulum_al_quran_itr",
+        "title": "علوم القرآن الكريم",
+        "author": "نور الدين عتر",
+        "science": "علوم القرآن",
+        "keywords": ["علوم القرآن لنور الدين عتر", "علوم القرآن (1) لنور الدين عتر"],
+    },
+    {
+        "book_id": "3olomQuran:naba_azim_daraz",
+        "title": "النبأ العظيم نظرات جديدة في القرآن",
+        "author": "محمد عبد الله دراز",
+        "science": "علوم القرآن والإعجاز",
+        "keywords": ["النبأ العظيم"],
+    },
+    {
+        "book_id": "tajwid:muqaddima_jazariyya",
+        "title": "المقدمة الجزرية في التجويد",
+        "author": "محمد بن محمد بن الجزري",
+        "science": "التجويد والقراءات",
+        "keywords": ["متن الجزرية", "المقدمة الجزرية", "شرح الجزرية"],
+    },
+    # --- الحديث النبوي وعلومه والسيرة ---
     {
         "book_id": "hadith:sahih_al_bukhari",
         "title": "الجامع المسند الصحيح (صحيح البخاري)",
         "author": "محمد بن إسماعيل البخاري",
         "science": "الحديث النبوي وشروحه",
-        "keywords": ["صحيح البخاري", "جامع البخاري", "الكوكب الساري"],
+        "keywords": ["صحيح البخاري", "جامع البخاري", "الكوكب الساري", "مجالس البخاري", "سماع كتب السنة"],
     },
     {
         "book_id": "hadith:sahih_muslim",
@@ -573,7 +1128,21 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "title": "موطأ الإمام مالك",
         "author": "مالك بن أنس",
         "science": "الحديث النبوي والفقه المالكي",
-        "keywords": ["موطأ الإمام مالك", "موطأ مالك", "شرح الموطأ", "شرح الزرقاني على موطأ"],
+        "keywords": ["موطأ الإمام مالك", "موطأ مالك", "شرح الموطأ", "مجالس الموطأ", "شرح الزرقاني على موطأ"],
+    },
+    {
+        "book_id": "hadith:musnad_ahmad",
+        "title": "مسند الإمام أحمد بن حنبل",
+        "author": "أحمد بن حنبل",
+        "science": "الحديث النبوي وشروحه",
+        "keywords": ["مسند أحمد", "مسند الإمام أحمد", "مسانيد الإمام أحمد"],
+    },
+    {
+        "book_id": "hadith:jam_bayn_al_sahihayn",
+        "title": "الجمع بين الصحيحين (أنوار الصحيحين)",
+        "author": "الحميدي / عبد الحق الإشبيلي",
+        "science": "الحديث النبوي وشروحه",
+        "keywords": ["الجمع بين الصحيحين", "أنوار الصحيحين"],
     },
     {
         "book_id": "hadith:riyad_al_salihin",
@@ -581,6 +1150,104 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "author": "محيي الدين يحيى بن شرف النووي",
         "science": "الحديث النبوي والتزكية",
         "keywords": ["رياض الصالحين"],
+    },
+    {
+        "book_id": "hadith:arbain_nawawiyya",
+        "title": "الأربعون النووية في الأحاديث الصحيحة النبوية",
+        "author": "محيي الدين يحيى بن شرف النووي",
+        "science": "الحديث النبوي وشروحه",
+        "keywords": ["الأربعين النووية", "الأربعون النووية"],
+    },
+    {
+        "book_id": "hadith:umdat_al_ahkam",
+        "title": "عمدة الأحكام من كلام خير الأنام (وإحكام الأحكام لابن دقيق العيد)",
+        "author": "عبد الغني المقدسي / ابن دقيق العيد",
+        "science": "أحاديث الأحكام",
+        "keywords": ["عمدة الأحكام", "إحكام الأحكام شرح عمدة الأحكام"],
+    },
+    {
+        "book_id": "hadith:bulugh_al_maram",
+        "title": "بلوغ المرام من أدلة الأحكام",
+        "author": "ابن حجر العسقلاني",
+        "science": "أحاديث الأحكام",
+        "keywords": ["بلوغ المرام"],
+    },
+    {
+        "book_id": "hadith:adab_al_mufrad",
+        "title": "الأدب المفرد",
+        "author": "محمد بن إسماعيل البخاري",
+        "science": "الحديث النبوي والآداب",
+        "keywords": ["الأدب المفرد"],
+    },
+    {
+        "book_id": "hadith:shamail_muhammadiyya",
+        "title": "الشمائل المحمدية",
+        "author": "أبو عيسى محمد بن عيسى الترمذي",
+        "science": "السيرة والشمائل النبوية",
+        "keywords": ["الشمائل المحمدية", "شمائل النبي صلى الله عليه وسلم"],
+    },
+    {
+        "book_id": "hadith:muqaddimat_ibn_al_salah",
+        "title": "علوم الحديث (مقدمة ابن الصلاح)",
+        "author": "أبو عمرو عثمان بن الصلاح",
+        "science": "مصطلح الحديث وعلومه",
+        "keywords": ["مقدمة ابن الصلاح", "كتاب علوم الحديث"],
+    },
+    {
+        "book_id": "hadith:nuzhat_al_nazar",
+        "title": "نزهة النظر في توضيح نخبة الفكر",
+        "author": "ابن حجر العسقلاني",
+        "science": "مصطلح الحديث وعلومه",
+        "keywords": ["نزهة النظر", "نخبة الفكر", "شرح النزهة"],
+    },
+    {
+        "book_id": "hadith:manzuma_bayquniyya",
+        "title": "المنظومة البيقونية في مصطلح الحديث",
+        "author": "عمر بن محمد البيقوني",
+        "science": "مصطلح الحديث وعلومه",
+        "keywords": ["المنظومة البيقونية", "شرح البيقونية", "الشرح الجديد على البيقونية"],
+    },
+    {
+        "book_id": "hadith:ilal_al_tirmidhi",
+        "title": "علل الترمذي الكبير والصغير",
+        "author": "أبو عيسى محمد بن عيسى الترمذي",
+        "science": "علل الحديث",
+        "keywords": ["علل الترمذي", "مقاصد شرح العلل"],
+    },
+    {
+        "book_id": "hadith:al_tamyiz_muslim",
+        "title": "كتاب التمييز للإمام مسلم",
+        "author": "مسلم بن الحجاج النيسابوري",
+        "science": "علل الحديث ومصطلحه",
+        "keywords": ["كتاب التمييز للإمام مسلم", "التمييز للإمام مسلم"],
+    },
+    {
+        "book_id": "hadith:tahrir_ulum_al_hadith",
+        "title": "تحرير علوم الحديث",
+        "author": "عبد الله بن يوسف الجديع",
+        "science": "مصطلح الحديث وعلومه",
+        "keywords": ["تحرير علوم الحديث"],
+    },
+    {
+        "book_id": "hadith:nazm_al_muin",
+        "title": "نظم المعين في الحديث",
+        "author": "أحمد السيد",
+        "science": "الحديث النبوي وعلومه",
+        "keywords": ["نظم المعين في الحديث", "نظم المعين"],
+    },
+    {
+        "book_id": "hadith:arbain_ghumariyya",
+        "title": "الأربعون الغمارية في شكر النعم",
+        "author": "عبد الله بن الصديق الغماري",
+        "science": "الحديث النبوي وشروحه",
+        "keywords": ["الأربعون الغمارية", "الأربعين الغمارية"],
+    },
+    {
+        "book_id": "hadith:maalim_al_sunnah",
+        "title": "معالم السنة النبوية",
+        "author": "صالح بن أحمد الشامي",
+        "science": "الحديث النبوي وشروحه",
+        "keywords": ["معالم السنة النبوية"],
     },
     {
         "book_id": "hadith:shifa_qadi_iyad",
@@ -596,20 +1263,69 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "science": "السيرة النبوية",
         "keywords": ["فقه السيرة النبوية", "فقه السيرة"],
     },
-    # --- اللغة العربية والنحو والصرف والبلاغة ---
+    {
+        "book_id": "sirah:manzumat_ibn_abi_al_izz",
+        "title": "الأرجوزة الميئية في ذكر حال أشرف البرية (منظومة ابن أبي العز في السيرة)",
+        "author": "ابن أبي العز الحنفي",
+        "science": "السيرة النبوية",
+        "keywords": ["منظومة ابن أبي العز الحنفي في السيرة", "الأرجوزة الميئية"],
+    },
+    {
+        "book_id": "sirah:bahjat_al_mahafil",
+        "title": "بهجة المحافل وبغية الأماثل في تلخيص المعجزات والسير والشمائل",
+        "author": "يحيى بن أبي بكر العامري",
+        "science": "السيرة والشمائل النبوية",
+        "keywords": ["بهجة المحافل"],
+    },
+    {
+        "book_id": "sirah:misk_al_khitam_dedew",
+        "title": "مسك الختام في سيرة سيد الأنام",
+        "author": "محمد الحسن الددو",
+        "science": "السيرة النبوية",
+        "keywords": ["مسك الختام في سيرة سيد الأنام"],
+    },
+    {
+        "book_id": "sirah:nur_al_yaqin",
+        "title": "نور اليقين في سيرة سيد المرسلين",
+        "author": "محمد الخضري بك",
+        "science": "السيرة النبوية",
+        "keywords": ["نور اليقين في سيرة سيد المرسلين", "نور اليقين"],
+    },
+    {
+        "book_id": "tazkia:al_daa_wal_dawa",
+        "title": "الداء والدواء (الجواب الكافي لمن سأل عن الدواء الشافي)",
+        "author": "ابن قيم الجوزية",
+        "science": "التزكية والأخلاق",
+        "keywords": ["الداء والدواء", "الجواب الكافي"],
+    },
+    # --- اللغة العربية والنحو والصرف والبلاغة والأدب ---
     {
         "book_id": "nahw:alfiyyat_ibn_malik",
         "title": "ألفية ابن مالك في النحو والصرف",
         "author": "ابن مالك الأندلسي",
         "science": "النحو والصرف",
-        "keywords": ["ألفية ابن مالك", "شرح ابن عقيل", "شرح الأشموني", "أوضح المسالك"],
+        "keywords": [
+            "ألفية ابن مالك",
+            "شرح ابن عقيل",
+            "شرح الأشموني",
+            "أوضح المسالك",
+            "شرح السيوطي على الألفية",
+            "البهجة المرضية",
+        ],
+    },
+    {
+        "book_id": "nahw:tashil_al_fawaid",
+        "title": "تسهيل الفوائد وتكميل المقاصد (وشرح المساعد لابن عقيل)",
+        "author": "ابن مالك الأندلسي",
+        "science": "النحو والصرف",
+        "keywords": ["تسهيل الفوائد", "شرح المساعد لابن عقيل"],
     },
     {
         "book_id": "nahw:qatr_al_nada",
         "title": "قطر الندى وبل الصدى",
         "author": "ابن هشام الأنصاري",
         "science": "النحو والصرف",
-        "keywords": ["قطر الندى", "قطر الندي"],
+        "keywords": ["قطر الندى", "قطر الندي", "شرح الفاكهي للقطر"],
     },
     {
         "book_id": "nahw:shudhur_al_dhahab",
@@ -620,10 +1336,24 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
     },
     {
         "book_id": "nahw:ajurrumiyya",
-        "title": "المقدمة الآجرومية",
+        "title": "المقدمة الآجرومية (والتحفة السنية)",
         "author": "ابن آجروم الصنهاجي",
         "science": "النحو والصرف",
-        "keywords": ["الآجرومية", "الاجروميه", "متن الآجرومية"],
+        "keywords": ["الآجرومية", "الاجروميه", "متن الآجرومية", "التحفة السنية"],
+    },
+    {
+        "book_id": "nahw:mulhat_al_irab",
+        "title": "ملحة الإعراب",
+        "author": "أبو محمد القاسم بن علي الحريري",
+        "science": "النحو والصرف",
+        "keywords": ["ملحة الإعراب"],
+    },
+    {
+        "book_id": "nahw:muwassil_al_tullab",
+        "title": "موصل الطلاب إلى قواعد الإعراب",
+        "author": "خالد بن عبد الله الأزهري",
+        "science": "النحو والصرف",
+        "keywords": ["موصل الطلاب إلى قواعد الإعراب", "موصل الطلاب"],
     },
     {
         "book_id": "sarf:lamiyyat_al_afaal",
@@ -633,13 +1363,111 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "keywords": ["لامية الأفعال", "لاميه الافعال"],
     },
     {
+        "book_id": "sarf:tasrif_al_izzi",
+        "title": "تصريف العزي (ومع شرح التفتازاني)",
+        "author": "عز الدين عبد الوهاب الزنجاني",
+        "science": "النحو والصرف",
+        "keywords": ["تصريف العزي", "شرح العزي"],
+    },
+    {
+        "book_id": "sarf:bina_al_afaal",
+        "title": "متن البناء والأساس في علم التصريف (بناء الأفعال)",
+        "author": "عبد الله الدنقزي",
+        "science": "النحو والصرف",
+        "keywords": ["البناء والأساس", "البناء في التصريف", "متن البناء في علم التصريف", "البناء في علم التصريف"],
+    },
+    {
+        "book_id": "sarf:al_maqsud_fi_sarf",
+        "title": "المقصود في علم الصرف",
+        "author": "منسوب للإمام أبي حنيفة",
+        "science": "النحو والصرف",
+        "keywords": ["المقصود في الصرف"],
+    },
+    {
+        "book_id": "sarf:amthila_mukhtalifa",
+        "title": "الأمثلة المختلفة في علم الصرف",
+        "author": "علماء الصرف",
+        "science": "النحو والصرف",
+        "keywords": ["الأمثلة المختلفة", "الأمثلة المختلة في الصرف"],
+    },
+    {
         "book_id": "balagha:dalail_al_ijaz",
         "title": "دلائل الإعجاز في علم المعاني",
         "author": "عبد القاهر الجرجاني",
         "science": "البلاغة القرآنية",
         "keywords": ["دلائل الإعجاز", "دلائل الاعجاز"],
     },
-    # --- المنطق والفكر المعاصر ---
+    {
+        "book_id": "balagha:jawhar_maknun",
+        "title": "الجوهر المكنون في صدف الثلاثة فنون",
+        "author": "عبد الرحمن الأخضري",
+        "science": "البلاغة العربية",
+        "keywords": ["الجوهر المكنون"],
+    },
+    {
+        "book_id": "balagha:durus_al_balagha",
+        "title": "دروس البلاغة",
+        "author": "حفني ناصف ومحمد دياب ومصطفى طموم وسلطان محمد",
+        "science": "البلاغة العربية",
+        "keywords": ["دروس البلاغة"],
+    },
+    {
+        "book_id": "balagha:minhaj_wadih_balagha",
+        "title": "المنهاج الواضح للبلاغة",
+        "author": "حامد عوني",
+        "science": "البلاغة العربية",
+        "keywords": ["المنهاج الواضح"],
+    },
+    {
+        "book_id": "balagha:risala_samarqandiyya",
+        "title": "الرسالة السمرقندية في الاستعارات (ونظم الاستعارة)",
+        "author": "أبو القاسم بن أبي بكر السمرقندي",
+        "science": "البلاغة العربية",
+        "keywords": ["الرسالة السمرقندية", "السمرقندية في الاستعارات", "نظم الاستعارة"],
+    },
+    {
+        "book_id": "adab:maqamat_hariri",
+        "title": "مقامات الحريري",
+        "author": "أبو محمد القاسم بن علي الحريري",
+        "science": "الأدب واللغة",
+        "keywords": ["مقامات الحريري", "شرح المقامات"],
+    },
+    {
+        "book_id": "adab:lamiyyat_al_arab",
+        "title": "لامية العرب",
+        "author": "الشنفرى",
+        "science": "الأدب والشعر العربي",
+        "keywords": ["لامية العرب"],
+    },
+    {
+        "book_id": "adab:lamiyyat_ibn_al_wardi",
+        "title": "لامية ابن الوردي (نصيحة الإخوان ومرشدة الخلان)",
+        "author": "عمر بن مظفر بن الوردي",
+        "science": "الأدب والآداب",
+        "keywords": ["لامية ابن الوردي"],
+    },
+    {
+        "book_id": "adab:unwan_al_hikam",
+        "title": "قصيدة عنوان الحكم (نونـية البستي)",
+        "author": "أبو الفتح البستي",
+        "science": "الأدب والحكمة",
+        "keywords": ["عنوان الحكم"],
+    },
+    {
+        "book_id": "adab:manzumat_al_ilbiri",
+        "title": "تائية الألبيري (منظومة الألبيري في الأدب وطلب العلم)",
+        "author": "أبو إسحاق الإلبيري",
+        "science": "الأدب وآداب الطلب",
+        "keywords": ["منظومة الألبيري", "تائية الألبيري"],
+    },
+    {
+        "book_id": "adab:muallaqat_imru_al_qais",
+        "title": "معلقة امرئ القيس",
+        "author": "امرؤ القيس",
+        "science": "الأدب والشعر العربي",
+        "keywords": ["معلقة امرئ القيس"],
+    },
+    # --- المنطق وآداب البحث والفكر المعاصر ---
     {
         "book_id": "mantiq:sullam_munawwaraq",
         "title": "السلم المنورق في علم المنطق",
@@ -648,21 +1476,329 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "keywords": ["السلم المنورق"],
     },
     {
+        "book_id": "mantiq:isaghuji",
+        "title": "إيساغوجي في المنطق (ومغني الطلاب وشرح الحسام الكاتي)",
+        "author": "أثير الدين الأبهري",
+        "science": "المنطق وآداب البحث",
+        "keywords": ["إيساغوجي", "ايساغوجي", "مغني الطلاب", "شرح الحسام الكاتي"],
+    },
+    {
+        "book_id": "mantiq:maqulat_sujai",
+        "title": "نظم المقولات العشر وشرحها للسجاعي",
+        "author": "أحمد بن أحمد السجاعي",
+        "science": "المنطق والمقولات",
+        "keywords": ["مقولات السجاعي", "شرح المقولات"],
+    },
+    {
+        "book_id": "mantiq:adab_al_bahth_wal_munazara",
+        "title": "آداب البحث والمناظرة (وفتح الوهاب بشرح الآداب)",
+        "author": "طاشكبري زاده / زكريا الأنصاري",
+        "science": "المنطق وآداب البحث",
+        "keywords": ["آداب البحث والمناظرة", "آداب البحث و المناظرة", "فتح الوهاب بشرح الآداب"],
+    },
+    {
         "book_id": "fikr:fi_sittat_ayyam",
         "title": "في ستة أيام",
         "author": "علي محمود العمري",
         "science": "الفكر الإسلامي والعقيدة",
         "keywords": ["في ستة أيام", "في سته ايام"],
     },
+    {
+        "book_id": "fikr:tasis_way_al_muslim_ayman",
+        "title": "دورة تأسيس وعي المسلم المعاصر",
+        "author": "أيمن عبد الرحيم",
+        "science": "الفكر الإسلامي والوعي المعاصر",
+        "keywords": ["تأسيس وعي المسلم المعاصر", "دورة الوعي المعاصر"],
+    },
+    {
+        "book_id": "fikr:al_bayt_al_muslim_ayman",
+        "title": "دورة البيت المسلم",
+        "author": "أيمن عبد الرحيم",
+        "science": "التربية والأسرة",
+        "keywords": ["دورة البيت المسلم", "البيت المسلم"],
+    },
+    {
+        "book_id": "fikr:al_way_al_lughawi_ayman",
+        "title": "دورة الوعي اللغوي ومدخل إلى علم اللغة",
+        "author": "أيمن عبد الرحيم",
+        "science": "اللغة العربية والوعي اللغوي",
+        "keywords": ["دورة الوعي اللغوي", "مدخل إلي علم اللغة", "مدخل إلى علم اللغة"],
+    },
+    {
+        "book_id": "fikr:mukawinat_al_aql_al_muslim_gomaa",
+        "title": "مكونات العقل المسلم",
+        "author": "علي جمعة",
+        "science": "الفكر الإسلامي وأصول المعرفة",
+        "keywords": ["مكونات العقل المسلم"],
+    },
+    {
+        "book_id": "fikr:fiqh_al_nafs_hashemi",
+        "title": "مجالس فقه النفس",
+        "author": "عبد الرحمن ذاكر الهاشمي",
+        "science": "فقه النفس والتربية",
+        "keywords": ["مجالس فقه النفس", "فقه النفس في القرآن", "كراسة قراءة النفس"],
+    },
+    {
+        "book_id": "fikr:minhaj_mirath_al_nubuwwa_sayed",
+        "title": "المنهاج من ميراث النبوة",
+        "author": "أحمد السيد",
+        "science": "الحديث والتزكية والبناء المنهجي",
+        "keywords": ["المنهاج من ميراث النبوة", "خلاصات أبواب المنهاج"],
+    },
 ]
+
+QURAN_SURAHS: list[tuple[int, str]] = [
+    (1, "الفاتحة"), (2, "البقرة"), (3, "آل عمران"), (4, "النساء"), (5, "المائدة"),
+    (6, "الأنعام"), (7, "الأعراف"), (8, "الأنفال"), (9, "التوبة"), (10, "يونس"),
+    (11, "هود"), (12, "يوسف"), (13, "الرعد"), (14, "إبراهيم"), (15, "الحجر"),
+    (16, "النحل"), (17, "الإسراء"), (18, "الكهف"), (19, "مريم"), (20, "طه"),
+    (21, "الأنبياء"), (22, "الحج"), (23, "المؤمنون"), (24, "النور"), (25, "الفرقان"),
+    (26, "الشعراء"), (27, "النمل"), (28, "القصص"), (29, "العنكبوت"), (30, "الروم"),
+    (31, "لقمان"), (32, "السجدة"), (33, "الأحزاب"), (34, "سبأ"), (35, "فاطر"),
+    (36, "يس"), (37, "الصافات"), (38, "ص"), (39, "الزمر"), (40, "غافر"),
+    (41, "فصلت"), (42, "الشورى"), (43, "الزخرف"), (44, "الدخان"), (45, "الجاثية"),
+    (46, "الأحقاف"), (47, "محمد"), (48, "الفتح"), (49, "الحجرات"), (50, "ق"),
+    (51, "الذاريات"), (52, "الطور"), (53, "النجم"), (54, "القمر"), (55, "الرحمن"),
+    (56, "الواقعة"), (57, "الحديد"), (58, "المجادلة"), (59, "الحشر"), (60, "الممتحنة"),
+    (61, "الصف"), (62, "الجمعة"), (63, "المنافقون"), (64, "التغابن"), (65, "الطلاق"),
+    (66, "التحريم"), (67, "الملك"), (68, "القلم"), (69, "الحاقة"), (70, "المعارج"),
+    (71, "نوح"), (72, "الجن"), (73, "المزمل"), (74, "المدثر"), (75, "القيامة"),
+    (76, "الإنسان"), (77, "المرسلات"), (78, "النبأ"), (79, "النازعات"), (80, "عبس"),
+    (81, "التكوير"), (82, "الانفطار"), (83, "المطففين"), (84, "الانشقاق"), (85, "البروج"),
+    (86, "الطارق"), (87, "الأعلى"), (88, "الغاشية"), (89, "الفجر"), (90, "البلد"),
+    (91, "الشمس"), (92, "الليل"), (93, "الضحى"), (94, "الشرح"), (95, "التين"),
+    (96, "العلق"), (97, "القدر"), (98, "البينة"), (99, "الزلزلة"), (100, "العاديات"),
+    (101, "القارعة"), (102, "التكاثر"), (103, "العصر"), (104, "الهمزة"), (105, "الفيل"),
+    (106, "قريش"), (107, "الماعون"), (108, "الكوثر"), (109, "الكافرون"), (110, "النصر"),
+    (111, "المسد"), (112, "الإخلاص"), (113, "الفلق"), (114, "الناس"),
+]
+
+PERSON_AUTHOR_ALIASES: dict[str, list[str]] = {
+    "shaarawy": ["الشعراوي", "محمد متولي الشعراوي"],
+    "bouti": ["محمد سعيد البوطي", "محمد سعيد رمضان البوطي"],
+    "samarrai": ["فاضل صالح السامرائي", "فاضل السامرائي"],
+    "dedew": ["محمد الحسن الددو الشنقيطي", "محمد الحسن الددو"],
+    "itr": ["نور الدين عتر"],
+    "abughuddah": ["عبد الفتاح أبو غدة"],
+    "zuhayli": ["وهبة الزحيلي"],
+    "ibnashur": ["ابن عاشور", "محمد الطاهر بن عاشور"],
+    "suyuti": ["الجلال السيوطي", "جلال الدين السيوطي"],
+    "shatibi": ["الشاطبي الأصولي النحوي", "أبو إسحاق الشاطبي"],
+    "ghazali": ["أبو حامد الغزالي"],
+    "nawawi": ["النووي", "محيي الدين يحيى بن شرف النووي"],
+    "omari": ["علي محمود العمري"],
+    "bardoni": ["محمد البردوني الحسيمي", "محمد البردوني"],
+    "sariri": ["مولود السريري"],
+    "sayed": ["أحمد السيد"],
+    "hashemi": ["عبد الرحمن ذاكر الهاشمي", "ذاكر الهاشمي"],
+    "ayman": ["أيمن عبد الرحيم"],
+}
+
+_SHAMELA_BOOKS_CACHE: list[dict[str, Any]] | None = None
+
+
+def load_shamela_books_index(shamela_db_dir: str | Path | None = None) -> list[dict[str, Any]]:
+    """
+    Load the 8,589-book Shamela4 index from `shamela4_books_index.json.gz` (or scan `shamela_db_dir`
+    if an explicit directory is provided).
+    """
+    global _SHAMELA_BOOKS_CACHE
+    if shamela_db_dir is None and _SHAMELA_BOOKS_CACHE is not None:
+        return _SHAMELA_BOOKS_CACHE
+
+    gz_path = Path(__file__).resolve().parent / "shamela4_books_index.json.gz"
+    if shamela_db_dir is None and gz_path.exists():
+        try:
+            with gzip.open(gz_path, "rt", encoding="utf-8") as f:
+                _SHAMELA_BOOKS_CACHE = json.load(f)
+            return _SHAMELA_BOOKS_CACHE
+        except Exception:
+            pass
+
+    db_root = Path(shamela_db_dir) if shamela_db_dir else Path("/Users/macm1pro/REPOS/swe/Shamela4_Full_DB")
+    if db_root.exists():
+        entries: list[dict[str, Any]] = []
+        for mf in sorted(db_root.glob("*/*/book_metadata.json")):
+            try:
+                d = json.loads(mf.read_text(encoding="utf-8"))
+                bid = d.get("shamela_id") or d.get("book_id")
+                title = (d.get("title_ar") or "").strip()
+                if bid and title:
+                    entries.append({
+                        "id": int(bid),
+                        "t": title,
+                        "a": (d.get("main_author_name_ar") or "").strip(),
+                        "c": (d.get("category_name_ar") or "").strip(),
+                        "d": d.get("main_author_death_hijri"),
+                    })
+            except Exception:
+                continue
+        if shamela_db_dir is None:
+            _SHAMELA_BOOKS_CACHE = entries
+        return entries
+
+    return []
 
 
 def _word_boundary_match(needle_norm: str, haystack_norm: str) -> bool:
-    """Check if normalized phrase `needle_norm` appears on Arabic word boundaries inside `haystack_norm`."""
+    """
+    Check if normalized phrase `needle_norm` appears on Arabic word boundaries inside `haystack_norm`,
+    allowing standard attached Arabic proclitics (`و`, `ف`, `ب`, `ك`, `ل`, `لل`) for multi-letter phrases
+    (e.g., `لقطر الندى`, `للقطر`, `بشرح`, `للألفية`).
+    """
     if not needle_norm or not haystack_norm:
         return False
-    pattern = rf"(?:^|[\s/:|\-–—(\[\{{«\"'،.]){re.escape(needle_norm)}(?:$|[\s/:|\-–—)\]\}}»\"'،.])"
+    b_left = r"(?:^|[\s/:|\-–—_(\[\{«\"'،؛,.؟!])"
+    b_right = r"(?:$|[\s/:|\-–—_)\]\}\»\"'،؛,.؟!])"
+    if len(needle_norm) >= 5:
+        variants = [re.escape(needle_norm)]
+        if needle_norm.startswith("ال") and len(needle_norm) >= 6:
+            # Handle Arabic orthography where لـ + الـ becomes للـ (e.g. القطر -> للقطر)
+            variants.append("لل" + re.escape(needle_norm[2:]))
+        alt_pat = "|".join(variants)
+        pattern = rf"{b_left}(?:و|ف|ب|ك|ل|وب|ول|فل|فب)?(?:{alt_pat}){b_right}"
+    else:
+        pattern = rf"{b_left}{re.escape(needle_norm)}{b_right}"
     return bool(re.search(pattern, haystack_norm))
+
+
+def _is_author_match(sheikh_name: str, author_name: str, person_id: str | None = None) -> bool:
+    """Check if `author_name` matches the scholar `sheikh_name` / `person_id`."""
+    norm_person = normalize_arabic(sheikh_name)
+    norm_author = normalize_arabic(author_name)
+    if not norm_person or not norm_author:
+        return False
+    if norm_person == norm_author:
+        return True
+    if len(norm_author) >= 7 and (
+        _word_boundary_match(norm_author, norm_person) or _word_boundary_match(norm_person, norm_author)
+    ):
+        return True
+
+    pid = person_id or normalize_person_id(sheikh_name)
+    for alias in PERSON_AUTHOR_ALIASES.get(pid, []):
+        nalias = normalize_arabic(alias)
+        if nalias and (nalias == norm_author or (len(nalias) >= 7 and _word_boundary_match(nalias, norm_author))):
+            return True
+    return False
+
+
+def find_shamela_authored_books(
+    sheikh_name: str,
+    person_id: str | None = None,
+    shamela_db_dir: str | Path | None = None,
+    max_books: int = 25,
+) -> list[dict[str, Any]]:
+    """Discover books authored by `sheikh_name` from the Shamela4 database index."""
+    shamela_books = load_shamela_books_index(shamela_db_dir)
+    if not shamela_books:
+        return []
+
+    pid = person_id or normalize_person_id(sheikh_name)
+    matched_books: list[dict[str, Any]] = []
+    seen_base_titles: set[str] = set()
+
+    for b in shamela_books:
+        author = b.get("a") or ""
+        if not _is_author_match(sheikh_name, author, person_id=pid):
+            continue
+        raw_title = (b.get("t") or "").strip()
+        if not raw_title:
+            continue
+        # Clean edition suffix like ' - كتاب' or ' - محاضرات' or ' - ت فلان' for deduplication
+        base_title = re.sub(r"\s+-\s+(?:كتاب|محاضرات|محاضرة|ت\s+.*)$", "", raw_title).strip()
+        norm_base = normalize_arabic(base_title)
+        if norm_base in seen_base_titles:
+            continue
+        seen_base_titles.add(norm_base)
+        matched_books.append({
+            "book_id": f"shamela:{b['id']}",
+            "title": base_title,
+            "author": author,
+            "science": b.get("c") or "علوم شرعية",
+            "source": "shamela4_db",
+            "is_authored_by_person": True,
+            "is_explained_by_person": False,
+            "matched_playlists": [],
+        })
+        if len(matched_books) >= max_books:
+            break
+
+    return matched_books
+
+
+def match_quran_tafsir_series(
+    series_title: str,
+    video_titles: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Match Quran Surah Tafsir / Tadabbur / Bayan playlists (e.g. `تفسير سورة البقرة`,
+    `سورة البقرة` with videos `تفسير سورة البقرة`, `د. فاضل السامرائي - سورة البقرة`)
+    with strict word-boundary checks so `الحج` never confuses with `الحجر` and single-letter
+    surahs (`ص`, `ق`) require explicit `سورة ص` / `سورة ق`.
+    """
+    norm_series = normalize_arabic(series_title)
+    sample_videos = " | ".join(normalize_arabic(t) for t in (video_titles or [])[:6])
+    combined = f"{norm_series} | {sample_videos}"
+
+    # Require explicit tafsir/tadabbur/bayan/surah indicator in either series title or video titles
+    has_tafsir_context = any(
+        w in combined
+        for w in ("تفسير", "تدبر", "لمسات بيانيه", "خواطر", "سوره ")
+    )
+    if not has_tafsir_context:
+        return None
+
+    for s_num, s_name in QURAN_SURAHS:
+        ns_name = normalize_arabic(s_name)
+        explicit_phrase = f"سوره {ns_name}"
+        if _word_boundary_match(explicit_phrase, norm_series):
+            return {
+                "book_id": f"tafsir:surah_{s_num:03d}",
+                "title": f"تفسير سورة {s_name}",
+                "author": "تفسير القرآن الكريم",
+                "science": "التفسير وعلوم القرآن",
+                "confidence": 0.96,
+            }
+        if _word_boundary_match(explicit_phrase, sample_videos) and (
+            _word_boundary_match(explicit_phrase, norm_series)
+            or (len(ns_name) >= 3 and _word_boundary_match(ns_name, norm_series))
+        ):
+            return {
+                "book_id": f"tafsir:surah_{s_num:03d}",
+                "title": f"تفسير سورة {s_name}",
+                "author": "تفسير القرآن الكريم",
+                "science": "التفسير وعلوم القرآن",
+                "confidence": 0.92,
+            }
+
+    for juz_id, juz_title, juz_kw in [
+        ("tafsir:juz_amma", "تفسير جزء عم", "جزء عم"),
+        ("tafsir:juz_tabarak", "تفسير جزء تبارك", "جزء تبارك"),
+        ("tafsir:juz_qad_samia", "تفسير جزء قد سمع", "جزء قد سمع"),
+    ]:
+        if _word_boundary_match(normalize_arabic(juz_kw), norm_series):
+            return {
+                "book_id": juz_id,
+                "title": juz_title,
+                "author": "تفسير القرآن الكريم",
+                "science": "التفسير وعلوم القرآن",
+                "confidence": 0.95,
+            }
+
+    if any(
+        _word_boundary_match(normalize_arabic(p), norm_series)
+        for p in ("تفسير القرآن الكريم", "تفسير قصار السور", "تفسير سريع للقرآن الكريم", "مجالس التفسير")
+    ):
+        return {
+            "book_id": "tafsir:quran_karim",
+            "title": "تفسير القرآن الكريم",
+            "author": "تفسير القرآن الكريم",
+            "science": "التفسير وعلوم القرآن",
+            "confidence": 0.94,
+        }
+
+    return None
 
 
 def match_title_to_book(
@@ -671,8 +1807,8 @@ def match_title_to_book(
     extra_books: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """
-    Match a playlist/series title (and sample video titles) against classical matns and books
-    using Arabic word-boundary checks and strict science separation.
+    Match a playlist/series title (and sample video titles) against classical matns, books,
+    and Quran Surah Tafsir series using Arabic word-boundary checks and strict science separation.
     """
     norm_series = normalize_arabic(series_title)
     sample_videos = " | ".join(normalize_arabic(t) for t in (video_titles or [])[:8])
@@ -727,7 +1863,10 @@ def match_title_to_book(
                         "confidence": round(score, 2),
                     }
 
-    return best_match
+    if best_match is not None:
+        return best_match
+
+    return match_quran_tafsir_series(series_title, video_titles)
 
 
 def discover_person_books(
@@ -735,28 +1874,31 @@ def discover_person_books(
     playlists: list[dict[str, Any]],
     archive_items: list[dict[str, Any]],
     extra_books: list[dict[str, Any]] | None = None,
+    person_id: str | None = None,
+    shamela_db_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the unified `books` list for `<person_id>_raw.json`, combining:
-    1. Books authored by `sheikh_name` (from knowledge base or `--books-json`).
+    1. Books authored by `sheikh_name` (from `MATN_KNOWLEDGE_BASE`, Shamela4 DB index, or `--books-json`).
     2. Classical matns / books explained by `sheikh_name` across playlists and Archive.org items.
     """
-    norm_person = normalize_arabic(sheikh_name)
+    pid_slug = person_id or normalize_person_id(sheikh_name)
     books_map: dict[str, dict[str, Any]] = {}
 
-    # 1. Check catalog for books authored directly by the person
-    all_candidates = list(MATN_KNOWLEDGE_BASE) + list(extra_books or [])
+    # 1. Check catalog and Shamela4 index for books authored directly by the person
+    shamela_authored = find_shamela_authored_books(
+        sheikh_name=sheikh_name, person_id=pid_slug, shamela_db_dir=shamela_db_dir
+    )
+    all_candidates = list(MATN_KNOWLEDGE_BASE) + list(extra_books or []) + shamela_authored
     for b in all_candidates:
         b_id = str(b.get("book_id") or b.get("id") or "")
         b_title = b.get("title") or ""
         b_author = b.get("author") or ""
         if not b_id or not b_title:
             continue
-        norm_author = normalize_arabic(b_author)
         is_authored = bool(
-            norm_person
-            and norm_author
-            and (norm_person in norm_author or norm_author in norm_person)
+            b.get("is_authored_by_person")
+            or _is_author_match(sheikh_name, b_author, person_id=pid_slug)
         )
         if is_authored:
             books_map[b_id] = {
@@ -770,8 +1912,13 @@ def discover_person_books(
                 "matched_playlists": [],
             }
 
-    # 2. Match playlists / series to books
+    # 2. Match playlists / series to books (excluding unclassified catch-all buckets)
     for pl in playlists:
+        pid = pl.get("playlist_id") or pl.get("id") or ""
+        is_uncl = pl.get("yt_playlist_id") is None or "__unclassified" in str(pid)
+        if is_uncl:
+            pl["matched_book"] = None
+            continue
         v_titles = [v.get("title", "") for v in pl.get("videos", [])]
         matched = pl.get("matched_book") or match_title_to_book(
             pl.get("title", ""), v_titles, extra_books=extra_books
@@ -780,12 +1927,7 @@ def discover_person_books(
             pl["matched_book"] = matched
             b_id = matched["book_id"]
             b_author = matched.get("author") or ""
-            norm_author = normalize_arabic(b_author)
-            is_authored = bool(
-                norm_person
-                and norm_author
-                and (norm_person in norm_author or norm_author in norm_person)
-            )
+            is_authored = _is_author_match(sheikh_name, b_author, person_id=pid_slug)
             if b_id not in books_map:
                 books_map[b_id] = {
                     "book_id": b_id,
@@ -812,14 +1954,16 @@ def discover_person_books(
         if matched:
             item["matched_book"] = matched
             b_id = matched["book_id"]
+            b_author = matched.get("author") or ""
+            is_authored = _is_author_match(sheikh_name, b_author, person_id=pid_slug)
             if b_id not in books_map:
                 books_map[b_id] = {
                     "book_id": b_id,
                     "title": matched["title"],
-                    "author": matched.get("author") or "",
+                    "author": b_author,
                     "science": matched.get("science") or "علوم شرعية",
                     "source": "archive_matn_matcher",
-                    "is_authored_by_person": False,
+                    "is_authored_by_person": is_authored,
                     "is_explained_by_person": True,
                     "matched_playlists": [],
                 }
@@ -1091,19 +2235,97 @@ def parse_yt_dlp_playlist_dump(
 # 6. Deduplication, Unification & `<person_id>_raw.json` Builder
 # ---------------------------------------------------------------------------
 
+SHEIKH_PHOTOS: dict[str, str] = {
+    "kamali": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Said_Al-Kamali.jpg",
+    "khudayr": "https://upload.wikimedia.org/wikipedia/commons/e/e0/%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%83%D8%B1%D9%8A%D9%85_%D8%A7%D9%84%D8%AE%D8%B6%D9%8A%D8%B1.jpg",
+    "fawzan": "https://upload.wikimedia.org/wikipedia/commons/8/8c/Saleh_Al-Fawzan.png",
+    "shanqiti": "https://upload.wikimedia.org/wikipedia/commons/a/a2/%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%AD%D8%B3%D9%86_%D8%A7%D9%84%D8%AF%D8%AF%D9%88.jpg",
+    "dedew": "https://upload.wikimedia.org/wikipedia/commons/a/a2/%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%AD%D8%B3%D9%86_%D8%A7%D9%84%D8%AF%D8%AF%D9%88.jpg",
+    "bouti": "https://upload.wikimedia.org/wikipedia/commons/6/62/Bouti.jpg",
+    "shaarawy": "https://upload.wikimedia.org/wikipedia/commons/c/c8/El_Shaarawy.jpg",
+}
+
+SHARED_CHANNEL_PERSON_MARKERS: list[tuple[str, list[str]]] = [
+    ("bardoni", ["البردوني", "إبراهيم البردوني", "ابراهيم البردوني"]),
+    ("sariri", ["السريري", "أحمد السريري", "احمد السريري"]),
+    ("kamali", ["الكملي", "سعيد الكملي"]),
+    ("khudayr", ["الخضير", "عبد الكريم الخضير", "عبدالكريم الخضير"]),
+    ("fawzan", ["الفوزان", "صالح الفوزان"]),
+    ("shanqiti", ["المختار الشنقيطي", "محمد المختار الشنقيطي"]),
+    ("dedew", ["الددو", "محمد الحسن الددو"]),
+    ("bouti", ["البوطي", "رمضان البوطي"]),
+    ("shaarawy", ["الشعراوي", "متولي الشعراوي"]),
+    ("hussary", ["الحصري", "محمود خليل الحصري"]),
+    ("samarrai", ["السامرائي", "فاضل السامرائي"]),
+    ("roushdy", ["علاء حامد"]),
+    ("khalil", ["خليل محمود"]),
+    ("laban", ["أحمد لبن", "احمد لبن"]),
+    ("said", ["محمد سيد حاج"]),
+    ("ayman", ["أيمن عبد الرحيم", "ايمن عبد الرحيم", "أيمن عبدالرحيم"]),
+    ("sayed", ["أحمد السيد", "احمد السيد"]),
+]
+
+
+def is_shared_channel_fixture(fixture_data: dict[str, Any]) -> bool:
+    """Return True if the fixture represents a multi-scholar shared channel (e.g. tankert-shared)."""
+    sh_id = str(fixture_data.get("sheikh_id") or "").strip().lower()
+    ch_key = str(fixture_data.get("channel_key") or "").strip().lower()
+    sh_name = str(fixture_data.get("sheikh_name") or "")
+    if sh_id == "shared" or "shared" in ch_key:
+        return True
+    if "مشترك" in sh_name or ("السريري" in sh_name and "البردوني" in sh_name):
+        return True
+    return False
+
+
+def attribute_shared_channel_owner(
+    title: str,
+    video_titles: list[str] | None = None,
+    channel_key: str = "",
+    default_owner: str | None = "sariri",
+) -> str | None:
+    """
+    Determine which `person_id` owns a playlist or video inside a shared channel
+    (such as `tankert-shared` / مدرسة تنكرت العتيقة shared between `sariri` and `bardoni`).
+    """
+    combined_title = normalize_arabic(title or "")
+    for pid, markers in SHARED_CHANNEL_PERSON_MARKERS:
+        for m in markers:
+            if normalize_arabic(m) in combined_title:
+                return pid
+
+    if video_titles:
+        counts: dict[str, int] = {}
+        for vt in video_titles:
+            vt_norm = normalize_arabic(vt or "")
+            for pid, markers in SHARED_CHANNEL_PERSON_MARKERS:
+                if any(normalize_arabic(m) in vt_norm for m in markers):
+                    counts[pid] = counts.get(pid, 0) + 1
+        if counts:
+            return max(counts.items(), key=lambda kv: kv[1])[0]
+
+    if "tankert" in channel_key.lower() or default_owner:
+        return default_owner
+    return None
+
+
 def ingest_offline_fixture(
     fixture_data: dict[str, Any],
     person_id: str,
     sheikh_name: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Ingest an existing `<sheikh>_raw.json`, `full_channels/<channel>.json`, or composite test fixture
-    into normalized `(channels, raw_playlists, archive_items, pdf_links)`.
+    Ingest an existing `<sheikh>_raw.json`, `full_channels/<channel>.json`, `raw_playlists/<id>.json`,
+    or composite test fixture into normalized `(channels, raw_playlists, archive_items, pdf_links)`.
+    Automatically filters shared channels (e.g. `tankert-shared.json`) by scholar attribution.
     """
     channels: list[dict[str, Any]] = []
     playlists: list[dict[str, Any]] = []
     archive_items: list[dict[str, Any]] = []
     pdf_links: list[dict[str, Any]] = []
+
+    shared_mode = is_shared_channel_fixture(fixture_data)
+    ch_key_raw = str(fixture_data.get("channel_key") or "")
 
     # Build lookup of video durations/dates from `unique_videos` or `videos` if present
     v_meta_lookup: dict[str, dict[str, Any]] = {}
@@ -1147,12 +2369,24 @@ def ingest_offline_fixture(
         ptitle = (sp.get("title") or pid).strip()
         stype = sp.get("source_type") or ("youtube_upload" if is_uncl else "youtube_playlist")
 
+        raw_vids = sp.get("videos") or []
+        if shared_mode and not is_uncl:
+            v_titles = [v.get("title") or "" for v in raw_vids if isinstance(v, dict)]
+            owner = attribute_shared_channel_owner(ptitle, v_titles, channel_key=ch_key_raw)
+            if owner and owner != person_id:
+                continue
+
         vids_out: list[dict[str, Any]] = []
-        for v_idx, v in enumerate(sp.get("videos") or [], 1):
+        for v_idx, v in enumerate(raw_vids, 1):
             vid = v.get("yt_id") or v.get("vid")
             if not vid:
                 continue
             ref = v_meta_lookup.get(vid, {})
+            v_title_str = (v.get("title") or ref.get("title") or f"الدرس {v_idx}").strip()
+            if shared_mode and is_uncl:
+                v_owner = attribute_shared_channel_owner(v_title_str, None, channel_key=ch_key_raw)
+                if v_owner and v_owner != person_id:
+                    continue
             dur_raw = (
                 v.get("dur_s")
                 if v.get("dur_s") is not None
@@ -1161,13 +2395,13 @@ def ingest_offline_fixture(
             dur_s = int(round(float(dur_raw))) if isinstance(dur_raw, (int, float)) else 0
             up_date = v.get("upload_date") or ref.get("upload_date")
             v_stype = v.get("source_type") or ref.get("source_type") or (
-                "youtube_stream" if ("بث مباشر" in (v.get("title") or "") or "#مباشر" in (v.get("title") or "")) else stype
+                "youtube_stream" if ("بث مباشر" in v_title_str or "#مباشر" in v_title_str) else stype
             )
             vids_out.append({
-                "pos": v.get("pos") or v.get("order_no") or v_idx,
+                "pos": v.get("pos") or v.get("order_no") or len(vids_out) + 1,
                 "vid": vid,
                 "yt_id": vid,
-                "title": (v.get("title") or ref.get("title") or f"الدرس {v_idx}").strip(),
+                "title": v_title_str,
                 "dur_s": dur_s,
                 "duration": dur_s,
                 "upload_date": up_date,
@@ -1175,16 +2409,17 @@ def ingest_offline_fixture(
                 "yt_url": v.get("yt_url") or v.get("url") or ref.get("yt_url") or f"https://www.youtube.com/watch?v={vid}",
             })
 
+        declared_expected = sp.get("expected_count") or sp.get("video_count") or len(vids_out)
         playlists.append({
             "id": pid,
             "playlist_id": pid,
-            "order_no": sp.get("order_no") or idx,
+            "order_no": sp.get("order_no") or len(playlists) + 1,
             "title": ptitle,
             "yt_playlist_id": yt_pl_id,
             "url": sp.get("url") or (f"https://www.youtube.com/playlist?list={yt_pl_id}" if yt_pl_id else ""),
             "source_type": stype,
             "state": sp.get("state") or "completed",
-            "expected_count": sp.get("expected_count") or len(vids_out),
+            "expected_count": int(declared_expected),
             "video_count": len(vids_out),
             "note": sp.get("note") or ("تصنيف: غير مصنف" if is_uncl else "تصنيف: شرح / سلسلة علمية"),
             "matched_book": sp.get("matched_book"),
@@ -1200,40 +2435,51 @@ def ingest_offline_fixture(
             vid = v.get("yt_id") or v.get("vid")
             if not vid:
                 continue
+            v_title_str = (v.get("title") or f"الدرس {v_idx}").strip()
+            if shared_mode:
+                v_owner = attribute_shared_channel_owner(v_title_str, None, channel_key=ch_key_raw)
+                if v_owner and v_owner != person_id:
+                    continue
             dur_raw = v.get("duration") if v.get("duration") is not None else v.get("dur_s")
             dur_s = int(round(float(dur_raw))) if isinstance(dur_raw, (int, float)) else 0
             vids_out.append({
-                "pos": v.get("order_no") or v_idx,
+                "pos": len(vids_out) + 1,
                 "vid": vid,
                 "yt_id": vid,
-                "title": (v.get("title") or f"الدرس {v_idx}").strip(),
+                "title": v_title_str,
                 "dur_s": dur_s,
                 "duration": dur_s,
                 "upload_date": v.get("upload_date"),
                 "source_type": "youtube_upload",
                 "yt_url": v.get("url") or f"https://www.youtube.com/watch?v={vid}",
             })
-        playlists.append({
-            "id": pid,
-            "playlist_id": pid,
-            "order_no": len(playlists) + 1,
-            "title": uncl_pl.get("title") or "غير مصنف",
-            "yt_playlist_id": None,
-            "url": "",
-            "source_type": "youtube_upload",
-            "state": "completed",
-            "expected_count": len(vids_out),
-            "video_count": len(vids_out),
-            "note": "تصنيف: غير مصنف",
-            "matched_book": None,
-            "videos": vids_out,
-        })
+        if vids_out:
+            playlists.append({
+                "id": pid,
+                "playlist_id": pid,
+                "order_no": len(playlists) + 1,
+                "title": uncl_pl.get("title") or "غير مصنف",
+                "yt_playlist_id": None,
+                "url": "",
+                "source_type": "youtube_upload",
+                "state": "completed",
+                "expected_count": len(vids_out),
+                "video_count": len(vids_out),
+                "note": "تصنيف: غير مصنف",
+                "matched_book": None,
+                "videos": vids_out,
+            })
 
     # Also check if any videos in `unique_videos` were only in `unclassified` and not in `raw_series`
     seen_in_pls = {v["vid"] for pl in playlists for v in pl.get("videos", [])}
     orphan_uncl: list[dict[str, Any]] = []
     for vid, uv in v_meta_lookup.items():
         if vid not in seen_in_pls:
+            v_title_str = (uv.get("title") or vid).strip()
+            if shared_mode:
+                v_owner = attribute_shared_channel_owner(v_title_str, None, channel_key=ch_key_raw)
+                if v_owner and v_owner != person_id:
+                    continue
             apps = uv.get("appearances") or []
             pos = apps[0].get("pos", len(orphan_uncl) + 1) if apps else len(orphan_uncl) + 1
             dur_raw = uv.get("dur_s") if uv.get("dur_s") is not None else uv.get("duration")
@@ -1242,7 +2488,7 @@ def ingest_offline_fixture(
                 "pos": pos,
                 "vid": vid,
                 "yt_id": vid,
-                "title": (uv.get("title") or vid).strip(),
+                "title": v_title_str,
                 "dur_s": dur_s,
                 "duration": dur_s,
                 "upload_date": uv.get("upload_date"),
@@ -1294,6 +2540,7 @@ def build_canonical_raw_json(
     pdf_extracted_links: list[dict[str, Any]],
     extra_books: list[dict[str, Any]] | None = None,
     photo_url: str | None = None,
+    shamela_db_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """
     Deduplicate playlists and videos across all sources (YouTube + Archive.org + PDF links),
@@ -1343,6 +2590,8 @@ def build_canonical_raw_json(
         playlists=playlists,
         archive_items=archive_items,
         extra_books=extra_books,
+        person_id=person_id,
+        shamela_db_dir=shamela_db_dir,
     )
 
     # 3. Identify all videos that belong to official/classified playlists
@@ -1489,12 +2738,13 @@ def build_canonical_raw_json(
         "duplicates_removed": duplicates_removed,
     }
 
+    resolved_photo = photo_url if photo_url is not None else SHEIKH_PHOTOS.get(person_id)
     sheikh_obj = {
         "id": person_id,
         "order_no": 1,
         "name": sheikh_name,
         "short_name": extract_short_name(sheikh_name),
-        "photo": photo_url,
+        "photo": resolved_photo,
         "created_at": now_sql,
     }
 
@@ -1528,15 +2778,16 @@ def discover_person(
     archive_ids: list[str] | None = None,
     index_pdfs: list[str | Path] | None = None,
     books_json: str | Path | None = None,
-    offline_fixture: str | Path | dict[str, Any] | None = None,
+    offline_fixture: str | Path | dict[str, Any] | list[str | Path | dict[str, Any]] | None = None,
+    shamela_db_dir: str | Path | None = None,
     resolve_redirects: bool = False,
     fetch_live_unlisted_playlists: bool = False,
     output_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """
     Main orchestrator for `person-discovery-intake`.
-    Combines offline fixtures, PDF link extraction, YouTube URLs, Archive.org items, and books catalog
-    into a unified `<person_id>_raw.json` dictionary (and writes to `output_path` if specified).
+    Combines offline fixtures (single or multi-channel list), PDF link extraction, YouTube URLs,
+    Archive.org items, and books catalog (including Shamela4 index) into a unified `<person_id>_raw.json`.
     """
     pid = normalize_person_id(name, explicit_id=person_id)
     channels: list[dict[str, Any]] = []
@@ -1546,23 +2797,26 @@ def discover_person(
     extra_books: list[dict[str, Any]] = []
     photo_url: str | None = None
 
-    # 1. Load offline fixture if provided
+    # 1. Load offline fixture(s) if provided
     if offline_fixture is not None:
-        if isinstance(offline_fixture, dict):
-            fix_data = offline_fixture
-        else:
-            fix_path = Path(offline_fixture)
-            fix_data = json.loads(fix_path.read_text(encoding="utf-8"))
-        if not name and fix_data.get("sheikh", {}).get("name"):
-            name = fix_data["sheikh"]["name"]
-        photo_url = fix_data.get("sheikh", {}).get("photo")
-        f_ch, f_pl, f_arch, f_pdf = ingest_offline_fixture(fix_data, pid, name)
-        channels.extend(f_ch)
-        playlists.extend(f_pl)
-        archive_items.extend(f_arch)
-        pdf_links.extend(f_pdf)
-        if "books" in fix_data and isinstance(fix_data["books"], list):
-            extra_books.extend(fix_data["books"])
+        fixture_items = offline_fixture if isinstance(offline_fixture, list) else [offline_fixture]
+        for fix_item in fixture_items:
+            if isinstance(fix_item, dict):
+                fix_data = fix_item
+            else:
+                fix_path = Path(fix_item)
+                fix_data = json.loads(fix_path.read_text(encoding="utf-8"))
+            if not name and fix_data.get("sheikh", {}).get("name"):
+                name = fix_data["sheikh"]["name"]
+            if photo_url is None and fix_data.get("sheikh", {}).get("photo"):
+                photo_url = fix_data["sheikh"]["photo"]
+            f_ch, f_pl, f_arch, f_pdf = ingest_offline_fixture(fix_data, pid, name)
+            channels.extend(f_ch)
+            playlists.extend(f_pl)
+            archive_items.extend(f_arch)
+            pdf_links.extend(f_pdf)
+            if "books" in fix_data and isinstance(fix_data["books"], list):
+                extra_books.extend(fix_data["books"])
 
     # 2. Load external books catalog JSON if provided
     if books_json:
@@ -1580,7 +2834,6 @@ def discover_person(
         pdf_links.extend(extracted)
         for lnk in extracted:
             if lnk["link_type"] == "youtube_playlist" and lnk.get("playlist_id"):
-                pl_id = lnk["playlist_id"]
                 if fetch_live_unlisted_playlists:
                     dump = run_yt_dlp_flat_json(lnk["resolved_url"])
                     if dump:
@@ -1624,6 +2877,7 @@ def discover_person(
         pdf_extracted_links=pdf_links,
         extra_books=extra_books,
         photo_url=photo_url,
+        shamela_db_dir=shamela_db_dir,
     )
 
     if output_path:
@@ -1644,7 +2898,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--archive-ids", nargs="*", default=[], help="Archive.org item identifiers")
     ap.add_argument("--index-pdfs", nargs="*", default=[], help="Paths to index PDF files (e.g. Jamharat A'mal)")
     ap.add_argument("--books-json", default=None, help="Path to local books catalog JSON")
-    ap.add_argument("--offline-fixture", default=None, help="Path to offline fixture JSON or existing <id>_raw.json")
+    ap.add_argument("--shamela-db-dir", default=None, help="Path to Shamela4_Full_DB directory or index")
+    ap.add_argument("--offline-fixture", nargs="*", default=None, help="Path(s) to offline fixture JSON or existing <id>_raw.json")
     ap.add_argument("--resolve-redirects", action="store_true", help="Follow HTTP 301/302 redirects for shortlinks")
     ap.add_argument("--output", "-o", default=None, help="Output file path for <person_id>_raw.json")
     return ap
@@ -1662,6 +2917,7 @@ def main() -> None:
         index_pdfs=args.index_pdfs,
         books_json=args.books_json,
         offline_fixture=args.offline_fixture,
+        shamela_db_dir=args.shamela_db_dir,
         resolve_redirects=args.resolve_redirects,
         output_path=args.output,
     )
@@ -1676,3 +2932,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

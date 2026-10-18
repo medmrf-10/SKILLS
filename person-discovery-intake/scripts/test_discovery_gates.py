@@ -33,11 +33,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from discover_person import (  # noqa: E402
+    attribute_shared_channel_owner,
     discover_person,
     extract_links_from_pdf,
+    find_shamela_authored_books,
+    is_shared_channel_fixture,
+    match_quran_tafsir_series,
     match_title_to_book,
     normalize_person_id,
     parse_archive_metadata_payload,
+    unwrap_redirect_wrapper_url,
 )
 
 
@@ -421,11 +426,186 @@ def test_gate3_schema_and_sheikh_curation_compatibility(
     )
 
 
+def test_gate4_cycle2_real_data_regressions(errors: list[str]) -> None:
+    """
+    Layer 4 (Cycle 2 Real-Data Regressions):
+      1. Google Docs redirect-wrapped URLs (`%3D` encoded `list=`), dual `v=` + `list=` extraction,
+         font/PKI/license noise URL filtering, and scheme-insensitive `bit.ly` deduplication (plus
+         live verification on `jamhara.pdf` when present).
+      2. Arabic proclitic boundary matching (`لقطر الندى`, `للقطر`, `بجمع الجوامع`) & Quran Surah Tafsir matching.
+      3. Shamela4 8,589-book index author lookup (`الشعراوي`, `البوطي`, `الددو`, `الخضير`, `الفوزان`).
+      4. Shared-channel scholar attribution (`tankert-shared` -> `sariri` vs `bardoni`),
+         playlist-summary `expected_count` preservation, and unclassified bucket non-matching.
+    """
+    # 1. Google redirect unwrapping & PDF noise filtering
+    wrapped_url = (
+        "https://www.google.com/url?q=https://www.youtube.com/playlist?list%3DPL2-FkZlJhxqUG3274-L28g29_61_B9L3B"
+        "&sa=D&ust=1549982491243000&usg=AFQjCNG123"
+    )
+    unwrapped = unwrap_redirect_wrapper_url(wrapped_url)
+    if unwrapped != "https://www.youtube.com/playlist?list=PL2-FkZlJhxqUG3274-L28g29_61_B9L3B":
+        errors.append(f"[Gate 4] Failed to unwrap Google redirect URL: got {unwrapped!r}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = Path(tmpdir) / "jamhara_regression.pdf"
+        stream_bytes = (
+            f"<< /Type /Action /S /URI /URI ({wrapped_url}) >>\n"
+            "<< /Type /Action /S /URI /URI (https://www.youtube.com/watch?v=9x2F3hA5JIs&list=PL2-FkZlJhxqV402759482759) >>\n"
+            "<< /Type /Action /S /URI /URI (http://bit.ly/2I92M2s) >>\n"
+            "<< /Type /Action /S /URI /URI (http://bit.ly) >>\n"
+            "<< /Type /Action /S /URI /URI (http://www.microsoft.com/pki/certs/MicRooCerAut_2010-06-23.crt) >>\n"
+            "<< /Type /Action /S /URI /URI (http://en.wikipedia.org/wiki/MIT_License) >>\n"
+            "<< /Type /Action /S /URI /URI (http://www.linotype.com) >>\n"
+        ).encode("utf-8")
+        comp = zlib.compress(stream_bytes, level=9)
+        pdf_bytes = (
+            b"%PDF-1.7\n1 0 obj\n<< /Length "
+            + str(len(comp)).encode("ascii")
+            + b" /Filter /FlateDecode >>\nstream\r\n"
+            + comp
+            + b"\r\nendstream\nendobj\n%%EOF\n"
+        )
+        pdf_path.write_bytes(pdf_bytes)
+        reg_links = extract_links_from_pdf(pdf_path, resolve_redirects=False)
+
+    reg_pls = {l["playlist_id"]: l for l in reg_links if l.get("playlist_id")}
+    if "PL2-FkZlJhxqUG3274-L28g29_61_B9L3B" not in reg_pls:
+        errors.append("[Gate 4] Failed to extract percent-encoded playlist_id from Google redirect URL in PDF")
+    if "PL2-FkZlJhxqV402759482759" not in reg_pls:
+        errors.append("[Gate 4] Failed to extract playlist_id from watch?v=...&list=... URL in PDF")
+    elif reg_pls["PL2-FkZlJhxqV402759482759"].get("video_id") != "9x2F3hA5JIs":
+        errors.append("[Gate 4] Lost video_id on watch?v=...&list=... URL in PDF")
+
+    short_urls = [l["url"] for l in reg_links if l["link_type"] == "shortlink"]
+    if len(short_urls) != 1 or short_urls[0] != "http://bit.ly/2I92M2s":
+        errors.append(f"[Gate 4] Expected exactly 1 deduplicated shortlink ['http://bit.ly/2I92M2s'], got {short_urls}")
+
+    noise_found = [l["url"] for l in reg_links if any(k in l["url"] for k in ("microsoft.com", "wikipedia.org", "linotype.com"))]
+    if noise_found:
+        errors.append(f"[Gate 4] Embedded font/PKI/license noise URLs leaked into PDF links: {noise_found}")
+
+    real_jamhara = Path("/Users/macm1pro/.gemini/antigravity/brain/a66db81b-9ed5-46c9-a1da-c3de34a35d9c/scratch/jamhara.pdf")
+    if real_jamhara.exists():
+        j_links = extract_links_from_pdf(real_jamhara, resolve_redirects=False)
+        j_pls = [l for l in j_links if l["link_type"] == "youtube_playlist"]
+        j_short = [l for l in j_links if l["link_type"] == "shortlink"]
+        if len(j_pls) < 14:
+            errors.append(f"[Gate 4] Expected >=14 YouTube playlists from real jamhara.pdf, got {len(j_pls)}")
+        if len(j_short) != 17:
+            errors.append(f"[Gate 4] Expected 17 unique shortlinks from real jamhara.pdf, got {len(j_short)}")
+
+    # 2. Proclitic-aware matn matching & Quran Surah Tafsir matching
+    proclitic_cases = [
+        ("شرح الفاكهي لقطر الندى", "nahw:qatr_al_nada"),
+        ("شرح الفاكهي للقطر", "nahw:qatr_al_nada"),
+        ("التعريف بجمع الجوامع", "ossoul:jam_al_jawami"),
+        ("شرح التحفة السنية", "nahw:ajurrumiyya"),
+        ("شرح البناء والأساس", "sarf:bina_al_afaal"),
+        ("مدارسة كتاب الداء والدواء", "tazkia:al_daa_wal_dawa"),
+        ("قراءة كتاب نور اليقين في سيرة سيد المرسلين", "sirah:nur_al_yaqin"),
+    ]
+    for title_in, expected_book_id in proclitic_cases:
+        m = match_title_to_book(title_in)
+        if not m or m["book_id"] != expected_book_id:
+            errors.append(f"[Gate 4] Proclitic/Matn match failed for {title_in!r}: expected {expected_book_id!r}, got {m}")
+
+    tafsir_cases = [
+        ("تفسير سورة البقرة", "tafsir:surah_002"),
+        ("خواطر الشيخ الشعراوي حول سورة آل عمران", "tafsir:surah_003"),
+        ("اللمسات البيانية في سورة الكهف", "tafsir:surah_018"),
+        ("تفسير جزء عم", "tafsir:juz_amma"),
+    ]
+    for title_in, expected_book_id in tafsir_cases:
+        m = match_title_to_book(title_in)
+        if not m or m["book_id"] != expected_book_id:
+            errors.append(f"[Gate 4] Quran Tafsir match failed for {title_in!r}: expected {expected_book_id!r}, got {m}")
+
+    # 3. Shamela4 Full DB Index (8,589 books) author discovery
+    for sh_name, pid, min_expected in [
+        ("محمد متولي الشعراوي", "shaarawy", 2),
+        ("محمد سعيد رمضان البوطي", "bouti", 3),
+        ("محمد الحسن الددو الشنقيطي", "dedew", 3),
+        ("عبد الكريم الخضير", "khudayr", 15),
+        ("صالح الفوزان", "fawzan", 15),
+    ]:
+        sh_books = find_shamela_authored_books(sh_name, person_id=pid)
+        if len(sh_books) < min_expected:
+            errors.append(
+                f"[Gate 4] Shamela4 author lookup for {sh_name} ({pid}) returned {len(sh_books)} books, expected >={min_expected}"
+            )
+
+    # 4. Shared-channel attribution (`tankert-shared`), playlist summary `expected_count`, and unclassified non-matching
+    shared_fixture = {
+        "channel_key": "tankert-shared",
+        "sheikh_id": "shared",
+        "sheikh_name": "مشترك (السريري والبردوني)",
+        "channel_id": "UC_tankert_shared",
+        "playlists": [
+            {
+                "playlist_id": "PL_sariri_1",
+                "title": "شرح جمع الجوامع - الشيخ أحمد السريري",
+                "video_count": 15,
+                "videos": [{"vid": "v_sar_1", "title": "الدرس الأول - الشيخ أحمد السريري", "duration": 1800}],
+            },
+            {
+                "playlist_id": "PL_bardoni_1",
+                "title": "شرح قطر الندى للشيخ إبراهيم البردوني",
+                "video_count": 12,
+                "videos": [{"vid": "v_bar_1", "title": "الدرس الأول - الشيخ إبراهيم البردوني", "duration": 1500}],
+            },
+            {
+                "playlist_id": "PL_summary_only",
+                "title": "شرح مختصر خليل - الشيخ أحمد السريري",
+                "video_count": 42,
+                "videos": [],
+            },
+        ],
+        "unclassified_playlist": {
+            "playlist_id": "tankert-shared__unclassified",
+            "title": "غير مصنف",
+            "videos": [
+                {"vid": "v_uncl_sar", "title": "تفسير سورة البقرة - الشيخ أحمد السريري", "duration": 1200},
+                {"vid": "v_uncl_bar", "title": "درس للشيخ إبراهيم البردوني", "duration": 900},
+            ],
+        },
+    }
+    if not is_shared_channel_fixture(shared_fixture):
+        errors.append("[Gate 4] is_shared_channel_fixture returned False for tankert-shared fixture")
+
+    res_sar = discover_person("الشيخ أحمد السريري", person_id="sariri", offline_fixture=shared_fixture)
+    res_bar = discover_person("الشيخ إبراهيم البردوني", person_id="bardoni", offline_fixture=shared_fixture)
+
+    sar_pids = {p["id"] for p in res_sar["playlists"]}
+    bar_pids = {p["id"] for p in res_bar["playlists"]}
+    if "PL_bardoni_1" in sar_pids or "PL_sariri_1" not in sar_pids:
+        errors.append(f"[Gate 4] Shared channel attribution failed for sariri: got playlists {sar_pids}")
+    if "PL_sariri_1" in bar_pids or "PL_bardoni_1" not in bar_pids:
+        errors.append(f"[Gate 4] Shared channel attribution failed for bardoni: got playlists {bar_pids}")
+
+    # Verify expected_count preserved on summary-only playlist (42 even though videos=[])
+    pl_sum = next((p for p in res_sar["playlists"] if p["id"] == "PL_summary_only"), None)
+    if not pl_sum or pl_sum.get("expected_count") != 42:
+        errors.append(f"[Gate 4] Failed to preserve expected_count=42 on summary playlist: {pl_sum}")
+
+    # Verify unclassified playlist is never matched to a book (even when its video mentions 'تفسير سورة البقرة')
+    uncl_sar = next((p for p in res_sar["playlists"] if "__unclassified" in p["id"]), None)
+    if not uncl_sar:
+        errors.append("[Gate 4] Missing unclassified playlist for sariri in shared channel")
+    elif uncl_sar.get("matched_book") is not None:
+        errors.append(f"[Gate 4] Unclassified playlist must have matched_book=None, got {uncl_sar.get('matched_book')}")
+
+    print(
+        "[Gate 4] Cycle 2 Real-Data Regressions: verified Google redirect unwrapping, PDF noise filter, "
+        "proclitic & Surah Tafsir matchers, Shamela4 8,589-book author index, and shared-channel attribution."
+    )
+
+
 def main() -> None:
     errors: list[str] = []
     test_gate1_pdf_flatedecode_extraction(errors)
     raw_data = test_gate2_unification_and_book_matching(errors)
     test_gate3_schema_and_sheikh_curation_compatibility(raw_data, errors)
+    test_gate4_cycle2_real_data_regressions(errors)
 
     if errors:
         print(f"\nFAIL ({len(errors)} errors):")
