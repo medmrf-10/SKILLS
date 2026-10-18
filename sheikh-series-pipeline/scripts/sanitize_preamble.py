@@ -310,9 +310,25 @@ def _strip_leading_ascii_remnants(s):
     prefix = s[:pos]
     if LATIN_RE.search(prefix):
         return s
-    while pos > 0 and s[pos - 1] in '«"(\[{﴿':
+    while pos > 0 and s[pos - 1] in '«"([{﴿':
         pos -= 1
     return s[pos:]
+
+
+def _is_thinking_or_preamble_leak(s):
+    """تمييز ديباجات التفكير اللاتينية وصدى الموجه عن الكلمات الإنجليزية العرضية التي ينطقها الشيخ داخل فقرة عربية طويلة."""
+    if PROMPT_ECHO_RE.search(s):
+        return True
+    lat_m = list(LATIN_RE.finditer(s))
+    if not lat_m:
+        return False
+    end_pos = lat_m[-1].end()
+    head_s = s[:end_pos]
+    ar_h = len(AR_RE.findall(head_s))
+    lat_h = len(re.findall(r'[A-Za-z]', head_s))
+    if ar_h > 120 and lat_h < ar_h * 0.12:
+        return False
+    return True
 
 
 def _clean_json_thought_and_brace_leaks(text, reasons):
@@ -377,6 +393,8 @@ def _clean_json_thought_and_brace_leaks(text, reasons):
 
 def _strip_single_block_thinking(block):
     """إذا احتوى المقطع على مونولوج تفكير لاتيني أو تكرار لنص الموجه ينتهي بنص عربي صافٍ (≥300 حرف)، اقتطع المونولوج بالكامل."""
+    if not _is_thinking_or_preamble_leak(block):
+        return block, False
     lat_matches = list(LATIN_RE.finditer(block))
     echo_matches = list(PROMPT_ECHO_RE.finditer(block))
     if not lat_matches and not echo_matches:
@@ -401,6 +419,27 @@ def strip_preamble_and_header(text):
     تُعيد: (cleaned_text, reasons_list)
     """
     reasons = []
+
+    # 0. إزالة ترويسات البيانات الوصفية (الشيخ: / السلسلة: / الفيديو:) في أول 15 سطراً قبل فحص الروابط اللاتينية
+    init_lines = text.splitlines()
+    init_idx = 0
+    while init_idx < min(len(init_lines), 15):
+        s_init = init_lines[init_idx].strip()
+        if not s_init:
+            init_idx += 1
+            continue
+        if METADATA_LINE_RE.match(s_init):
+            if 'METADATA_HEADER' not in reasons:
+                reasons.append('METADATA_HEADER')
+            init_idx += 1
+            continue
+        if re.match(r'^[-=_*#]{3,}$', s_init):
+            init_idx += 1
+            continue
+        break
+    if init_idx > 0:
+        text = '\n'.join(init_lines[init_idx:]).lstrip()
+
     # إذا وجد مونولوج تفكير لاتيني أو صدى لتعليمات الموجه في أي موضع من الملف:
     if LATIN_RE.search(text) or PROMPT_ECHO_RE.search(text):
         paras = re.split(r'\n\s*\n', text)
@@ -412,8 +451,8 @@ def strip_preamble_and_header(text):
             if idx_p != -1:
                 pos_cursor = idx_p + len(p)
             near_after = text[pos_cursor: pos_cursor + 2800] if idx_p != -1 else ''
-            more_leak_ahead = bool(LATIN_RE.search(near_after) or PROMPT_ECHO_RE.search(near_after))
-            has_lat = bool(LATIN_RE.search(p) or PROMPT_ECHO_RE.search(p))
+            more_leak_ahead = _is_thinking_or_preamble_leak(near_after)
+            has_lat = _is_thinking_or_preamble_leak(p)
             if has_lat:
                 in_leak = True
                 if 'LATIN_PREAMBLE' not in reasons:
@@ -424,7 +463,7 @@ def strip_preamble_and_header(text):
                         end_pos = max(m.end() for m in last_m)
                         tail_p = _strip_leading_ascii_remnants(p[end_pos:])
                         tail_p = re.sub(r'^[\s.:\'"`*\-—–()\[\]0-9/\\]+', '', tail_p)
-                        if len(AR_RE.findall(tail_p)) >= 15 and not LATIN_RE.search(tail_p) and not PROMPT_ECHO_RE.search(tail_p):
+                        if len(AR_RE.findall(tail_p)) >= 15 and not _is_thinking_or_preamble_leak(tail_p):
                             tail_clean = tail_p.strip()
                             anchor_words = ' '.join(_norm_anchor(tail_clean).split()[:5])
                             if len(anchor_words) >= 10 and out_paras:
