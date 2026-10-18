@@ -380,9 +380,16 @@ def upload_and_finalize(job, local_align_path, rep):
         align_summary['stripped_reasons'] = job['stripped_reasons']
 
     cleaned_txt_b64 = job.get('cleaned_txt_b64', '')
+    align_raw_bytes = open(local_align_path, 'rb').read()
+    stdin_payload = json.dumps({
+        'align_b64': base64.b64encode(align_raw_bytes).decode('ascii'),
+        'cleaned_txt_b64': cleaned_txt_b64,
+    }).encode('utf-8')
+
     py_code = (
         f'import base64, glob, json, os, sys\n'
-        f'data = sys.stdin.buffer.read()\n'
+        f'env_in = json.loads(sys.stdin.buffer.read().decode("utf-8"))\n'
+        f'data = base64.b64decode(env_in["align_b64"])\n'
         f'if len(data) < 200:\n'
         f'    raise RuntimeError(f"short align payload: {{len(data)}} bytes")\n'
         f'rt = {json.dumps(remote_txt)}\n'
@@ -395,7 +402,7 @@ def upload_and_finalize(job, local_align_path, rep):
         f'ap = rt[:-4] + ".align.json"\n'
         f'mp = rt[:-4] + ".meta.json"\n'
         f'os.makedirs(os.path.dirname(ap), exist_ok=True)\n'
-        f'ct_b64 = {json.dumps(cleaned_txt_b64)}\n'
+        f'ct_b64 = env_in.get("cleaned_txt_b64", "")\n'
         f'if ct_b64 and rt.endswith(".txt"):\n'
         f'    ct_bytes = base64.b64decode(ct_b64)\n'
         f'    if len(ct_bytes) > 50:\n'
@@ -425,12 +432,11 @@ def upload_and_finalize(job, local_align_path, rep):
             for attempt in range(1, 5):
                 try:
                     _ensure_ssh_master(slot)
-                    with open(local_align_path, 'rb') as af:
-                        subprocess.run(
-                            ['ssh', *mux_opts, VPS_HOST, f'python3 -c "import base64; exec(base64.b64decode(\'{b64_up}\'))"'],
-                            stdin=af, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                            timeout=60, check=True
-                        )
+                    subprocess.run(
+                        ['ssh', *mux_opts, VPS_HOST, f'python3 -c "import base64; exec(base64.b64decode(\'{b64_up}\'))"'],
+                        input=stdin_payload, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        timeout=60, check=True
+                    )
                     with LOCK:
                         COMPLETED_KEYS.add(key)
                     break
