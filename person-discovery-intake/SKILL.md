@@ -1,14 +1,14 @@
 ---
 name: person-discovery-intake
-version: 1.1
-description: "Use when discovering, harvesting, and unifying all digital heritage (YouTube channels, playlists, livestreams, standalone uploads, Archive.org audio buckets, PDF index link streams such as Jamharat A'mal, and authored/explained books via Turath/Shamela) starting from a scholar or person's name alone into a canonical <person_id>_raw.json file 100% compatible with sheikh-curation."
+version: 1.2
+description: "Use when discovering, harvesting, and unifying all digital heritage (YouTube channels, playlists, livestreams, standalone uploads, Archive.org audio/video buckets with natural episode sorting and cross-source gap recovery, PDF index link streams such as Jamharat A'mal, and authored/explained books via Turath/Shamela 8,589-book auto-matcher) starting from a scholar or person's name alone into a canonical <person_id>_raw.json file 100% compatible with sheikh-curation."
 ---
 
 # مهارة `person-discovery-intake`: الاكتشاف الشامل والحصاد الموحد لتراث الأعلام والمشايخ من الاسم فقط
 
 توثق هذه المهارة المعمارية القياسية، والخوارزميات الحتمية، والقواعد الذهبية للانتقال من **«اسم الشخصية فقط»** (أو اسمها مع بعض الروابط الأولية) إلى بناء ملف الجرد الخام الموحد `<person_id>_raw.json` الجاهز تماماً للتنقيح عبر مهارة `sheikh-curation` بمعيار **صفر خطأ (`0 Errors`)**.
 
-تعالج هذه المهارة جذرياً مشكلة تشتت تراث العلماء والمفكرين بين قنوات رسمية وأرشيفية متعددة، وقوائم تشغيل غير مدرجة (`Unlisted Playlists`) مدفونة داخل ملفات `PDF` فهرسية (مثل «جمهرة أعمال م. أيمن عبد الرحيم»)، وحزم صوتية على `Archive.org` ناقصة التوثيق في المواقع الرسمية (مثل موقع العلامة مولود السريري)، وربط السلاسل الصوتية بالمتون العلمية المشروحة ومؤلفات الشخصية عبر فهارس `turathmcp` والشاملة (`Shamela4_Full_DB` — 8,589 كتاباً).
+تعالج هذه المهارة جذرياً مشكلة تشتت تراث العلماء والمفكرين بين قنوات رسمية وأرشيفية متعددة، وقوائم تشغيل غير مدرجة (`Unlisted Playlists`) مدفونة داخل ملفات `PDF` فهرسية (مثل «جمهرة أعمال م. أيمن عبد الرحيم»)، وحزم صوتية ومرئية على `Archive.org` ناقصة التوثيق في المواقع الرسمية أو متممة للحلقات الساقطة من يوتيوب (مثل الدرس 24 من «إيصال السالك» أو الدرس 28 من «العقيدة الطحاوية»)، وربط السلاسل بالمتون العلمية المشروحة ومؤلفات الشخصية عبر فهارس `turathmcp` والفهرس الكامل للمكتبة الشاملة (`Shamela4_Full_DB` — 8,589 كتاباً).
 
 ---
 
@@ -22,7 +22,7 @@ description: "Use when discovering, harvesting, and unifying all digital heritag
    - لا يقتصر الاكتشاف على تبويب `Playlists` في قناة يوتيوب واحدة؛ بل يشمل وجوباً:
      1. **جميع قنوات يوتيوب المرتبطة بالشخصية**: القناة الرسمية + قنوات المؤسسات أو المدارس العلمية المشتركة (مثل `مدرسة تنكرت العتيقة` أو `مدرسة شيخ العمود`) + القنوات الأرشيفية الموثوقة.
      2. **التبويبات الثلاثة في كل قناة**: قوائم التشغيل (`Playlists`) + الفيديوهات المنفردة (`Videos / Uploads`) + البثوث المباشرة (`Streams / Live`).
-     3. **حزم `Archive.org` الصوتية**: عبر واجهة البحث المتقدم (`advancedsearch.php`) وواجهة البيانات الوصفية المباشرة (`archive.org/metadata/<item_id>`) وحسابات الرافعيين (`uploader`).
+     3. **حزم `Archive.org` الصوتية والمرئية**: عبر واجهة البحث المتقدم (`advancedsearch.php`) وواجهة البيانات الوصفية المباشرة (`archive.org/metadata/<item_id>`) وحسابات الرافعيين (`uploader`).
      4. **تيارات ملفات `PDF` الفهرسية (`PDF FlateDecode Streams`)**: فك ضغط تيارات `zlib` واستخراج الكائنات `/URI` وفك أغلفة التوجيه (`google.com/url?q=...` ذات الترميز `%3D`) للوصول إلى روابط `bit.ly` وقوائم التشغيل غير المدرجة (`Unlisted Playlists`).
      5. **فهارس الكتب والمتون (`Turath / Shamela4 8,589 Books / Books Catalog`)**: حصر مؤلفات الشخصية والمتون التراثية وسور التفسير التي شرحتها وربط كل سلسلة بمتنها المشروح (`matched_book`).
 
@@ -32,7 +32,10 @@ description: "Use when discovering, harvesting, and unifying all digital heritag
 4. **الفصل الدقيق في القنوات المشتركة ومنع الخلط بين الأعلام (`attribute_shared_channel_owner`)**:
    - في القنوات التي تجمع أكثر من عالم (مثل قناة `مدرسة تنكرت العتيقة` / `tankert-shared.json` المشتركة بين العلامة مولود السريري والشيخ محمد البردوني الحسيمي)، تُفحص عناوين القوائم والفيديوهات والكتب المشروحة تلقائياً عبر `attribute_shared_channel_owner` لعزل مواد كل علم في ملفه الخاص وعدم نسبة سلسلة أو درس غير مصنف لعالم آخر.
 
-5. **التوافق المزدوج الكامل (`100% Backward & Forward Schema Compatibility`)**:
+5. **التوحيد العابر للمصادر واسترجاع الدروس المفقودة (`link_and_deduplicate_cross_source_series`)**:
+   - عند وجود نفس السلسلة على يوتيوب وعلى `Archive.org` (أو وجود حزمتين لنفس السلسلة على الأرشيف مثل `we-Nafs` بصيغة MP4 و`we-Nafs_A` بصيغة MP3)، لا تُكرر السلسلة كقائمتين منفصلتين؛ بل تُربط الحزمة الأرشيفية بالقائمة الأصلية (`linked_archive_item`)، وتُرفق الروابط الصوتية المباشرة (`archive_direct_url`) بالدروس المتناظرة، وتُسترجع الدروس الساقطة من يوتيوب تلقائياً من الأرشيف (`recovered_from_archive`) في موضعها الرقمي الصحيح.
+
+6. **التوافق المزدوج الكامل (`100% Backward & Forward Schema Compatibility`)**:
    - يتضمن ملف `<person_id>_raw.json` الناتج كلاً من:
      * مفاتيح الجرد الشامل الحديثة (`person_id`, `sheikh_name`, `discovered_at`, `channels`, `playlists`, `videos`, `archive_items`, `pdf_extracted_links`, `books`, `stats`).
      * والمفاتيح القياسية التي تستهلكها سكربتات `sheikh-curation` مباشرة (`sheikh`, `raw_playlists_count`, `unique_videos_count`, `raw_series`, `unique_videos`) دون الحاجة لأي تحويل وسيط.
@@ -46,16 +49,16 @@ flowchart TD
     A["اسم الشخصية (--name) + معرف مقترح (--person-id)"] --> B["تطبيع الاسم وتوليد person_id القياسي"]
     B --> C1["مسار يوتيوب: yt-dlp / InnerTube\n(Channels, Playlists, Uploads, Streams)"]
     B --> C2["مسار PDF الفهرسي: zlib.decompress\n(FlateDecode + Google Redirect Unwrap + Noise Filter)"]
-    B --> C3["مسار Archive.org: AdvancedSearch + Metadata API\n(Audio .mp3/.m4a/.flac/.ogg + Uploader Buckets)"]
+    B --> C3["مسار Archive.org: AdvancedSearch + Metadata API\n(Audio/Video .mp3/.m4a/.mp4 + Natural Episode Sort)"]
     B --> C4["مسار الكتب والمتون: Shamela4 (8,589 كتاباً) + MATN_KNOWLEDGE_BASE\n(مؤلفات الشخصية + المتون التراثية + سور التفسير)"]
     C2 -->|"Unlisted Playlists & Video URLs"| C1
     C2 -->|"Archive Item IDs"| C3
-    C1 --> D["محرك إزالة التكرار وعزل القنوات المشتركة (Deduplication & Shared-Channel Attribution)"]
+    C1 --> D["محرك مطابقة السلاسل بالمتون وفهرس الشاملة 8,589 كتاباً (match_title_to_book)"]
     C3 --> D
-    C4 --> E["محرك مطابقة السلاسل بالمتون والكتب (Proclitic-Aware Series-to-Matn Matcher)"]
-    D --> E
+    C4 --> D
+    D --> E["محرك التوحيد العابر للمصادر واسترجاع الدروس المفقودة (link_and_deduplicate_cross_source_series)"]
     E --> F["تصدير <person_id>_raw.json المعياري"]
-    F --> G["بوابة الجودة الرباعية (test_discovery_gates.py -> PASS 0 errors)"]
+    F --> G["بوابة الجودة الخماسية (test_discovery_gates.py -> PASS 0 errors)"]
 ```
 
 ---
@@ -99,36 +102,30 @@ flowchart TD
 
 ---
 
-### المصدر الثالث: أرشيف الإنترنت (`Archive.org AdvancedSearch & Metadata API`)
-تُحفظ عشرات السلاسل الصوتية الكاملة للمشايخ على `Archive.org`، وكثيراً ما تسقط بعض حلقاتها من جداول المواقع الرسمية (كما سقط الدرس الأخير `024.mp3` من جدول «إيصال السالك» والدرس `090.mp3` من «نشر البنود» في موقع الشيخ السريري بينما هما موجودان داخل حزمة الأرشيف نفسها).
+### المصدر الثالث: أرشيف الإنترنت (`Archive.org AdvancedSearch, Episode Sorting & Cross-Source Linking`)
+تُحفظ عشرات السلاسل الصوتية والمرئية الكاملة للمشايخ على `Archive.org`، وكثيراً ما تسقط بعض حلقاتها من جداول المواقع الرسمية أو قوائم يوتيوب (مثل الدرس `024.mp3` من «إيصال السالك» والدرس `aqeeda (28).mp3` من «العقيدة الطحاوية»).
 
 * **الخوارزمية المعتمدة**:
   1. **البحث عن الحزم وحسابات الرافعيين**:
      - عبر `https://archive.org/advancedsearch.php?q=creator:("<الاسم>") OR title:("<الاسم>")&output=json`.
-     - وعند معرفة حساب رافع رسمي (`uploader`)، يُجرد الحساب كاملاً لاكتشاف الحزم غير المربوطة في الموقع (مثل اكتشاف حزمة `Kitab.Alma9asid` الكاملة).
-  2. **فحص البيانات الوصفية المباشرة (`https://archive.org/metadata/<item_id>`)**:
-     - قراءة المصفوفة `files` واستخراج جميع الملفات الصوتية (`.mp3`, `.m4a`, `.flac`, `.ogg`).
-     - **إزالة تكرار المشتقات الصوتية (`Derivative Deduplication`)**: ينشئ `Archive.org` تلقائياً نسخة `.ogg` مشتقة لكل ملف `.mp3`؛ يختار السكربت النسخة الأصلية الأعلى جودة لنفس الاسم الأساسي (`stem`) بترتيب الأولوية: `.mp3` ثم `.m4a` ثم `.flac` ثم `.ogg`.
-     - **حساب المدة (`dur_s`)**: تحويل حقل `length` في بيانات الأرشيف (سواء كان بالثواني الكسرية `"7298.42"` أو بصيغة `"02:01:38"`) إلى عدد صحيح بالثواني (`7298`).
-     - **توليد الرابط المباشر والمعرف القياسي**:
-       * `direct_url`: `https://archive.org/download/<item_id>/<filename>`
-       * `vid` / `yt_id`: `archive__<person_id>__<clean_item_id>__ep<NNN>` (متوافق 100% مع معيار `sheikh-curation` كما في `sariri.json`).
+     - وعند معرفة حساب رافع رسمي (`uploader`)، يُجرد الحساب كاملاً لاكتشاف الحزم غير المربوطة في الموقع.
+  2. **فحص البيانات الوصفية وتطبيع الدروس (`parse_archive_metadata_payload`)**:
+     - قراءة المصفوفة `files` واستخراج جميع ملفات المحاضرات الصوتية والمرئية (`.mp3`, `.m4a`, `.flac`, `.opus`, `.aac`, `.ogg`, `.wav`, `.wma`, `.mp4`, `.m4v`, `.mkv`, `.webm`, `.avi`) مع استبعاد المشتقات المنخفضة الجودة (`.ogv`, `.afpk`).
+     - **استخراج رقم الدرس والترتيب الرقمي الطبيعي (`extract_archive_episode_num`)**: يُستخرج رقم الدرس (`episode_num`) أولاً من اسم الملف الأساسي (`003.mp3` -> `3`، `aqeeda (10).mp3` -> `10`، `Nafs-019.mp4` -> `19`، `leqa2_eliman_16.mp4` -> `16` مع تجاهل أرقام العربيزي المدمجة داخل الكلمات مثل `leqa2` أو `char7`)، ثم من حقل `track`، ثم من الأعداد الترتيبية العربية (`الأول` إلى `التاسع والخمسين`) داخل العنوان، وتُرتب الدروس ترتيباً رقمياً طبيعياً (`1, 2, ..., 10` بدلاً من الترتيب المعجمي الخاطئ `1, 10, 2`).
+     - **تنظيف عناوين ID3 الدعائية (`normalize_archive_file_title`)**: استبعاد روابط المواقع الدعائية المزروعة في وسوم `title` (مثل `www.naseemalsham.com`) وتوليد عناوين عربية معيارية (`الدرس 1 | شرح العقيدة الطحاوية` أو `الدرس 3: تتمة أوقات الصلاة 02`).
+     - **التوحيد العابر للمصادر (`link_and_deduplicate_cross_source_series`)**: ربط حزم الأرشيف بقوائم يوتيوب المناظرة لها في نفس المتن المشروح أو العنوان واسترجاع الحلقات المفقودة تلقائياً.
 
 ---
 
-### المصدر الرابع: الكتب والمؤلفات ومطابقة المتون (`Shamela4 8,589-Book Index & Matn Matching`)
-1. **حصر كتب الشخصية ومتون الشروح**:
-   - يضم السكربت فهرساً مضغوطاً كاملاً لجميع كتب المكتبة الشاملة الإصدار الرابع (`shamela4_books_index.json.gz` — **8,589 كتاباً** مستخرجة من `/Users/macm1pro/REPOS/swe/Shamela4_Full_DB`)، بالإضافة إلى قاعدة المعرفة المدمجة الموسعة للمتون العلمية القياسية (`MATN_KNOWLEDGE_BASE` — أكثر من 105 متون في العقيدة والفقه وأصوله والمقاصد والحديث والتفسير والنحو والصرف والبلاغة والمنطق والتزكية والسيرة والفكر) ومطابق سور وأجزاء القرآن الكريم الـ 114 (`match_quran_tafsir_series`).
-   - يميز بدقة بين:
-     * **مؤلفات الشخصية نفسها** (`is_authored_by_person: true`) عبر `find_shamela_authored_books` و`PERSON_AUTHOR_ALIASES`.
-     * **المتون التراثية وسور التفسير التي شرحتها الشخصية صوتياً أو مرئياً** (`is_explained_by_person: true`) مع استثناء حاويات `غير مصنف` (`__unclassified`) من المطابقة الآلية لكتاب واحد.
-2. **قواعد المطابقة الدلالية الصارمة (`Anti-Confusion & Proclitic-Aware Matn Matching`)**:
-   - **دعم السوابق العربية المتصلة (`Arabic Proclitics`)**: يدعم `_word_boundary_match` اتصال حروف الجر والعطف (`و`, `ف`, `ب`, `ك`, `ل`, `لل`) ببداية اسم المتن (مثل `شرح الفاكهي لقطر الندى`، `شرح الفاكهي للقطر`، `التعريف بجمع الجوامع`).
-   - **منع خلط الفنون**:
-     * `مقدمات السنوسي` / `أم البراهين` / `العقيدة الصغرى` -> تصنف في **العقيدة وعلم الكلام** ولا تصنف أبداً في الفقه.
-     * الفصل الصارم بين **أصول الفقه** (`جمع الجوامع`، `مراقي السعود`، `إيصال السالك`، `مفتاح الوصول`، `الرسالة العضدية`، `الورقات`) وبين **مقاصد الشريعة** (`الموافقات للشاطبي`، `كتاب المقاصد`).
-   - **حدود الكلمات العربية (`Arabic Word Boundaries`)**:
-     * منع التطابق الجزئي الخاطئ للكلمات القصيرة (مثل عدم تطابق سورة `الحج` مع `الحجر`، وعدم تطابق السور أحادية الحرف `ص` و`ق` إلا بوجود كلمة `سورة ص` / `سورة ق`).
+### المصدر الرابع: الكتب والمؤلفات ومطابقة المتون (`Shamela4 8,589-Book Auto-Series Matcher`)
+1. **حصر كتب الشخصية ومطابقة السلاسل بـ 8,589 كتاباً في الشاملة**:
+   - يضم السكربت ثلاث طبقات متكاملة لمطابقة عناوين السلاسل بالكتب المشروحة (`match_title_to_book`):
+     * **الطبقة الأولى (`MATN_KNOWLEDGE_BASE`)**: قاعدة معرفة موسعة تضم **122 متناً وكتاباً علمياً** مع الكشف الدقيق عن السوابق العربية المتصلة (`لقطر الندى`, `للقطر`, `بجمع الجوامع`).
+     * **الطبقة الثانية (`match_quran_tafsir_series`)**: مطابق سور القرآن الكريم الـ 114 وأجزائه مع دعم الصيغ الملتصقة (`تفسيرسورة الأعراف`, `فسيرسورة الأنعام`) والفحص الاحتياطي لعناوين دروس القائمة عندما يكون عنوان القائمة عاماً (`سلسلة دروس التفسير`).
+     * **الطبقة الثالثة (`match_series_to_shamela_index`)**: مطابقة آلية سريعة ($O(1)$ عبر فهرس عبارات مضغوط `_build_shamela_phrase_index`) ضد جميع كتب الشاملة البالغ عددها **8,589 كتاباً** (مثل `روضة الناظر وجنة المناظر`، `زاد المعاد في هدي خير العباد`، `التسهيل لعلوم التنزيل`، `الدرر البهية`)، مع قائمة حظر صارمة للعناوين الموضوعية العامة (`SHAMELA_GENERIC_TOPIC_STOPLIST`) تمنع التطابق الخاطئ مع عناوين عامة مثل `دروس العقيدة` أو `فتاوى الصيام`.
+2. **قواعد المطابقة الدلالية الصارمة (`Anti-Confusion Rules`)**:
+   - `مقدمات السنوسي` / `أم البراهين` / `العقيدة الصغرى` -> تصنف في **العقيدة وعلم الكلام** ولا تصنف أبداً في الفقه.
+   - الفصل الصارم بين **أصول الفقه** (`جمع الجوامع`، `مراقي السعود`، `إيصال السالك`، `مفتاح الوصول`، `الرسالة العضدية`، `الورقات`) وبين **مقاصد الشريعة** (`الموافقات للشاطبي`، `كتاب المقاصد`).
 
 ---
 
@@ -162,13 +159,15 @@ python3 /Users/macm1pro/REPOS/SKILLS/person-discovery-intake/scripts/discover_pe
 python3 /Users/macm1pro/REPOS/SKILLS/person-discovery-intake/scripts/test_discovery_gates.py
 ```
 
-يفحص هذا الاختبار أربع طبقات حتمية:
+يفحص هذا الاختبار خمس طبقات حتمية:
 1. **`[Gate 1] PDF FlateDecode Stream & URI Extraction`**: بناء وفحص ملف PDF ثنائي مضغوط بـ `zlib/FlateDecode` واستخراج روابط `Unlisted Playlists` و`Archive.org` والفيديوهات والروابط المختصرة.
 2. **`[Gate 2] Multi-Source Unification & Book/Matn Matching`**: دمج بيانات يوتيوب + `Archive.org` (مع تصفية مشتقات `.ogg` وحساب المدد) + الكتب والمتون، والتحقق من صحة ربط السلاسل بمتونها المشروحة ومنع خلط الفنون.
 3. **`[Gate 3] Canonical Schema & sheikh-curation Compatibility`**: التحقق الصارم من جميع الحقول والأنواع في `<person_id>_raw.json` وتوافقه التام مع `sheikh-curation` (`hijri_interpolator.py` و`deep_scanner_all.py`).
-4. **`[Gate 4] Cycle 2 Real-Data Regressions`**: التحقق من فك أغلفة `google.com/url?q=` وتصفية روابط الخطوط/التراخيص في `jamhara.pdf`، ومطابقة السوابق العربية وسور التفسير، وفهرس الشاملة (`8,589` كتاباً)، وعزل القنوات المشتركة (`tankert-shared.json`)، وإخراج `PASS (0 errors)`.
+4. **`[Gate 4] Cycle 2 Real-Data Regressions`**: التحقق من فك أغلفة `google.com/url?q=` وتصفية روابط الخطوط/التراخيص في `jamhara.pdf`، ومطابقة السوابق العربية وسور التفسير، وفهرس الشاملة (`8,589` كتاباً)، وعزل القنوات المشتركة (`tankert-shared.json`).
+5. **`[Gate 5] Shamela 8,589-Book Series Matcher, Archive.org Episode Sorting & Cross-Source Linking`**: التحقق من مطابقة السلاسل لفهرس الشاملة الكامل (`8,589` كتاباً) وقاعدة المتون الموسعة (`294` سلسلة مطابقة عبر 17 شيخاً بزيادة `+61%` مع `0` تطابق خاطئ للعناوين العامة)، والترتيب الرقمي الطبيعي لملفات `Archive.org` وتنظيف عناوين ID3 الدعائية، والتوحيد العابر للمصادر بين يوتيوب و`Archive.org` مع استرجاع الدروس المفقودة (`024.mp3` في «إيصال السالك»)، وإخراج `PASS (0 errors)`.
 
 ---
 
 ## 5. المراجع التفصيلية
 - راجع توثيق مخطط البيانات الكامل (`JSON Schema`) وتفاصيل البروتوكولات البرمجية في: [references/01-discovery-sources-and-schema.md](./references/01-discovery-sources-and-schema.md).
+

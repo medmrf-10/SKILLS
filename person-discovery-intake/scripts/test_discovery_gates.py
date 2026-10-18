@@ -600,12 +600,280 @@ def test_gate4_cycle2_real_data_regressions(errors: list[str]) -> None:
     )
 
 
+def test_gate5_shamela_series_matcher_and_cross_source_linking(
+    raw_data: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """
+    Layer 5 (Cycle 9 — Shamela 8,589-Book Auto-Series Matcher, Archive.org Episode Sorting/Spam Cleanup,
+    and Cross-Source Archive.org + YouTube Series Linking & Gap Recovery):
+      1. Shamela 8,589-book index series matcher + expanded Matn KB + glued/video-level Quran Surah Tafsir,
+         plus strict generic-topic stoplist anti-false-positive verification.
+      2. Archive.org multi-format (`.mp4`/`.mp3`) parsing, natural episode sorting (`aqeeda (2)` before `aqeeda (10)`),
+         Arabizi stem handling (`leqa2_eliman_16`), stem-first episode extraction (`003.mp3` with `تتمة أوقات الصلاة 02`),
+         and ID3 URL spam (`www.naseemalsham.com`) cleanup.
+      3. Cross-source YouTube + Archive.org series linking (`linked_archive_item`), episode-level `archive_direct_url`
+         attachment, missing episode gap recovery (`024.mp3` in `إيصال السالك`), and duplicate Archive item unification
+         (`we-Nafs` MP4 + `we-Nafs_A` MP3).
+    """
+    # 1. Shamela 8,589-Book Auto-Series Matcher & Expanded Matn KB
+    series_match_cases = [
+        ("شرح كتاب الشفا بتعريف حقوق المصطفى", "hadith:shifa_qadi_iyad"),
+        ("شرح الدرر البهية للشوكاني", "fiqh:al_durar_al_bahiyya"),
+        ("شرح متن الدرر اللوامع في أصل مقرأ الإمام نافع", "tajweed:al_durar_al_lawami"),
+        ("شرح نظم عبيد ربه", "nahw:nazm_ubayd_rabbih"),
+        ("شرح كتاب التسهيل لعلوم التنزيل", "tafsir:al_tashil_ibn_juzayy"),
+        ("شرح منظومة الزمزمي في علوم القرآن", "tafsir:manzumat_al_zamzami"),
+        ("تفسيرسورة الأعراف", "tafsir:surah_007"),
+        ("فسيرسورة الأنعام", "tafsir:surah_006"),
+    ]
+    for title_in, expected_id in series_match_cases:
+        m = match_title_to_book(title_in)
+        if not m or m["book_id"] != expected_id:
+            errors.append(f"[Gate 5] Series book match failed for {title_in!r}: expected {expected_id!r}, got {m}")
+
+    # Video-level Surah Tafsir fallback when playlist title is generic
+    v_tafsir = match_title_to_book(
+        "سلسلة دروس التفسير",
+        video_titles=[
+            "الدرس 1 - تفسير سورة الفرقان الآية 1-10",
+            "الدرس 2 - تفسير سورة الفرقان الآية 11-20",
+            "الدرس 3 - تفسير سورة الفرقان الآية 21-30",
+        ],
+    )
+    if not v_tafsir or v_tafsir["book_id"] != "tafsir:surah_025":
+        errors.append(f"[Gate 5] Video-level Surah Tafsir fallback failed: got {v_tafsir}")
+
+    # Direct Shamela 8,589-book index series matching for books outside static MATN_KNOWLEDGE_BASE
+    shamela_series_cases = [
+        "شرح روضة الناظر وجنة المناظر",
+        "التعليق على زاد المعاد في هدي خير العباد",
+        "شرح كتاب المحرر في الحديث",
+    ]
+    for stitle in shamela_series_cases:
+        sm = match_title_to_book(stitle)
+        if not sm or not str(sm.get("book_id", "")).startswith("shamela:"):
+            errors.append(f"[Gate 5] Expected Shamela 8,589-book index match for {stitle!r}, got {sm}")
+
+    # Anti-false-positive stoplist check on generic topic titles
+    for generic_title in ("دروس العقيدة", "فتاوى الصيام", "خطب الجمعة", "مجالس رمضان", "دروس الفقه"):
+        gm = match_title_to_book(generic_title)
+        if gm is not None:
+            errors.append(f"[Gate 5] False-positive book match on generic topic title {generic_title!r}: {gm}")
+
+    # Verify live series matching across all 17 curated sheikhs if available on disk
+    curated_dir = Path("/Users/macm1pro/REPOS/cheikh/data/curated_sheikhs")
+    if curated_dir.exists():
+        total_matched = 0
+        for p in sorted(curated_dir.glob("*_raw.json")):
+            d = json.loads(p.read_text(encoding="utf-8"))
+            for s in d.get("raw_series", []):
+                sid = str(s.get("id") or "")
+                if s.get("yt_playlist_id") is None or "__unclassified" in sid:
+                    continue
+                v_titles = [v.get("title", "") for v in s.get("videos", [])[:8]]
+                if match_title_to_book(s.get("title", ""), v_titles):
+                    total_matched += 1
+        if total_matched < 285:
+            errors.append(
+                f"[Gate 5] Expected >=285 matched series across 17 curated sheikhs, got {total_matched}"
+            )
+
+    # 2. Archive.org natural episode sorting, spam ID3 cleanup, and multi-format (.mp4) support
+    aqeeda_payload = {
+        "metadata": {
+            "identifier": "Aqeeda28_test",
+            "title": "شرح العقيدة الطحاوية",
+            "creator": "محمد سعيد رمضان البوطي",
+            "mediatype": "audio",
+            "date": "2019-05-01",
+        },
+        "files": [
+            {
+                "name": "aqeeda (10).mp3",
+                "source": "original",
+                "length": "2500",
+                "size": "20000000",
+                "title": "www.naseemalsham.com",
+            },
+            {
+                "name": "aqeeda (2).mp3",
+                "source": "original",
+                "length": "2400",
+                "size": "19000000",
+                "title": "http://www.naseemalsham.com",
+            },
+            {
+                "name": "aqeeda (1).mp3",
+                "source": "original",
+                "length": "2300",
+                "size": "18000000",
+                "title": "www.naseemalsham.com",
+            },
+            {
+                "name": "003.mp3",
+                "source": "original",
+                "track": "03",
+                "length": "2600",
+                "size": "21000000",
+                "title": "تتمة أوقات الصلاة 02",
+            },
+            {
+                "name": "leqa2_eliman_16.mp4",
+                "source": "original",
+                "length": "1800",
+                "size": "45000000",
+            },
+            {
+                "name": "leqa2_eliman_16.ogv",
+                "source": "derivative",
+                "length": "1800",
+                "size": "15000000",
+            },
+        ],
+    }
+    parsed_aq = parse_archive_metadata_payload("Aqeeda28_test", aqeeda_payload, "bouti")
+    ep_nums = [f["episode_num"] for f in parsed_aq["files"]]
+    if ep_nums != [1, 2, 3, 10, 16]:
+        errors.append(f"[Gate 5] Expected natural episode_num sort [1, 2, 3, 10, 16], got {ep_nums}")
+    titles_out = [f["title"] for f in parsed_aq["files"]]
+    if any("naseemalsham" in t for t in titles_out):
+        errors.append(f"[Gate 5] ID3 URL spam leaked into normalized titles: {titles_out}")
+    if titles_out[0] != "الدرس 1 | شرح العقيدة الطحاوية":
+        errors.append(f"[Gate 5] Expected clean Arabic title for aqeeda (1).mp3, got {titles_out[0]!r}")
+    if titles_out[2] != "الدرس 3: تتمة أوقات الصلاة 02":
+        errors.append(f"[Gate 5] Expected 'الدرس 3: تتمة أوقات الصلاة 02' for 003.mp3, got {titles_out[2]!r}")
+
+    # 3. Cross-Source YouTube + Archive.org series linking & missing episode recovery
+    cross_source_fixture = {
+        "sheikh": {"id": "sariri", "name": "الشيخ أحمد السريري"},
+        "raw_series": [
+            {
+                "id": "PL_sariri_iysal",
+                "title": "شرح كتاب إيصال السالك في أصول الإمام مالك",
+                "yt_playlist_id": "PL_sariri_iysal",
+                "expected_count": 24,
+                "videos": [
+                    {
+                        "pos": 1,
+                        "yt_id": "yt_iysal_01",
+                        "title": "الدرس الأول: مقدمة إيصال السالك",
+                        "duration": 3120,
+                    },
+                    {
+                        "pos": 2,
+                        "yt_id": "yt_iysal_23",
+                        "title": "الدرس الثالث والعشرون: المباحث الأصولية",
+                        "duration": 2950,
+                    },
+                ],
+            }
+        ],
+        "unique_videos": [],
+        "archive_payloads": [
+            {
+                "item_id": "iysalo-salik_202103",
+                "metadata": {
+                    "identifier": "iysalo-salik_202103",
+                    "title": "شرح كتاب إيصال السالك في أصول الإمام مالك",
+                    "creator": "الشيخ أحمد السريري",
+                    "mediatype": "audio",
+                    "date": "2021-03-15",
+                },
+                "files": [
+                    {
+                        "name": "001.mp3",
+                        "source": "original",
+                        "length": "3120.4",
+                        "size": "24960000",
+                        "title": "الدرس 1: مقدمة إيصال السالك",
+                    },
+                    {
+                        "name": "024.mp3",
+                        "source": "original",
+                        "length": "01:15:30",
+                        "size": "36240000",
+                        "title": "الدرس 24: قاعدة الأمور تتبع مقاصدها — تمام الكتاب",
+                    },
+                ],
+            }
+        ],
+    }
+    res_cross = discover_person("الشيخ أحمد السريري", person_id="sariri", offline_fixture=cross_source_fixture)
+    if len(res_cross["playlists"]) != 1:
+        errors.append(
+            f"[Gate 5] Expected YouTube playlist and Archive.org item for إيصال السالك to unify into 1 series, got {len(res_cross['playlists'])}"
+        )
+    else:
+        iysal_pl = res_cross["playlists"][0]
+        if iysal_pl.get("linked_archive_item") != "iysalo-salik_202103":
+            errors.append(
+                f"[Gate 5] Expected iysal playlist to link Archive item 'iysalo-salik_202103', got {iysal_pl.get('linked_archive_item')!r}"
+            )
+        ep1 = next((v for v in iysal_pl.get("videos", []) if v.get("episode_num") == 1), None)
+        if not ep1 or not str(ep1.get("archive_direct_url", "")).endswith("/iysalo-salik_202103/001.mp3"):
+            errors.append(f"[Gate 5] Missing archive_direct_url on Episode 1 of إيصال السالك: {ep1}")
+        recovered_ep24 = next(
+            (v for v in iysal_pl.get("videos", []) if v.get("recovered_from_archive") == "iysalo-salik_202103"),
+            None,
+        )
+        if not recovered_ep24 or recovered_ep24.get("episode_num") != 24 or recovered_ep24.get("pos") != 3:
+            errors.append(
+                f"[Gate 5] Failed to recover missing episode 24 from Archive.org into إيصال السالك: {recovered_ep24}"
+            )
+
+    # Also test duplicate Archive.org items unification (we-Nafs MP4 + we-Nafs_A MP3)
+    nafs_fixture = {
+        "sheikh": {"id": "roushdy", "name": "علاء حامد"},
+        "raw_series": [],
+        "unique_videos": [],
+        "archive_payloads": [
+            {
+                "item_id": "we-Nafs",
+                "metadata": {"identifier": "we-Nafs", "title": "سلسلة و نفس و ما سواها - د. محمد بن ابراهيم الحمد"},
+                "files": [
+                    {"name": "Nafs-001.mp4", "source": "original", "length": "1500", "size": "30000000"},
+                    {"name": "Nafs-002.mp4", "source": "original", "length": "1600", "size": "32000000"},
+                ],
+            },
+            {
+                "item_id": "we-Nafs_A",
+                "metadata": {"identifier": "we-Nafs_A", "title": "سلسلة و نفس و ما سواها - د. محمد بن ابراهيم الحمد"},
+                "files": [
+                    {"name": "Nafs-01.mp3", "source": "original", "length": "1500", "size": "10000000"},
+                    {"name": "Nafs-02.mp3", "source": "original", "length": "1600", "size": "11000000"},
+                    {"name": "Nafs-03.mp3", "source": "original", "length": "1700", "size": "12000000"},
+                ],
+            },
+        ],
+    }
+    res_nafs = discover_person("علاء حامد", person_id="roushdy", offline_fixture=nafs_fixture)
+    if len(res_nafs["playlists"]) != 1:
+        errors.append(
+            f"[Gate 5] Expected we-Nafs (MP4) and we-Nafs_A (MP3) to unify into 1 series, got {len(res_nafs['playlists'])}"
+        )
+    else:
+        unified_nafs = res_nafs["playlists"][0]
+        if unified_nafs["video_count"] != 3:
+            errors.append(f"[Gate 5] Expected 3 unified episodes in we-Nafs series, got {unified_nafs['video_count']}")
+        if not str(unified_nafs["videos"][0].get("archive_direct_url", "")).endswith("/we-Nafs_A/Nafs-01.mp3"):
+            errors.append(
+                f"[Gate 5] Expected Episode 1 of we-Nafs to link MP3 archive_direct_url, got {unified_nafs['videos'][0]}"
+            )
+
+    print(
+        "[Gate 5] Shamela 8,589-Book Series Matcher, Archive.org Episode Sorting & Cross-Source Linking: "
+        "verified Shamela series matching, anti-false-positive stoplist, natural episode order, and gap recovery."
+    )
+
+
 def main() -> None:
     errors: list[str] = []
     test_gate1_pdf_flatedecode_extraction(errors)
     raw_data = test_gate2_unification_and_book_matching(errors)
     test_gate3_schema_and_sheikh_curation_compatibility(raw_data, errors)
     test_gate4_cycle2_real_data_regressions(errors)
+    test_gate5_shamela_series_matcher_and_cross_source_linking(raw_data, errors)
 
     if errors:
         print(f"\nFAIL ({len(errors)} errors):")

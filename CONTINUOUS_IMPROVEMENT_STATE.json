@@ -1,9 +1,9 @@
 {
   "loop_version": "2.0-subagent-driven",
-  "updated_at": "2026-10-18T18:08:45+02:00",
-  "cycle_count": 8,
-  "next_skill_index": 1,
-  "last_improved_skill": "turath-deep-indexing",
+  "updated_at": "2026-10-18T18:12:00+02:00",
+  "cycle_count": 9,
+  "next_skill_index": 2,
+  "last_improved_skill": "person-discovery-intake",
   "priority_backlog": [
     {
       "skill": "sheikh-series-pipeline",
@@ -24,15 +24,15 @@
     "agy-lean-cli"
   ],
   "last_completed_cycle": {
-    "cycle": 8,
+    "cycle": 9,
     "skills_tested": [
-      "turath-deep-indexing"
+      "person-discovery-intake"
     ],
     "real_datasets_used": [
-      "5 real aligned lecture series on hermes-vps (47 lessons): sariri__s008 (Al-Waraqat), dedew__sharh_manzouma_adoudiya, alihani__tibyan, hafiz__munqidh_dalal, gomaa__s014 (Al-Hikam)",
-      "Classical Matn books in /Users/macm1pro/REPOS/books/all_9_books_deep.json (book:2176 Al-Waraqat, book:3418)"
+      "All 17 curated sheikh raw JSON inventories in /Users/macm1pro/REPOS/cheikh/data/curated_sheikhs (*_raw.json, 560 classified series)",
+      "Shamela4 8,589-book index (shamela4_books_index.json.gz) and real Archive.org payloads in /Users/macm1pro/REPOS/cheikh/data/missing_episodes_found.json (Aqeeda28, char7.elmowata2, we-Nafs, we-Nafs_A, Islamic_Tape-252_uP_bY_mUSLEm)"
     ],
-    "bugs_fixed": 6,
+    "bugs_fixed": 5,
     "gate_status": "PASS (0 errors)"
   }
 }

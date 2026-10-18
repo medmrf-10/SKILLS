@@ -107,6 +107,9 @@ SHEIKH_PHOTOS: dict[str, str] = {
     "ayman": "https://medmrf-10.github.io/hawshat/playlists/img/ayman-abdelrahim.jpg",
     "dedew": "https://medmrf-10.github.io/hawshat/playlists/img/daddo.jpg",
     "alihani": "https://yt3.googleusercontent.com/dNA40wR5QtnNoK1ilEriqsLa16RdGAXBgN-dXxDQzF0CxP5ET9itcRC4gjPRPL99kuHFsO4ApA=s900-c-k-c0x00ffffff-no-rj",
+    "khudayr": "https://upload.wikimedia.org/wikipedia/commons/e/e0/%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%83%D8%B1%D9%8A%D9%85_%D8%A7%D9%84%D8%AE%D8%B6%D9%8A%D8%B1.jpg",
+    "fawzan": "https://upload.wikimedia.org/wikipedia/commons/8/8c/Saleh_Al-Fawzan.png",
+    "shanqiti": "https://upload.wikimedia.org/wikipedia/commons/a/a2/%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%AD%D8%B3%D9%86_%D8%A7%D9%84%D8%AF%D8%AF%D9%88.jpg",
 }
 
 AR_TO_LATIN_MAP: dict[str, str] = {
@@ -1545,6 +1548,162 @@ MATN_KNOWLEDGE_BASE: list[dict[str, Any]] = [
         "science": "الحديث والتزكية والبناء المنهجي",
         "keywords": ["المنهاج من ميراث النبوة", "خلاصات أبواب المنهاج"],
     },
+    # --- متون وكتب إضافية من سلاسل المشايخ الـ 17 ---
+    {
+        "book_id": "balagha:tuhfat_al_ikhwan_dardir",
+        "title": "تحفة الإخوان في علم البيان",
+        "author": "أبو البركات أحمد الدردير",
+        "science": "البلاغة العربية",
+        "keywords": ["تحفة الإخوان في علم البيان", "تحفة الإخوان للدردير", "تحفة الإخوان لأحمد الدردير"],
+    },
+    {
+        "book_id": "balagha:al_balagha_al_wadiha",
+        "title": "البلاغة الواضحة",
+        "author": "علي الجارم ومصطفى أمين",
+        "science": "البلاغة العربية",
+        "keywords": ["البلاغة الواضحة"],
+    },
+    {
+        "book_id": "sarf:taysir_al_ilal_wal_ibdal",
+        "title": "تيسير الإعلال والإبدال",
+        "author": "عبد العليم إبراهيم",
+        "science": "النحو والصرف",
+        "keywords": ["تيسير الإعلال والإبدال"],
+    },
+    {
+        "book_id": "nahw:al_nahw_al_wazifi",
+        "title": "النحو الوظيفي",
+        "author": "عبد العليم إبراهيم",
+        "science": "النحو والصرف",
+        "keywords": ["النحو الوظيفي"],
+    },
+    {
+        "book_id": "sarf:unwan_al_zarf",
+        "title": "عنوان الظرف في فن الصرف",
+        "author": "هارون بن عبد الرزاق",
+        "science": "النحو والصرف",
+        "keywords": ["عنوان الظرف"],
+    },
+    {
+        "book_id": "mantiq:al_miftah_fi_ilm_al_mantiq",
+        "title": "المفتاح في علم المنطق",
+        "author": "علماء المنطق",
+        "science": "المنطق وآداب البحث",
+        "keywords": ["المفتاح في علم المنطق"],
+    },
+    {
+        "book_id": "hadith:taysir_mustalah_al_hadith",
+        "title": "تيسير مصطلح الحديث (وتيسير علوم الحديث)",
+        "author": "محمود الطحان",
+        "science": "مصطلح الحديث وعلومه",
+        "keywords": ["تيسير مصطلح الحديث", "تيسير علوم الحديث"],
+    },
+    {
+        "book_id": "fiqh:kitab_al_siyam_sirajuddin",
+        "title": "حول الصيام (كتاب الصيام)",
+        "author": "عبد الله سراج الدين",
+        "science": "الفقه والتزكية",
+        "keywords": ["كتاب الصيام للشيخ عبدالله سراج الدين", "كتاب الصيام للشيخ عبد الله سراج الدين"],
+    },
+    {
+        "book_id": "tazkia:al_wasaya_al_nafia_haddad",
+        "title": "الوصايا النافعة",
+        "author": "الحبيب عبد الله بن علوي الحداد",
+        "science": "التزكية والسلوك",
+        "keywords": ["الوصايا النافعة", "كتاب الوصايا النافعة"],
+    },
+    {
+        "book_id": "tazkia:fath_basair_al_ikhwan_hafiz",
+        "title": "فتح بصائر الإخوان",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والسلوك",
+        "keywords": ["فتح بصائر الإخوان"],
+    },
+    {
+        "book_id": "tazkia:fath_al_karim_al_ghafir",
+        "title": "فتح الكريم الغافر في شرح جلبة المسافر",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والآداب",
+        "keywords": ["فتح الكريم الغافر", "جلبة المسافر"],
+    },
+    {
+        "book_id": "tazkia:aqd_al_mithaq",
+        "title": "عقد الميثاق",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والسلوك",
+        "keywords": ["كتاب: عقد الميثاق", "عقد الميثاق"],
+    },
+    {
+        "book_id": "tazkia:mamlakat_al_qalb",
+        "title": "مملكة القلب والأعضاء",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والسلوك",
+        "keywords": ["مملكة القلب والأعضاء"],
+    },
+    {
+        "book_id": "tazkia:raf_al_astar",
+        "title": "رفع الأستار",
+        "author": "الحبيب عمر بن حفيظ",
+        "science": "التزكية والعقيدة",
+        "keywords": ["كتاب: رفع الأستار", "رفع الأستار"],
+        "exclude_keywords": ["رحلة الهند", "India Tour"],
+    },
+    {
+        "book_id": "tazkia:lidhati_bidhati_bakathir",
+        "title": "شرح قصيدة لذاتي بذاتي",
+        "author": "عبد الله باكثير",
+        "science": "التزكية والأدب",
+        "keywords": ["قصيدة: لذاتي بذاتي", "لذاتي بذاتي"],
+    },
+    {
+        "book_id": "tazkia:qasidat_tariqatuna_rawwas",
+        "title": "قصيدة طريقتنا للإمام الرواس",
+        "author": "محمد مهدي الصيادي الرواس",
+        "science": "التزكية والسلوك",
+        "keywords": ["قصيدة طريقتنا"],
+    },
+    {
+        "book_id": "fikr:afrah_al_ruh_qutb",
+        "title": "أفراح الروح",
+        "author": "سيد قطب",
+        "science": "الفكر الإسلامي والأدب",
+        "keywords": ["أفراح الروح"],
+    },
+    {
+        "book_id": "fiqh:al_durar_al_bahiyya",
+        "title": "الدرر البهية في المسائل الفقهية (والروضة الندية)",
+        "author": "محمد بن علي الشوكاني",
+        "science": "الفقه المقارن",
+        "keywords": ["الدرر البهية", "الروضة الندية شرح الدرر البهية"],
+    },
+    {
+        "book_id": "tajweed:al_durar_al_lawami",
+        "title": "الدرر اللوامع في أصل مقرأ الإمام نافع",
+        "author": "أبو الحسن علي بن محمد ابن بري",
+        "science": "القراءات والتجويد",
+        "keywords": ["الدرر اللوامع في أصل مقرأ الإمام نافع", "مقرأ الإمام نافع", "متن الدرر اللوامع"],
+    },
+    {
+        "book_id": "nahw:nazm_ubayd_rabbih",
+        "title": "نظم الآجرومية لعبيد ربه الشنقيطي",
+        "author": "محمد بن آب القلاوي الشنقيطي (عبيد ربه)",
+        "science": "النحو والصرف",
+        "keywords": ["نظم عبيد ربه", "عبيد ربه", "نظم الآجرومية لعبيد ربه"],
+    },
+    {
+        "book_id": "tafsir:manzumat_al_zamzami",
+        "title": "منظومة الزمزمي في علوم القرآن (التفسير)",
+        "author": "عبد العزيز بن علي الزمزمي",
+        "science": "التفسير وعلوم القرآن",
+        "keywords": ["منظومة الزمزمي", "نظم الزمزمي"],
+    },
+    {
+        "book_id": "tafsir:al_tashil_ibn_juzayy",
+        "title": "التسهيل لعلوم التنزيل",
+        "author": "محمد بن أحمد بن جزي الكلبي",
+        "science": "التفسير وعلوم القرآن",
+        "keywords": ["التسهيل لعلوم التنزيل", "تفسير ابن جزي"],
+    },
 ]
 
 QURAN_SURAHS: list[tuple[int, str]] = [
@@ -1595,6 +1754,49 @@ PERSON_AUTHOR_ALIASES: dict[str, list[str]] = {
 }
 
 _SHAMELA_BOOKS_CACHE: list[dict[str, Any]] | None = None
+_SHAMELA_PHRASE_INDEX_CACHE: dict[str, tuple[tuple[int, int, int], dict[str, Any], str]] | None = None
+
+# Generic Islamic topic names that must NOT auto-match standalone Shamela pamphlets without explicit author/matn context
+SHAMELA_GENERIC_TOPIC_STOPLIST: set[str] = {
+    normalize_arabic(w)
+    for w in [
+        "الايمان", "التوحيد", "العقيده", "العقيده الاسلاميه", "الفقه", "الفقه الاسلامي",
+        "قواعد الفقه", "قواعد الفقه الاسلامي", "التفسير", "الحديث", "السنه", "السنه النبويه",
+        "شرح السنه النبويه", "السيره", "السيره النبويه", "الهجره النبويه", "الفتاوي", "المحاضرات",
+        "الخطب", "خطبه الجمعه", "خطب الجمعه", "الدعاء", "الذكر", "الاداب", "الاخلاق", "الزهد",
+        "الرقائق", "العلم", "فضل العلم", "ادب الطلب", "اداب طالب العلم", "النحو", "الصرف",
+        "البلاغه", "المنطق", "الاصول", "اصول الفقه", "في اصول الفقه", "القواعد", "القواعد الفقهيه",
+        "الوصايا", "الرساله", "المقدمه", "الامالي", "الفوائد", "المجالس", "الفتن", "الملاحم",
+        "الجهاد", "الصلاه", "صلاه التراويح", "صلاه القيام", "صلاه الجماعه", "الصيام", "احكام الصيام",
+        "الزكاه", "الحج", "احكام الحج والعمره", "النكاح", "البيوع", "المعاملات", "فقه المعاملات",
+        "المواريث", "الفرائض", "علم الفرائض", "القضاء", "الشهادات", "الحدود", "الاعتصام", "البدع",
+        "التوبه", "الصبر", "الشكر", "اليقين", "التوكل", "المحبه", "الخوف", "الرجاء", "الورع",
+        "الاخلاص", "النيه", "الارشاد", "التبصره", "التذكره", "النصيحه", "الموعظه", "البيان",
+        "علم البيان", "علم المعاني", "علم البديع", "علم الصرف", "علم النحو", "علم المنطق",
+        "علم الكلام", "علم الاصول", "البرهان", "الايضاح", "التمهيد", "التقريب", "التحرير",
+        "التنقيح", "التلخيص", "المنتخب", "المختصر", "الجامع", "الكافي", "الشافي", "الوافي",
+        "المغني", "المجموع", "الحاوي", "المبسوط", "المحيط", "الذخيره", "المعونه", "المدخل",
+        "الاشراف", "الانصاف", "الانتصار", "الرد", "المسائل", "الاجوبه", "الاسئله والاجوبه",
+        "النوازل", "الاحكام", "تفسير القران", "تفسير القران العظيم", "تفسير القران الكريم",
+        "علوم القران", "علوم القران الكريم", "علوم الحديث", "مصطلح الحديث", "مقاصد الشريعه",
+        "تاريخ الاسلام", "تاريخ التشريع الاسلامي", "قصص الانبياء", "القصص القراني", "فضائل الصحابه",
+        "سير الصحابه", "حقوق الانسان", "حقوق الانسان في الاسلام", "الجنه والنار", "المدائح النبويه",
+        "شرح المدائح النبويه", "اسماء الله الحسني", "شرح اسماء الله الحسني", "علو الهمه",
+        "بدر الكبري", "غزوه بدر الكبري", "الايات البينات", "السراج المنير", "الامام مالك",
+        "الفكر العربي", "منهج الدعوه", "السياسه الشرعيه", "فقه عمل اليوم والليله", "عمل اليوم والليله",
+        "اعجاز القران", "اعجاز القران الكريم", "احباب الله", "اولياء الله", "محبه الرسول",
+        "محمد صلي الله عليه وسلم", "رسول الله صلي الله عليه وسلم", "حقيقه التوحيد", "شعب الايمان",
+        "منازل الاخره", "اهوال القبور", "اشراط الساعه", "علامات الساعه", "احاديث الفتن",
+        "الفتن والملاحم", "الاسراء والمعراج", "المولد النبوي", "اصول الدين", "فلسفه الدين",
+        "اعلام النبلاء", "الدرر السنيه", "الفتاوي الكبري", "السنن الكبري", "السنن الصغري",
+    ]
+}
+
+SHAMELA_BOOK_CONTEXT_MARKERS = (
+    "شرح", "كتاب", "متن", "منظومه", "نظم", "رساله", "قراءه", "مدارسه",
+    "حاشيه", "تعليق", "مختصر", "تهذيب", "مقاصد", "دوره", "مباحث",
+    "صرف", "نحو", "بلاغه", "منطق", "اصول",
+)
 
 
 def load_shamela_books_index(shamela_db_dir: str | Path | None = None) -> list[dict[str, Any]]:
@@ -1638,6 +1840,91 @@ def load_shamela_books_index(shamela_db_dir: str | Path | None = None) -> list[d
         return entries
 
     return []
+
+
+def _build_shamela_phrase_index(
+    shamela_db_dir: str | Path | None = None,
+) -> dict[str, tuple[tuple[int, int, int], dict[str, Any], str]]:
+    """
+    Build and cache a fast O(1) phrase lookup index over the 8,589 books in Shamela4,
+    mapping normalized book title phrases (full titles, matn stems before `في`/`شرح`/`على`,
+    and classical author-paired titles like `تمهيد الإسنوي`) to `(rank, book_entry, clean_title)`.
+    """
+    global _SHAMELA_PHRASE_INDEX_CACHE
+    if shamela_db_dir is None and _SHAMELA_PHRASE_INDEX_CACHE is not None:
+        return _SHAMELA_PHRASE_INDEX_CACHE
+
+    shamela = load_shamela_books_index(shamela_db_dir)
+    phrase_map: dict[str, tuple[tuple[int, int, int], dict[str, Any], str]] = {}
+
+    for b in shamela:
+        raw_t = b.get("t") or ""
+        author = b.get("a") or ""
+        death = b.get("d") or 99999
+        cat = b.get("c") or "علوم شرعية"
+        if cat == "كتب عامة" and death == 99999:
+            continue
+
+        parts = re.split(
+            r"\s*=\s*|\s*-\s*(?=(?:ط|ت|جـ|ضمن|دراسة|تحقيق|بإشراف|كتاب|محاضرات)\b)|\s+-\s+",
+            raw_t,
+        )
+        base_t = re.sub(r"\s*[\(\[«].*?[\)\]»]", "", parts[0]).strip()
+        if not base_t:
+            continue
+
+        cands: list[tuple[str, bool]] = [(base_t, True)]
+        stripped = re.sub(r"^(?:كتاب|متن|منظومة|نظم|رسالة|شرح|حاشية|مختصر)\s+", "", base_t).strip()
+        if stripped != base_t:
+            cands.append((stripped, True))
+
+        if death <= 1445:
+            for delim in (" في ", " على ", " عن ", " إلى ", " بين ", " شرح ", " لشرح ", " بشرح "):
+                if delim in base_t:
+                    bf = base_t.split(delim)[0].strip()
+                    cands.append((bf, False))
+                    sbf = re.sub(r"^(?:كتاب|متن|منظومة|نظم|رسالة|شرح|حاشية|مختصر)\s+", "", bf).strip()
+                    if sbf != bf:
+                        cands.append((sbf, False))
+                    bf_words = bf.split()
+                    if len(bf_words) == 4 and bf_words[2].startswith("و"):
+                        cands.append((f"{bf_words[0]} {bf_words[1]}", False))
+            bt_words = base_t.split()
+            if len(bt_words) == 4 and bt_words[2].startswith("و"):
+                cands.append((f"{bt_words[0]} {bt_words[1]}", False))
+
+        if death <= 1390 and author:
+            norm_a = normalize_arabic(author)
+            a_words = norm_a.split()
+            short_a = a_words[-1] if a_words else ""
+            head_w = base_t.split(" في ")[0].strip()
+            if len(head_w.split()) == 1 and head_w.startswith("ال") and len(short_a) >= 4:
+                cands.append((f"{head_w[2:]} {author}", True))
+                cands.append((f"{head_w} ل{author}", True))
+
+        for c_str, is_full in cands:
+            nc = normalize_arabic(c_str)
+            if not nc or nc in SHAMELA_GENERIC_TOPIC_STOPLIST:
+                continue
+            words = nc.split()
+            if len(words) < 2 or len(nc) < 9:
+                continue
+            if words[0] in (
+                "دروس", "محاضرات", "سلسله", "برنامج", "مقتطفات", "لقاء", "ندوه",
+                "مؤتمر", "ملتقي", "حوار", "فتاوي", "اسئله", "تاريخ", "قصه",
+                "موقف", "منهج", "اثر", "مكانه", "رحله", "موسم", "مجلس", "مجالس",
+            ):
+                continue
+            if death == 99999 and (len(words) < 3 or len(nc) < 14):
+                continue
+            rank = (1 if is_full else 0, -death, len(nc))
+            prev = phrase_map.get(nc)
+            if prev is None or rank > prev[0]:
+                phrase_map[nc] = (rank, b, base_t)
+
+    if shamela_db_dir is None:
+        _SHAMELA_PHRASE_INDEX_CACHE = phrase_map
+    return phrase_map
 
 
 def _word_boundary_match(needle_norm: str, haystack_norm: str) -> bool:
@@ -1727,24 +2014,113 @@ def find_shamela_authored_books(
     return matched_books
 
 
+def match_series_to_shamela_index(
+    series_title: str,
+    video_titles: list[str] | None = None,
+    shamela_db_dir: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """
+    Automatic Layer-2 Series-to-Book Matcher against the 8,589 books in `shamela4_books_index.json.gz`.
+    Uses O(1) n-gram + proclitic hash-table lookup with strict generic-topic filtering so classical and
+    established books not listed in `MATN_KNOWLEDGE_BASE` (e.g. `شذا العرف في فن الصرف`, `جواهر البلاغة`,
+    `أصول الشاشي`, `تمهيد الإسنوي`, `معيار العلم`, `مدارج السالكين`, `روضة الناظر`, `منهاج الطالبين`,
+    `نيل الأوطار`, `سبل السلام`, `كشاف القناع`, `أضواء البيان`, `مفتاح العلوم`) are matched automatically.
+    """
+    phrase_map = _build_shamela_phrase_index(shamela_db_dir)
+    if not phrase_map:
+        return None
+
+    def _find_best_in_text(norm_text: str, require_book_marker: bool = False) -> tuple[str, dict[str, Any], str] | None:
+        if not norm_text:
+            return None
+        if require_book_marker and not any(m in norm_text for m in SHAMELA_BOOK_CONTEXT_MARKERS):
+            return None
+        tokens = [
+            t for t in re.split(r"[\s/:|\-–—_(\[\{«\"'،؛,.؟!)\]\}\»]+", norm_text) if t
+        ]
+        n_tok = len(tokens)
+        best: tuple[str, dict[str, Any], str] | None = None
+        for i in range(n_tok):
+            first_tok = tokens[i]
+            first_variants = [first_tok]
+            if len(first_tok) >= 4:
+                if first_tok.startswith("لل") and len(first_tok) >= 5:
+                    first_variants.append("ال" + first_tok[2:])
+                for pfx in ("وب", "ول", "فل", "فب", "و", "ف", "ب", "ك", "ل"):
+                    if first_tok.startswith(pfx) and len(first_tok) - len(pfx) >= 3:
+                        rem = first_tok[len(pfx):]
+                        first_variants.append(rem)
+                        if rem.startswith("لل") and len(rem) >= 5:
+                            first_variants.append("ال" + rem[2:])
+            for j in range(i + 2, min(n_tok + 1, i + 9)):
+                tail_str = " ".join(tokens[i + 1 : j])
+                for fv in first_variants:
+                    cand = f"{fv} {tail_str}"
+                    hit = phrase_map.get(cand)
+                    if hit is not None:
+                        _, b_entry, clean_t = hit
+                        if (b_entry.get("d") or 99999) == 99999 and not any(
+                            m in norm_text for m in SHAMELA_BOOK_CONTEXT_MARKERS
+                        ):
+                            continue
+                        if best is None or len(cand) > len(best[0]):
+                            best = (cand, b_entry, clean_t)
+        return best
+
+    norm_series = normalize_arabic(series_title)
+    series_hit = _find_best_in_text(norm_series, require_book_marker=False)
+    if series_hit is not None:
+        cand_key, b_entry, clean_t = series_hit
+        return {
+            "book_id": f"shamela:{b_entry['id']}",
+            "title": clean_t,
+            "author": b_entry.get("a") or "",
+            "science": b_entry.get("c") or "علوم شرعية",
+            "confidence": round(0.91 + min(0.04, len(cand_key) / 1000.0), 2),
+        }
+
+    # Check sample video titles only when they explicitly state `شرح كتاب ...` / `قراءة كتاب ...`
+    # and the series title is not a general tour/conference bucket
+    if video_titles and not any(w in norm_series for w in ("رحله", "مؤتمر", "ملتقي", "مقتطفات", "مقاطع")):
+        v_norm = normalize_arabic(video_titles[0] or "")
+        if re.search(r"(?:شرح|قراءه|مدارسه|درس في)\s+كتاب", v_norm):
+            v_hit = _find_best_in_text(v_norm, require_book_marker=True)
+            if v_hit is not None:
+                cand_key, b_entry, clean_t = v_hit
+                return {
+                    "book_id": f"shamela:{b_entry['id']}",
+                    "title": clean_t,
+                    "author": b_entry.get("a") or "",
+                    "science": b_entry.get("c") or "علوم شرعية",
+                    "confidence": 0.87,
+                }
+
+    return None
+
+
 def match_quran_tafsir_series(
     series_title: str,
     video_titles: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """
     Match Quran Surah Tafsir / Tadabbur / Bayan playlists (e.g. `تفسير سورة البقرة`,
-    `سورة البقرة` with videos `تفسير سورة البقرة`, `د. فاضل السامرائي - سورة البقرة`)
+    `فسيرسورة السجدة`, `سورة البقرة` with videos `تفسير سورة البقرة`)
     with strict word-boundary checks so `الحج` never confuses with `الحجر` and single-letter
     surahs (`ص`, `ق`) require explicit `سورة ص` / `سورة ق`.
     """
-    norm_series = normalize_arabic(series_title)
-    sample_videos = " | ".join(normalize_arabic(t) for t in (video_titles or [])[:6])
+    norm_series = re.sub(r"(?:تفسير|فسير)سوره\b", "تفسير سوره", normalize_arabic(series_title))
+    norm_vids = [
+        re.sub(r"(?:تفسير|فسير)سوره\b", "تفسير سوره", normalize_arabic(t))
+        for t in (video_titles or [])[:6]
+        if t
+    ]
+    sample_videos = " | ".join(norm_vids)
     combined = f"{norm_series} | {sample_videos}"
 
     # Require explicit tafsir/tadabbur/bayan/surah indicator in either series title or video titles
     has_tafsir_context = any(
         w in combined
-        for w in ("تفسير", "تدبر", "لمسات بيانيه", "خواطر", "سوره ")
+        for w in ("تفسير", "تدبر", "لمسات بيانيه", "خواطر", "سوره ", "مقاصد السور")
     )
     if not has_tafsir_context:
         return None
@@ -1772,6 +2148,27 @@ def match_quran_tafsir_series(
                 "confidence": 0.92,
             }
 
+    # Check if majority of sampled videos explicitly explain the same surah inside a dedicated tafsir/fajr lesson series
+    if norm_vids and any(w in norm_series for w in ("تفسير", "درس الفجر", "مجالس قرانيه")):
+        surah_counts: dict[tuple[int, str], int] = {}
+        for nv in norm_vids:
+            if "تفسير" not in nv and "تدبر" not in nv:
+                continue
+            for s_num, s_name in QURAN_SURAHS:
+                ns_name = normalize_arabic(s_name)
+                if _word_boundary_match(f"سوره {ns_name}", nv):
+                    surah_counts[(s_num, s_name)] = surah_counts.get((s_num, s_name), 0) + 1
+        if len(surah_counts) == 1:
+            (s_num, s_name), cnt = next(iter(surah_counts.items()))
+            if cnt >= max(1, (len(norm_vids) + 1) // 2):
+                return {
+                    "book_id": f"tafsir:surah_{s_num:03d}",
+                    "title": f"تفسير سورة {s_name}",
+                    "author": "تفسير القرآن الكريم",
+                    "science": "التفسير وعلوم القرآن",
+                    "confidence": 0.90,
+                }
+
     for juz_id, juz_title, juz_kw in [
         ("tafsir:juz_amma", "تفسير جزء عم", "جزء عم"),
         ("tafsir:juz_tabarak", "تفسير جزء تبارك", "جزء تبارك"),
@@ -1788,7 +2185,16 @@ def match_quran_tafsir_series(
 
     if any(
         _word_boundary_match(normalize_arabic(p), norm_series)
-        for p in ("تفسير القرآن الكريم", "تفسير قصار السور", "تفسير سريع للقرآن الكريم", "مجالس التفسير")
+        for p in (
+            "تفسير القرآن الكريم",
+            "تفسير قصار السور",
+            "تفسير سريع للقرآن الكريم",
+            "مجالس التفسير",
+            "درس التفسير",
+            "تفسير وتدبر للقرآن الكريم",
+            "الطريقة المثلى لتفسير القرآن",
+            "مقاصد السور",
+        )
     ):
         return {
             "book_id": "tafsir:quran_karim",
@@ -1805,10 +2211,13 @@ def match_title_to_book(
     series_title: str,
     video_titles: list[str] | None = None,
     extra_books: list[dict[str, Any]] | None = None,
+    shamela_db_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """
-    Match a playlist/series title (and sample video titles) against classical matns, books,
-    and Quran Surah Tafsir series using Arabic word-boundary checks and strict science separation.
+    Match a playlist/series title (and sample video titles) across 3 deterministic layers:
+      Layer 1: Curated `MATN_KNOWLEDGE_BASE` (+ optional `extra_books`) with science anti-confusion rules.
+      Layer 2: `match_quran_tafsir_series` (114 Quran Surahs & Juzs with strict word boundaries).
+      Layer 3: `match_series_to_shamela_index` (8,589 books in `shamela4_books_index.json.gz`).
     """
     norm_series = normalize_arabic(series_title)
     sample_videos = " | ".join(normalize_arabic(t) for t in (video_titles or [])[:8])
@@ -1866,7 +2275,11 @@ def match_title_to_book(
     if best_match is not None:
         return best_match
 
-    return match_quran_tafsir_series(series_title, video_titles)
+    tafsir_match = match_quran_tafsir_series(series_title, video_titles)
+    if tafsir_match is not None:
+        return tafsir_match
+
+    return match_series_to_shamela_index(series_title, video_titles, shamela_db_dir=shamela_db_dir)
 
 
 def discover_person_books(
@@ -1921,7 +2334,7 @@ def discover_person_books(
             continue
         v_titles = [v.get("title", "") for v in pl.get("videos", [])]
         matched = pl.get("matched_book") or match_title_to_book(
-            pl.get("title", ""), v_titles, extra_books=extra_books
+            pl.get("title", ""), v_titles, extra_books=extra_books, shamela_db_dir=shamela_db_dir
         )
         if matched:
             pl["matched_book"] = matched
@@ -1934,7 +2347,7 @@ def discover_person_books(
                     "title": matched["title"],
                     "author": b_author,
                     "science": matched.get("science") or "علوم شرعية",
-                    "source": "series_matn_matcher",
+                    "source": "shamela4_db" if b_id.startswith("shamela:") else "series_matn_matcher",
                     "is_authored_by_person": is_authored,
                     "is_explained_by_person": True,
                     "matched_playlists": [],
@@ -1949,7 +2362,7 @@ def discover_person_books(
     for item in archive_items:
         f_titles = [f.get("title", "") for f in item.get("files", [])]
         matched = item.get("matched_book") or match_title_to_book(
-            item.get("title", ""), f_titles, extra_books=extra_books
+            item.get("title", ""), f_titles, extra_books=extra_books, shamela_db_dir=shamela_db_dir
         )
         if matched:
             item["matched_book"] = matched
@@ -1962,14 +2375,14 @@ def discover_person_books(
                     "title": matched["title"],
                     "author": b_author,
                     "science": matched.get("science") or "علوم شرعية",
-                    "source": "archive_matn_matcher",
+                    "source": "shamela4_db" if b_id.startswith("shamela:") else "archive_matn_matcher",
                     "is_authored_by_person": is_authored,
                     "is_explained_by_person": True,
                     "matched_playlists": [],
                 }
             else:
                 books_map[b_id]["is_explained_by_person"] = True
-            arch_pid = f"archive__{item['item_id']}"
+            arch_pid = item.get("linked_playlist_id") or f"archive__{item['item_id']}"
             if arch_pid not in books_map[b_id]["matched_playlists"]:
                 books_map[b_id]["matched_playlists"].append(arch_pid)
 
@@ -1984,9 +2397,76 @@ AUDIO_EXT_PRIORITY: dict[str, int] = {
     ".mp3": 1,
     ".m4a": 2,
     ".flac": 3,
-    ".ogg": 4,
-    ".wav": 5,
+    ".opus": 4,
+    ".aac": 5,
+    ".ogg": 6,
+    ".wav": 7,
+    ".wma": 8,
+    ".mp4": 9,
+    ".m4v": 10,
+    ".mkv": 11,
+    ".webm": 12,
+    ".avi": 13,
 }
+
+
+def _build_arabic_ordinals_list() -> list[tuple[str, int]]:
+    """Build Arabic ordinal phrases (1..59) sorted by descending length so compound ordinals match first."""
+    base_pairs: list[tuple[str, int]] = [
+        ("الأول", 1), ("الاول", 1), ("الأولى", 1), ("الاولى", 1),
+        ("الثاني", 2), ("الثانية", 2),
+        ("الثالث", 3), ("الثالثة", 3),
+        ("الرابع", 4), ("الرابعة", 4),
+        ("الخامس", 5), ("الخامسة", 5),
+        ("السادس", 6), ("السادسة", 6),
+        ("السابع", 7), ("السابعة", 7),
+        ("الثامن", 8), ("الثامنة", 8),
+        ("التاسع", 9), ("التاسعة", 9),
+        ("العاشر", 10), ("العاشرة", 10),
+        ("الحادي عشر", 11), ("الحادية عشرة", 11),
+        ("الثاني عشر", 12), ("الثانية عشرة", 12),
+        ("الثالث عشر", 13), ("الثالثة عشرة", 13),
+        ("الرابع عشر", 14), ("الرابعة عشرة", 14),
+        ("الخامس عشر", 15), ("الخامسة عشرة", 15),
+        ("السادس عشر", 16), ("السادسة عشرة", 16),
+        ("السابع عشر", 17), ("السابعة عشرة", 17),
+        ("الثامن عشر", 18), ("الثامنة عشرة", 18),
+        ("التاسع عشر", 19), ("التاسعة عشرة", 19),
+    ]
+    units_for_compounds: list[tuple[list[str], int]] = [
+        (["الحادي", "الواحد", "الحادية", "الواحدة"], 1),
+        (["الثاني", "الثانية"], 2),
+        (["الثالث", "الثالثة"], 3),
+        (["الرابع", "الرابعة"], 4),
+        (["الخامس", "الخامسة"], 5),
+        (["السادس", "السادسة"], 6),
+        (["السابع", "السابعة"], 7),
+        (["الثامن", "الثامنة"], 8),
+        (["التاسع", "التاسعة"], 9),
+    ]
+    tens_list: list[tuple[list[str], int]] = [
+        (["العشرون", "العشرين"], 20),
+        (["الثلاثون", "الثلاثين"], 30),
+        (["الأربعون", "الاربعون", "الأربعين", "الاربعين"], 40),
+        (["الخمسون", "الخمسين"], 50),
+    ]
+    for ten_forms, ten_val in tens_list:
+        for tf in ten_forms:
+            base_pairs.append((tf, ten_val))
+            for unit_forms, unit_val in units_for_compounds:
+                for uf in unit_forms:
+                    base_pairs.append((f"{uf} و{tf}", ten_val + unit_val))
+                    base_pairs.append((f"{uf} و {tf}", ten_val + unit_val))
+
+    normalized_map: dict[str, int] = {}
+    for phrase, num in base_pairs:
+        np = normalize_arabic(phrase)
+        if np:
+            normalized_map[np] = num
+    return sorted(normalized_map.items(), key=lambda kv: len(kv[0]), reverse=True)
+
+
+ARABIC_ORDINAL_TO_EP_NUM: list[tuple[str, int]] = _build_arabic_ordinals_list()
 
 
 def parse_archive_duration(length_val: Any) -> int:
@@ -2014,6 +2494,137 @@ def parse_archive_duration(length_val: Any) -> int:
         return 0
 
 
+def extract_episode_num_from_text(text: str, item_title: str = "") -> int | None:
+    """
+    Extract an explicit episode/lesson number (`episode_num`) from an Archive.org filename stem
+    or lesson title. Handles:
+      - Pure numeric stems: `001` -> 1, `024` -> 24
+      - Parenthesized episode numbers: `aqeeda (10)` -> 10, `aqeeda (2)` -> 2
+      - Leading numbered prefixes: `01 - الدرس الأول` -> 1, `005_sharh` -> 5
+      - Explicit Arabic lesson/session markers: `الدرس 14`, `المجلس (7)`, `الحلقة 03` -> 14, 7, 3
+      - Trailing separated episode numbers: `Nafs-19` -> 19, `Nafs-001` -> 1, `sharh_waraqat_01` -> 1,
+        `leqa2_eliman_16` -> 16 (ignores Arabizi digits embedded inside words like `leqa2` or `char7`)
+      - Arabic ordinals (1..59): `المجلس الرابع والعشرون` -> 24, `المجلس الثاني عشر` -> 12, `المجلس الأول` -> 1
+    """
+    s = (text or "").strip()
+    if not s:
+        return None
+
+    # 1. Pure digits (`001`, `24`)
+    if s.isdigit():
+        val = int(s)
+        return val if 1 <= val <= 9999 else None
+
+    # 2. Parenthesized or bracketed number (`aqeeda (10)`, `درس [05]`)
+    m_paren = re.search(r"[\(\[\{]\s*(\d{1,4})\s*[\)\]\}]", s)
+    if m_paren:
+        val = int(m_paren.group(1))
+        if 1 <= val <= 9999:
+            return val
+
+    # 3. Leading number followed by separator (`01 - ...`, `003_...`, `12. ...`)
+    m_lead = re.match(r"^\s*(\d{1,4})\s*[-_\.\:\|\s]", s)
+    if m_lead:
+        val = int(m_lead.group(1))
+        if 1 <= val <= 9999:
+            return val
+
+    # 4. Explicit Arabic lesson word + digits (`الدرس 12`, `المجلس 4`, `الحلقة 09`, `لقاء 16`)
+    m_ar_ep = re.search(r"(?:الدرس|درس|المجلس|مجلس|الحلقة|حلقة|اللقاء|لقاء|الشريط|شريط)\s*[:\-_#\(]*\s*(\d{1,4})\b", s)
+    if m_ar_ep:
+        val = int(m_ar_ep.group(1))
+        if 1 <= val <= 9999:
+            return val
+
+    # 5. Trailing number after separator (`Nafs-19`, `Nafs-001`, `sharh_waraqat_01`, `leqa2_eliman_16`)
+    m_trail = re.search(r"[-_\s](\d{1,4})\s*$", s)
+    if m_trail:
+        val = int(m_trail.group(1))
+        # Avoid mistaking Hijri/Gregorian years (e.g. 1444, 2021) for episode numbers
+        if 1 <= val <= 999 and not (1400 <= val <= 1460 or 1970 <= val <= 2035):
+            return val
+
+    # 6. Arabic ordinals (`المجلس الأول`, `الدرس الثاني عشر`, `اللقاء الرابع والعشرون`)
+    norm_s = normalize_arabic(s)
+    for ord_phrase, ord_val in ARABIC_ORDINAL_TO_EP_NUM:
+        if re.search(rf"(?:^|\s){re.escape(ord_phrase)}(?:\s|$)", norm_s):
+            return ord_val
+
+    return None
+
+
+def extract_archive_episode_num(file_obj: dict[str, Any], stem: str, item_title: str = "") -> int | None:
+    """
+    Determine the canonical episode number for an Archive.org file object:
+      1. From the filename stem (`003.mp3` -> 3, `aqeeda (10).mp3` -> 10, `Nafs-019.mp4` -> 19)
+      2. From the file's `track` metadata (`track: "03"` or `"5/28"`)
+      3. From the file's `title` metadata (`الدرس 24: ...`, `المجلس الأول ...`)
+    Filename stem is checked BEFORE `title` so that sub-topic numbers inside ID3 titles
+    (such as `003.mp3` having ID3 title `تتمة أوقات الصلاة 02`) never override the file's actual lesson number.
+    """
+    ep = extract_episode_num_from_text(stem, item_title=item_title)
+    if ep is not None:
+        return ep
+
+    track_raw = str(file_obj.get("track") or "").strip()
+    if track_raw:
+        m_tr = re.match(r"^(\d{1,4})(?:/\d+)?$", track_raw)
+        if m_tr:
+            val = int(m_tr.group(1))
+            if 1 <= val <= 9999:
+                return val
+
+    f_title = str(file_obj.get("title") or "").strip()
+    if f_title:
+        ep = extract_episode_num_from_text(f_title, item_title=item_title)
+        if ep is not None:
+            return ep
+
+    return None
+
+
+def normalize_archive_file_title(
+    raw_title: str | None,
+    stem: str,
+    ep_num: int | None,
+    pos: int,
+    item_title: str,
+) -> str:
+    """
+    Produce a clean, human-readable Arabic lesson title for an Archive.org file:
+    - Filters out website/URL spam in ID3 `title` tags (e.g. `www.naseemalsham.com`, `http://...`).
+    - Normalizes pure-numeric or Latin-transliterated stems (`001`, `aqeeda (10)`, `sharh_waraqat_01`, `Nafs-019`)
+      into `الدرس <ep_num> | <item_title>`.
+    - Preserves genuine descriptive Arabic titles (`الدرس 24: قاعدة الأمور تتبع مقاصدها`, `المجلس الأول من كتاب المقاصد`),
+      and prepends `الدرس <ep_num>: ` when a descriptive Arabic title lacks the lesson number (`تتمة أوقات الصلاة 02`).
+    """
+    candidate = (raw_title or "").strip()
+    # Reject URL/domain spam in ID3 tags
+    if candidate and re.search(r"(?:https?://|www\.|\.(?:com|net|org|info|me)\b)", candidate, re.IGNORECASE):
+        candidate = ""
+
+    # Check if candidate has meaningful Arabic letters
+    has_arabic = bool(re.search(r"[\u0600-\u06FF]", candidate))
+    if not candidate or not has_arabic:
+        stem_clean = stem.strip()
+        if re.search(r"[\u0600-\u06FF]", stem_clean) and not stem_clean.isdigit():
+            candidate = stem_clean
+            has_arabic = True
+
+    effective_ep = ep_num if ep_num is not None else pos
+    if not has_arabic or candidate.isdigit():
+        return f"الدرس {effective_ep} | {item_title}"
+
+    # If the descriptive Arabic title doesn't already mention الدرس/المجلس/الحلقة/اللقاء and we know ep_num
+    if ep_num is not None and not re.search(r"(?:الدرس|درس|المجلس|مجلس|الحلقة|حلقة|اللقاء|لقاء)", candidate):
+        # Also check if candidate is identical to item_title
+        if normalize_arabic(candidate) == normalize_arabic(item_title):
+            return f"الدرس {ep_num} | {item_title}"
+        return f"الدرس {ep_num}: {candidate}"
+
+    return candidate
+
+
 def parse_archive_metadata_payload(
     item_id: str,
     meta_payload: dict[str, Any],
@@ -2023,14 +2634,19 @@ def parse_archive_metadata_payload(
     """
     Parse an Archive.org `/metadata/<item_id>` JSON payload:
     - Extracts item metadata (`title`, `creator`, `uploader`, `mediatype`, `date`).
-    - Filters audio files and deduplicates derivative formats by stem (`.mp3` preferred over `.ogg`).
-    - Computes exact `dur_s` / `duration` and `direct_url` for each audio file.
+    - Filters audio/video lecture files and deduplicates derivative formats by stem
+      (`.mp3` preferred over `.ogg`, `.mp4` preferred over `.ogv`).
+    - Extracts `episode_num` from filenames/tracks/titles and sorts lessons in natural numerical order
+      (so `aqeeda (2).mp3` comes before `aqeeda (10).mp3`).
+    - Cleans ID3 URL/website spam and normalizes raw numeric/Latin stems into clean Arabic titles.
+    - Computes exact `dur_s` / `duration` and `direct_url` for each file.
     """
     meta = meta_payload.get("metadata") or {}
     raw_files = meta_payload.get("files") or []
     clean_item_slug = re.sub(r"[^A-Za-z0-9_]+", "_", item_id).strip("_")
+    item_title = (meta.get("title") or item_id).strip()
 
-    # Group audio candidates by stem so derivative .ogg files don't duplicate original .mp3 files
+    # Group audio/video candidates by stem so derivative .ogg/.ogv files don't duplicate original files
     by_stem: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for f in raw_files:
         fname = f.get("name") or ""
@@ -2041,36 +2657,52 @@ def parse_archive_metadata_payload(
             continue
         stem = os.path.splitext(fname)[0]
         prio = AUDIO_EXT_PRIORITY[ext]
-        # Prefer 'original' source slightly over 'derivative' for same priority
+        # Prefer 'original' source over 'derivative' for same or lower priority
         if f.get("source") == "derivative":
-            prio += 10
+            prio += 20
         by_stem.setdefault(stem, []).append((prio, f))
 
-    selected_files: list[dict[str, Any]] = []
-    for stem in sorted(by_stem.keys()):
-        candidates = sorted(by_stem[stem], key=lambda x: x[0])
-        best_f = candidates[0][1]
-        selected_files.append(best_f)
+    selected_with_ep: list[tuple[int, int, str, int | None, str, dict[str, Any]]] = []
+    for stem, candidates in by_stem.items():
+        best_f = sorted(candidates, key=lambda x: x[0])[0][1]
+        base_stem = os.path.basename(stem)
+        ep_num = extract_archive_episode_num(best_f, base_stem, item_title=item_title)
+        selected_with_ep.append((
+            0 if ep_num is not None else 1,
+            ep_num if ep_num is not None else 0,
+            stem.lower(),
+            ep_num,
+            base_stem,
+            best_f,
+        ))
+
+    # Sort in natural episode order first, then stem lexicographically
+    selected_with_ep.sort(key=lambda x: (x[0], x[1], x[2]))
 
     audio_entries: list[dict[str, Any]] = []
     total_dur = 0
-    item_title = meta.get("title") or item_id
     upload_date_raw = str(meta.get("date") or meta.get("publicdate") or "")
     upload_date = re.sub(r"[^\d]", "", upload_date_raw)[:8] or None
 
-    for idx, f in enumerate(selected_files, 1):
+    for idx, (_, _, _, ep_num, base_stem, f) in enumerate(selected_with_ep, 1):
         fname = f["name"]
         dur_s = parse_archive_duration(f.get("length") or f.get("duration"))
         total_dur += dur_s
-        f_title = (f.get("title") or os.path.splitext(os.path.basename(fname))[0]).strip()
-        if f_title.isdigit():
-            f_title = f"الدرس {int(f_title)} | {item_title}"
+        f_title = normalize_archive_file_title(
+            raw_title=f.get("title"),
+            stem=base_stem,
+            ep_num=ep_num,
+            pos=idx,
+            item_title=item_title,
+        )
         direct_url = f"https://archive.org/download/{item_id}/{urllib.parse.quote(fname)}"
-        vid = f"archive__{person_id}__{clean_item_slug}__ep{idx:03d}"
+        ep_tag = ep_num if ep_num is not None else idx
+        vid = f"archive__{person_id}__{clean_item_slug}__ep{ep_tag:03d}"
         size_val = int(f["size"]) if str(f.get("size", "")).isdigit() else 0
 
         audio_entries.append({
             "pos": idx,
+            "episode_num": ep_num if ep_num is not None else idx,
             "name": fname,
             "title": f_title,
             "format": f.get("format") or os.path.splitext(fname)[1].lstrip(".").upper(),
@@ -2234,16 +2866,6 @@ def parse_yt_dlp_playlist_dump(
 # ---------------------------------------------------------------------------
 # 6. Deduplication, Unification & `<person_id>_raw.json` Builder
 # ---------------------------------------------------------------------------
-
-SHEIKH_PHOTOS: dict[str, str] = {
-    "kamali": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Said_Al-Kamali.jpg",
-    "khudayr": "https://upload.wikimedia.org/wikipedia/commons/e/e0/%D8%B9%D8%A8%D8%AF_%D8%A7%D9%84%D9%83%D8%B1%D9%8A%D9%85_%D8%A7%D9%84%D8%AE%D8%B6%D9%8A%D8%B1.jpg",
-    "fawzan": "https://upload.wikimedia.org/wikipedia/commons/8/8c/Saleh_Al-Fawzan.png",
-    "shanqiti": "https://upload.wikimedia.org/wikipedia/commons/a/a2/%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%AD%D8%B3%D9%86_%D8%A7%D9%84%D8%AF%D8%AF%D9%88.jpg",
-    "dedew": "https://upload.wikimedia.org/wikipedia/commons/a/a2/%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%AD%D8%B3%D9%86_%D8%A7%D9%84%D8%AF%D8%AF%D9%88.jpg",
-    "bouti": "https://upload.wikimedia.org/wikipedia/commons/6/62/Bouti.jpg",
-    "shaarawy": "https://upload.wikimedia.org/wikipedia/commons/c/c8/El_Shaarawy.jpg",
-}
 
 SHARED_CHANNEL_PERSON_MARKERS: list[tuple[str, list[str]]] = [
     ("bardoni", ["البردوني", "إبراهيم البردوني", "ابراهيم البردوني"]),
@@ -2531,6 +3153,246 @@ def ingest_offline_fixture(
     return channels, playlists, archive_items, pdf_links
 
 
+def _normalize_series_comparison_title(title: str, sheikh_name: str = "") -> str:
+    """
+    Normalize a YouTube playlist or Archive.org item title for cross-source series identity comparison:
+    - Strips scholar names, honorifics (`الشيخ`, `الدكتور`, `فضيلة`, `الأستاذ`, `العلامة`),
+      and generic series wrappers (`سلسلة`, `شرح`, `دروس`, `كتاب`, `متن`, `منظومة`, `برنامج`, `دورة`).
+    - Normalizes glued `و` (`و نفس و ما سواها` -> `ونفس وما سواها`).
+    """
+    t = normalize_arabic(title or "")
+    if not t:
+        return ""
+    # Normalize spaced 'و ' conjunction before words (`و نفس و ما` -> `ونفس وما`)
+    t = re.sub(r"\bو\s+", "و", t)
+    if sheikh_name:
+        sh_norm = normalize_arabic(sheikh_name)
+        for part in [sh_norm] + [w for w in sh_norm.split() if len(w) >= 4]:
+            if part:
+                t = t.replace(part, " ")
+    for _, markers in SHARED_CHANNEL_PERSON_MARKERS:
+        for m in markers:
+            mn = normalize_arabic(m)
+            if mn:
+                t = t.replace(mn, " ")
+    strip_words = {
+        "سلسله", "دروس", "محاضرات", "برنامج", "دوره", "شرح", "التعليق", "تعليق",
+        "علي", "على", "كتاب", "متن", "منظومه", "الشيخ", "للشيخ", "الدكتور", "للدكتور",
+        "فضيله", "الاستاذ", "العلامه", "الامام", "للامام", "ابي", "ابو", "ابن", "بن",
+        "رحمه", "الله", "حفظه", "تعالي", "بصوت", "كامل", "كامله", "جوده", "عاليه",
+        "د", "أ", "شيخ",
+    }
+    tokens = [w for w in t.split() if w not in strip_words and not w.isdigit()]
+    return " ".join(tokens).strip()
+
+
+def _has_conflicting_edition_markers(title_a: str, title_b: str) -> bool:
+    """
+    Return True if two series titles have explicitly conflicting edition/level markers
+    (e.g. `الأول` vs `الثاني`, `المختصر` vs `المطول`, `قديم` vs `جديد`).
+    """
+    na = f" {normalize_arabic(title_a)} "
+    nb = f" {normalize_arabic(title_b)} "
+    conflict_pairs = [
+        (" الاول ", " الثاني "),
+        (" الاولي ", " الثانيه "),
+        (" المختصر ", " المطول "),
+        (" القديم ", " الجديد "),
+        (" قديم ", " جديد "),
+    ]
+    for m1, m2 in conflict_pairs:
+        if (m1 in na and m2 in nb) or (m2 in na and m1 in nb):
+            return True
+    return False
+
+
+def link_and_deduplicate_cross_source_series(
+    playlists: list[dict[str, Any]],
+    archive_items: list[dict[str, Any]],
+    sheikh_name: str = "",
+) -> dict[str, int]:
+    """
+    Unify and deduplicate Archive.org items against YouTube playlists (and earlier Archive.org items):
+    - When an Archive.org item matches an existing series by `matched_book["book_id"]` (with same
+      `surah_number` for `quran-karim`) or normalized series title similarity:
+      1. Links `linked_archive_item` / `linked_archive_items` and `archive_details_url` on the target series.
+      2. Attaches `archive_direct_url` and `archive_vid` to matching episodes (by `episode_num`),
+         and upgrades missing (`0`) episode durations from Archive.org.
+      3. Recovers missing gap episodes present on Archive.org (e.g. episode 24 of `إيصال السالك` or
+         episode 28 of `العقيدة الطحاوية`) into the series in natural numerical order.
+    - When an Archive.org item does NOT match any existing series, appends it as a standalone
+      `archive__<item_id>` series in `playlists`.
+    """
+    stats = {
+        "linked_archive_items_count": 0,
+        "cross_source_matched_episodes_count": 0,
+        "archive_recovered_missing_episodes_count": 0,
+        "standalone_archive_series_count": 0,
+    }
+    existing_pids = {pl.get("playlist_id") or pl.get("id") for pl in playlists}
+
+    for arch in archive_items:
+        arch_files = arch.get("files") or []
+        if not arch_files:
+            continue
+        item_id = arch["item_id"]
+        arch_pid = f"archive__{item_id}"
+        if arch_pid in existing_pids:
+            continue
+
+        arch_title = arch.get("title") or item_id
+        arch_norm_title = _normalize_series_comparison_title(arch_title, sheikh_name)
+        arch_mb = arch.get("matched_book")
+        arch_book_id = arch_mb.get("book_id") if isinstance(arch_mb, dict) else None
+        arch_surah = arch_mb.get("surah_number") if isinstance(arch_mb, dict) else None
+
+        candidates: list[tuple[int, int, dict[str, Any]]] = []
+        for pl in playlists:
+            pid = str(pl.get("playlist_id") or pl.get("id") or "")
+            is_uncl = pl.get("yt_playlist_id") is None or "__unclassified" in pid
+            if is_uncl or pid == arch_pid:
+                continue
+            pl_title = pl.get("title") or ""
+            if _has_conflicting_edition_markers(arch_title, pl_title):
+                continue
+
+            matched = False
+            pl_mb = pl.get("matched_book")
+            pl_book_id = pl_mb.get("book_id") if isinstance(pl_mb, dict) else None
+            pl_surah = pl_mb.get("surah_number") if isinstance(pl_mb, dict) else None
+
+            if arch_book_id and pl_book_id and arch_book_id == pl_book_id:
+                if arch_book_id == "quran-karim":
+                    if arch_surah and pl_surah and arch_surah == pl_surah:
+                        matched = True
+                else:
+                    matched = True
+
+            if not matched and len(arch_norm_title) >= 5:
+                pl_norm_title = _normalize_series_comparison_title(pl_title, sheikh_name)
+                if len(pl_norm_title) >= 5:
+                    if arch_norm_title == pl_norm_title:
+                        matched = True
+                    else:
+                        shorter = min(arch_norm_title, pl_norm_title, key=len)
+                        longer = max(arch_norm_title, pl_norm_title, key=len)
+                        if len(shorter) >= 8 and len(shorter.split()) >= 2 and shorter in longer:
+                            matched = True
+
+            if matched:
+                is_yt_prio = 0 if pl.get("source_type") != "archive_org" else 1
+                v_count = len(pl.get("videos") or [])
+                candidates.append((is_yt_prio, -v_count, pl))
+
+        if candidates:
+            candidates.sort(key=lambda x: (x[0], x[1]))
+            target_pl = candidates[0][2]
+            stats["linked_archive_items_count"] += 1
+            target_pl["linked_archive_item"] = item_id
+            linked_list = target_pl.setdefault("linked_archive_items", [])
+            if item_id not in linked_list:
+                linked_list.append(item_id)
+            target_pl["archive_details_url"] = arch.get("details_url")
+            arch["linked_playlist_id"] = target_pl.get("playlist_id") or target_pl.get("id")
+
+            pl_vids = target_pl.setdefault("videos", [])
+            ep_map: dict[int, dict[str, Any]] = {}
+            pl_title_str = target_pl.get("title") or ""
+            for v in pl_vids:
+                ep_n = v.get("episode_num")
+                if ep_n is None:
+                    ep_n = extract_episode_num_from_text(v.get("title") or "", item_title=pl_title_str)
+                if isinstance(ep_n, int) and ep_n >= 1:
+                    v["episode_num"] = ep_n
+                    ep_map.setdefault(ep_n, v)
+            for v in pl_vids:
+                if v.get("episode_num") is None:
+                    pos_n = v.get("pos")
+                    if isinstance(pos_n, int) and pos_n >= 1 and pos_n not in ep_map:
+                        v["episode_num"] = pos_n
+                        ep_map[pos_n] = v
+
+            recovered_here = 0
+            for f in arch_files:
+                f_ep = f.get("episode_num") or f.get("pos")
+                if isinstance(f_ep, int) and f_ep in ep_map:
+                    ev = ep_map[f_ep]
+                    ev["archive_direct_url"] = f["direct_url"]
+                    ev["archive_vid"] = f["vid"]
+                    if (ev.get("dur_s") or 0) == 0 and (f.get("dur_s") or 0) > 0:
+                        ev["dur_s"] = f["dur_s"]
+                        ev["duration"] = f["duration"]
+                    stats["cross_source_matched_episodes_count"] += 1
+                else:
+                    new_v = {
+                        "pos": f_ep if isinstance(f_ep, int) and f_ep >= 1 else len(pl_vids) + 1,
+                        "episode_num": f_ep,
+                        "vid": f["vid"],
+                        "yt_id": f["yt_id"],
+                        "title": f["title"],
+                        "dur_s": f["dur_s"],
+                        "duration": f["duration"],
+                        "upload_date": f.get("upload_date") or arch.get("upload_date"),
+                        "source_type": "archive_org",
+                        "yt_url": f["direct_url"],
+                        "archive_direct_url": f["direct_url"],
+                        "recovered_from_archive": item_id,
+                    }
+                    pl_vids.append(new_v)
+                    if isinstance(f_ep, int) and f_ep >= 1:
+                        ep_map[f_ep] = new_v
+                    recovered_here += 1
+                    stats["archive_recovered_missing_episodes_count"] += 1
+
+            if recovered_here > 0:
+                pl_vids.sort(
+                    key=lambda v: (
+                        0 if v.get("episode_num") is not None else 1,
+                        v.get("episode_num") if v.get("episode_num") is not None else (v.get("pos") or 0),
+                        v.get("pos") or 0,
+                    )
+                )
+                for new_pos, v in enumerate(pl_vids, 1):
+                    v["pos"] = new_pos
+                target_pl["video_count"] = len(pl_vids)
+                target_pl["expected_count"] = max(int(target_pl.get("expected_count") or 0), len(pl_vids))
+        else:
+            existing_pids.add(arch_pid)
+            stats["standalone_archive_series_count"] += 1
+            arch_vids = []
+            for f in arch_files:
+                arch_vids.append({
+                    "pos": f.get("pos", 1),
+                    "episode_num": f.get("episode_num") or f.get("pos", 1),
+                    "vid": f["vid"],
+                    "yt_id": f["yt_id"],
+                    "title": f["title"],
+                    "dur_s": f["dur_s"],
+                    "duration": f["duration"],
+                    "upload_date": f.get("upload_date") or arch.get("upload_date"),
+                    "source_type": "archive_org",
+                    "yt_url": f["direct_url"],
+                    "archive_direct_url": f["direct_url"],
+                })
+            playlists.append({
+                "id": arch_pid,
+                "playlist_id": arch_pid,
+                "order_no": len(playlists) + 1,
+                "title": arch_title,
+                "yt_playlist_id": arch_pid,
+                "url": arch["details_url"],
+                "source_type": "archive_org",
+                "state": "completed",
+                "expected_count": len(arch_vids),
+                "video_count": len(arch_vids),
+                "note": f"تصنيف: سلسلة صوتية من أرشيف الإنترنت (Archive.org: {item_id})",
+                "matched_book": arch.get("matched_book"),
+                "videos": arch_vids,
+            })
+
+    return stats
+
+
 def build_canonical_raw_json(
     person_id: str,
     sheikh_name: str,
@@ -2544,47 +3406,30 @@ def build_canonical_raw_json(
 ) -> dict[str, Any]:
     """
     Deduplicate playlists and videos across all sources (YouTube + Archive.org + PDF links),
-    match series to books/matns, and build the canonical `<person_id>_raw.json` structure.
+    match series to books/matns (including the 8,589-book Shamela index), link cross-source
+    Archive.org + YouTube series and recover missing episodes, and build `<person_id>_raw.json`.
     """
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_sql = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-    # 1. Convert Archive.org multi-track audio items into series in `playlists` if not already present
-    existing_pids = {pl.get("playlist_id") or pl.get("id") for pl in playlists}
-    for arch in archive_items:
-        arch_pid = f"archive__{arch['item_id']}"
-        if arch_pid not in existing_pids and arch.get("files"):
-            existing_pids.add(arch_pid)
-            arch_vids = []
-            for f in arch["files"]:
-                arch_vids.append({
-                    "pos": f.get("pos", 1),
-                    "vid": f["vid"],
-                    "yt_id": f["yt_id"],
-                    "title": f["title"],
-                    "dur_s": f["dur_s"],
-                    "duration": f["duration"],
-                    "upload_date": f.get("upload_date") or arch.get("upload_date"),
-                    "source_type": "archive_org",
-                    "yt_url": f["direct_url"],
-                })
-            playlists.append({
-                "id": arch_pid,
-                "playlist_id": arch_pid,
-                "order_no": len(playlists) + 1,
-                "title": arch["title"],
-                "yt_playlist_id": arch_pid,
-                "url": arch["details_url"],
-                "source_type": "archive_org",
-                "state": "completed",
-                "expected_count": len(arch_vids),
-                "video_count": len(arch_vids),
-                "note": f"تصنيف: سلسلة صوتية من أرشيف الإنترنت (Archive.org: {arch['item_id']})",
-                "matched_book": arch.get("matched_book"),
-                "videos": arch_vids,
-            })
+    # 1. Pre-match playlists and archive_items to books/matns so cross-source linking can use book_id
+    discover_person_books(
+        sheikh_name=sheikh_name,
+        playlists=playlists,
+        archive_items=archive_items,
+        extra_books=extra_books,
+        person_id=person_id,
+        shamela_db_dir=shamela_db_dir,
+    )
 
-    # 2. Discover books & match playlists/archive items to matns
+    # 2. Link & deduplicate Archive.org items against YouTube playlists (recovering missing gap episodes)
+    cross_source_stats = link_and_deduplicate_cross_source_series(
+        playlists=playlists,
+        archive_items=archive_items,
+        sheikh_name=sheikh_name,
+    )
+
+    # 3. Finalize books catalog with updated source_series_ids across all playlists and archive items
     books = discover_person_books(
         sheikh_name=sheikh_name,
         playlists=playlists,
@@ -2594,7 +3439,7 @@ def build_canonical_raw_json(
         shamela_db_dir=shamela_db_dir,
     )
 
-    # 3. Identify all videos that belong to official/classified playlists
+    # 4. Identify all videos that belong to official/classified playlists
     classified_vids: set[str] = set()
     for pl in playlists:
         is_uncl = pl.get("yt_playlist_id") is None or "__unclassified" in str(pl.get("id", ""))
@@ -2604,7 +3449,7 @@ def build_canonical_raw_json(
                 if vid:
                     classified_vids.add(vid)
 
-    # 4. Clean unclassified playlists (remove videos already in classified playlists) & deduplicate
+    # 5. Clean unclassified playlists (remove videos already in classified playlists) & deduplicate
     duplicates_removed = 0
     cleaned_playlists: list[dict[str, Any]] = []
     seen_pl_ids: set[str] = set()
@@ -2632,7 +3477,7 @@ def build_canonical_raw_json(
                 continue
             seen_in_this_pl.add(vid)
             dur_s = int(v.get("dur_s") if v.get("dur_s") is not None else (v.get("duration") or 0))
-            dedup_vids.append({
+            v_entry: dict[str, Any] = {
                 "pos": len(dedup_vids) + 1,
                 "vid": vid,
                 "yt_id": vid,
@@ -2642,7 +3487,11 @@ def build_canonical_raw_json(
                 "upload_date": v.get("upload_date"),
                 "source_type": v.get("source_type") or pl.get("source_type") or "youtube_playlist",
                 "yt_url": v.get("yt_url") or f"https://www.youtube.com/watch?v={vid}",
-            })
+            }
+            for opt_key in ("episode_num", "archive_direct_url", "archive_vid", "recovered_from_archive"):
+                if v.get(opt_key) is not None:
+                    v_entry[opt_key] = v[opt_key]
+            dedup_vids.append(v_entry)
 
         if is_uncl and not dedup_vids:
             continue
@@ -2656,7 +3505,7 @@ def build_canonical_raw_json(
         pl_copy["videos"] = dedup_vids
         cleaned_playlists.append(pl_copy)
 
-    # 5. Build deduplicated `videos` / `unique_videos` with full `appearances`
+    # 6. Build deduplicated `videos` / `unique_videos` with full `appearances`
     unique_videos_map: dict[str, dict[str, Any]] = {}
     for pl in cleaned_playlists:
         pid = pl["id"]
@@ -2668,7 +3517,7 @@ def build_canonical_raw_json(
             vid = v["vid"]
             dur_s = v["dur_s"]
             if vid not in unique_videos_map:
-                unique_videos_map[vid] = {
+                uv_entry: dict[str, Any] = {
                     "vid": vid,
                     "yt_id": vid,
                     "title": v["title"],
@@ -2685,14 +3534,20 @@ def build_canonical_raw_json(
                     "matched_book": pl_matched_book,
                     "appearances": [],
                 }
+                for opt_key in ("episode_num", "archive_direct_url", "archive_vid", "recovered_from_archive"):
+                    if v.get(opt_key) is not None:
+                        uv_entry[opt_key] = v[opt_key]
+                unique_videos_map[vid] = uv_entry
             else:
                 duplicates_removed += 1
-                # Upgrade duration or matched_book if previously missing
+                # Upgrade duration, matched_book, or archive_direct_url if previously missing
                 if unique_videos_map[vid]["dur_s"] == 0 and dur_s > 0:
                     unique_videos_map[vid]["dur_s"] = dur_s
                     unique_videos_map[vid]["duration"] = dur_s
                 if not unique_videos_map[vid].get("matched_book") and pl_matched_book:
                     unique_videos_map[vid]["matched_book"] = pl_matched_book
+                if not unique_videos_map[vid].get("archive_direct_url") and v.get("archive_direct_url"):
+                    unique_videos_map[vid]["archive_direct_url"] = v["archive_direct_url"]
 
             unique_videos_map[vid]["appearances"].append({
                 "raw_series_id": pid,
@@ -2729,6 +3584,9 @@ def build_canonical_raw_json(
         "unclassified_videos_count": unclassified_videos_count,
         "archive_items_count": len(archive_items),
         "archive_audio_files_count": archive_audio_count,
+        "linked_archive_items_count": cross_source_stats["linked_archive_items_count"],
+        "cross_source_matched_episodes_count": cross_source_stats["cross_source_matched_episodes_count"],
+        "archive_recovered_missing_episodes_count": cross_source_stats["archive_recovered_missing_episodes_count"],
         "pdf_links_count": len(pdf_extracted_links),
         "pdf_playlists_count": pdf_playlists_count,
         "books_count": len(books),
