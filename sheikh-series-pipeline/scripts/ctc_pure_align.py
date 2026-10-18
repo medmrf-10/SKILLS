@@ -56,26 +56,30 @@ def peak_mb():
 def shadow_words_1to1(words, use_dict=True, unify=True):
     """تطبيع ظلّي لكل كلمة أصلية (تفقيط الأرقام مدموجًا، وتخطي الرموز الصامتة المستقلة).
 
-    إذا كانت الكلمة رمز ترقيم صامتًا خالصًا (مثل `*` أو علامة وقف قرآنية منفردة `ۖ`)، تُعاد سلسلة
+    إذا كانت الكلمة رمز ترقيم صامتًا خالصًا (مثل `*` أو علامة وقف قرآنية منفردة `ۖ` أو بقايا لاتينية)، تُعاد سلسلة
     فارغة `''` ليتخطاها `align_slice` في فيتربي عبر خريطة فهارس صريحة بدل إجبار فيتربي على مطابقة حرف «ا».
     """
     import re as _re
     out = []
     for w in words:
-        s = shadow(w, use_dict, unify).replace(' ', '')            # تفقيط الأرقام مدموجًا بلا فواصل
-        if not s and _re.search(r'[0-9\u0660-\u0669]', str(w)):   # أرقام مخلوطة بترقيم ⇒ فقّط كل مجرى رقمي
-            runs = _re.findall(r'[0-9\u0660-\u0669]+', str(w))
+        w_ar = _re.sub(r'[^\u0600-\u06FF0-9\u0660-\u0669\s]', '', str(w))
+        if not w_ar.strip():
+            out.append('')
+            continue
+        s = shadow(w_ar, use_dict, unify).replace(' ', '')         # تفقيط الأرقام مدموجًا بلا فواصل
+        if not s and _re.search(r'[0-9\u0660-\u0669]', w_ar):      # أرقام مخلوطة بترقيم ⇒ فقّط كل مجرى رقمي
+            runs = _re.findall(r'[0-9\u0660-\u0669]+', w_ar)
             s = ''.join(shadow(r, use_dict, unify).replace(' ', '') for r in runs)
         if not s:
-            s = v1_norm(w) or ''                                   # فارغ للرموز الصامتة الخالصة
+            s = v1_norm(w_ar) or ''                                # فارغ للرموز الصامتة الخالصة
         out.append(s)
     return out
 
 
 def _norm_len(w):
-    """طول الكلمة بعد نزع الترقيم (يقارب ما يراه المحاذي فعلًا)."""
+    """طول الكلمة بعد نزع الترقيم والحروف غير العربية (يقارب ما يراه المحاذي فعلًا)."""
     import re as _re
-    return len(_re.sub(r'[^\w\u0600-\u06FF]', '', str(w)))
+    return len(_re.sub(r'[^\u0600-\u06FF0-9\u0660-\u0669]', '', str(w)))
 
 
 def tighten_word_onsets_against_breath_and_blank(
@@ -187,8 +191,14 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
     while len(active_idx) > 1:
         text = ' '.join(src[gi] for gi in active_idx)
         tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
+        char_len = sum(1 if t == '<star>' else len(t) for t in tokens)
+        char_repeats = sum(
+            sum(1 for c_i in range(1, len(t)) if t[c_i] == t[c_i - 1])
+            for t in tokens if t != '<star>'
+        )
         repeats = sum(1 for k in range(1, len(tokens)) if tokens[k] == tokens[k - 1])
-        if len(tokens) + repeats + 8 < n_sub_frames:
+        ctc_min_frames = char_len + char_repeats + repeats + 16
+        if ctc_min_frames < int(n_sub_frames * 0.92):
             break
         new_len = max(1, int(len(active_idx) * 0.72))
         if new_len >= len(active_idx):
@@ -551,11 +561,12 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
                 fi1 = int(cand[np.argmin(np.abs(cand - fi1))])
         slice_dur = max(1.0, (fi1 - fc) / fps)
         avg_rate = N / max(1.0, dur)
+        max_phys_words = max(a.min_words, int(round(max(3.6, min(4.2, avg_rate) * 2.4) * slice_dur)))
         ev_slice = 0
         ev_after = 0
         if fi1 >= T:
-            n_est = N - wc
-            wi1 = N
+            n_est = min(N - wc, max_phys_words + a.margin)
+            wi1 = min(N, wc + n_est)
             eff_margin = 0
         else:
             ev_before = int(cum_ev[fc - 1]) if fc > 0 else 0
@@ -567,12 +578,18 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
                 break
             ch_before = int(cum_wchars[wc - 1]) if wc > 0 else 0
             ch_rem = max(1, int(cum_wchars[-1] - ch_before))
-            ch_per_ev = min(1.85, ch_rem / float(ev_rem))
+            rem_dur = max(1.0, (T - fc) / fps)
+            max_ch_rem_phys = max(float(a.min_words * 4), 15.5 * rem_dur)
+            ch_per_ev = min(float(ch_rem), max_ch_rem_phys) / float(ev_rem)
             target_ch = ch_before + max(1, ev_slice) * ch_per_ev
             wi_ev = int(np.searchsorted(cum_wchars, target_ch, side='left')) + 1
-            max_phys_words = max(a.min_words, int(round(max(3.6, avg_rate * 2.4) * slice_dur)))
             n_est = min(max_phys_words, max(a.min_words, wi_ev - wc))
-            eff_margin = min(a.margin, max(4, int(round(0.06 * n_est))))
+            rem_ev_rate = ev_rem / rem_dur
+            slice_ev_rate = ev_slice / slice_dur
+            if rem_ev_rate > 0 and slice_ev_rate >= 0.45 * rem_ev_rate:
+                floor_words = min(N - wc, int(round(min(avg_rate, 3.0) * slice_dur * 0.82)))
+                n_est = min(max_phys_words, max(n_est, floor_words))
+            eff_margin = min(a.margin, max(8, int(round(0.18 * n_est))))
             wi1 = min(N, wc + n_est + eff_margin)
         is_last_speech_slice = (fi1 >= T) or (ev_after == 0 and wi1 >= N)
         slice_rate = n_est / slice_dur
@@ -641,8 +658,11 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
     rem_tail_ev = max(0, int(cum_ev[-1] - (int(cum_ev[min(T - 1, int(fc) - 1)]) if int(fc) > 0 else 0))) if T > 0 else 0
     if wc < N and rem_tail_ev > 0:
         got = {}
+        tail_dur = max(1.0, (T - int(fc)) / fps)
+        tail_max_w = max(a.min_words, int(round(max(3.8, min(4.2, avg_rate) * 2.5) * tail_dur))) + a.margin
+        wi_tail = min(N, wc + tail_max_w)
         try:
-            got = align_slice(em, tok, words, wc, N, int(fc), T, stride_ms, a.star, nwords, a.star_pen, star_col)
+            got = align_slice(em, tok, words, wc, wi_tail, int(fc), T, stride_ms, a.star, nwords, a.star_pen, star_col)
         except Exception as e:
             print('[%s]   [!] فشل شريحة الذيل: %s' % (tag, type(e).__name__), flush=True)
         for i, v in sorted(got.items()):

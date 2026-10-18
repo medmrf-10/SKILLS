@@ -97,7 +97,7 @@ def _ensure_ssh_master(slot='main'):
 
 PREFETCH_QUEUE = queue.Queue(maxsize=MAX_PREFETCH)
 IN_FLIGHT_KEYS = set()
-COMPLETED_KEYS = set()
+COMPLETED_KEYS = {}
 LOCK = threading.Lock()
 LIST_LOCK = threading.Lock()
 UPLOAD_LOCK = threading.Lock()
@@ -269,8 +269,12 @@ def prefetch_worker(worker_id=0):
                 if PREFETCH_QUEUE.qsize() >= MAX_PREFETCH:
                     break
                 key = job['key']
+                txt_len = len(job.get('txt_content') or '')
                 with LOCK:
-                    if key in IN_FLIGHT_KEYS or key in COMPLETED_KEYS:
+                    if key in IN_FLIGHT_KEYS:
+                        continue
+                    prev_done = COMPLETED_KEYS.get(key)
+                    if prev_done is not None and prev_done[0] == txt_len and (time.time() - prev_done[1]) < 120.0:
                         continue
                     IN_FLIGHT_KEYS.add(key)
 
@@ -302,6 +306,7 @@ def prefetch_worker(worker_id=0):
                 if r1.returncode == 0 and r2_ok and os.path.exists(local_opus) and os.path.exists(local_txt):
                     dl_s = round(time.time() - t0, 1)
                     mb = os.path.getsize(local_opus) / (1024.0 * 1024.0)
+                    job['orig_txt_len'] = os.path.getsize(local_txt) if not txt_content else len(txt_content)
                     job.pop('txt_content', None)
                     job['local_opus'] = local_opus
                     job['local_txt'] = local_txt
@@ -438,7 +443,7 @@ def upload_and_finalize(job, local_align_path, rep):
                         timeout=60, check=True
                     )
                     with LOCK:
-                        COMPLETED_KEYS.add(key)
+                        COMPLETED_KEYS[key] = (job.get('orig_txt_len', 0), time.time())
                     break
                 except Exception as e:
                     _reset_stale_ssh_mux(slot)

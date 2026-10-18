@@ -301,6 +301,75 @@ def deduplicate_large_repeated_blocks(text, min_block_words=24):
     return cur_text
 
 
+def _strip_leading_ascii_remnants(s):
+    """إزالة بقايا الحروف اللاتينية القصيرة (1-3 أحرف مثل now. أو ed- أو c) أو وسوم _0:/_1: في بداية النص قبل أول حرف عربي."""
+    return re.sub(
+        r'^(?:[\u4e00-\u9fff]+|_[0-9]+\s*:\s*|[A-Za-z]{1,3}(?![A-Za-z])|[\s.:\'"`*\-—–()\[\]0-9/\\])+?(?=[\u0600-\u06FF«"(\[{﴿])',
+        '',
+        s,
+    )
+
+
+def _clean_json_thought_and_brace_leaks(text, reasons):
+    """إزالة مسودات التفكير المتسربة بصيغة _1:...} وأسطر الأقواس المعقوفة اليتيمة } وبقايا الحروف اللاتينية الملتصقة."""
+    lines = text.splitlines()
+    out_lines = []
+    changed = False
+    salutation_cut_re = re.compile(r'^.*?والسلام عليكم ورحم[ةه] الله(?: تعالى)? وبركاته[.}]*\s*')
+
+    for line in lines:
+        s = line.strip()
+        if not s:
+            out_lines.append(line)
+            continue
+
+        # (أ) أسطر تتكون فقط من أقواس إغلاق JSON يتيمة مثل } أو }} أو ]} أو ]\}
+        if re.match(r'^[\s\]\\}]+$', s):
+            changed = True
+            continue
+
+        # (ب) أسطر تبدأ بوسم مسودة تفكير أو متحدث مسرب مثل _1: أو _0: أو 突出_0:
+        m_tag = re.match(r'^\s*(?:[\u4e00-\u9fff]+)?_[0-9]+:\s*(.*)$', s)
+        if m_tag:
+            rest = m_tag.group(1).strip()
+            changed = True
+            if not rest or re.match(r'^(?:\d+\}?|\d{2}:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}:\d{2})\s*$', rest):
+                continue
+            words_rest = rest.split()
+            if len(words_rest) >= 50:
+                if rest.endswith('}'):
+                    continue
+                m_sal = salutation_cut_re.match(rest)
+                if m_sal:
+                    after_sal = rest[m_sal.end():].strip()
+                    if after_sal:
+                        out_lines.append(after_sal)
+                    continue
+            if '{' not in rest and re.search(r'[.؟!…ـ]\}+\s*$', rest):
+                rest = re.sub(r'\}+\s*$', '', rest)
+            out_lines.append(rest)
+            continue
+
+        # (ج) قوس إغلاق JSON يتيم ملتصق بنهاية جملة عادية (مثل "...}" أو ".}" أو "؟}" أو "ـ}") بدون قوس فتح { في نفس السطر
+        if s.endswith('}') and '{' not in s and re.search(r'(?:[.؟!…ـ]\}+|\.{2,}\}+|\}\}+)\s*$', s):
+            line = re.sub(r'\}+\s*$', '', line)
+            changed = True
+
+        # (د) بقايا 1-3 أحرف لاتينية ملتصقة مباشرة بكلمة عربية مثل now.يعني أو nowيعني
+        if re.search(r'(?<![A-Za-z])[A-Za-z]{1,3}[.:\-_]*(?=[\u0600-\u06FF])', line):
+            line = re.sub(r'(?<![A-Za-z])[A-Za-z]{1,3}[.:\-_]*(?=[\u0600-\u06FF])', '', line)
+            changed = True
+
+        out_lines.append(line)
+
+    if changed:
+        if 'LATIN_PREAMBLE' not in reasons:
+            reasons.append('LATIN_PREAMBLE')
+        text = '\n'.join(out_lines)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+    return text
+
+
 def _strip_single_block_thinking(block):
     """إذا احتوى المقطع على مونولوج تفكير لاتيني أو تكرار لنص الموجه ينتهي بنص عربي صافٍ (≥300 حرف)، اقتطع المونولوج بالكامل."""
     lat_matches = list(LATIN_RE.finditer(block))
@@ -313,7 +382,8 @@ def _strip_single_block_thinking(block):
     if echo_matches:
         last_end = max(last_end, echo_matches[-1].end())
     tail = block[last_end:]
-    # تخطي أي علامات ترقيم لاتينية أو مسافات متبقية بعد آخر كلمة إنجليزية
+    # تخطي أي علامات ترقيم لاتينية أو بقايا 1-3 أحرف إنجليزية أو وسوم _1: بعد آخر كلمة إنجليزية
+    tail = _strip_leading_ascii_remnants(tail)
     tail = re.sub(r'^[\s.:\'"`*\-—–()\[\]0-9/\\]+', '', tail)
     if len(AR_RE.findall(tail)) >= 300:
         return tail.lstrip(), True
@@ -347,7 +417,8 @@ def strip_preamble_and_header(text):
                     last_m = list(LATIN_RE.finditer(p)) + list(PROMPT_ECHO_RE.finditer(p))
                     if last_m:
                         end_pos = max(m.end() for m in last_m)
-                        tail_p = re.sub(r'^[\s.:\'"`*\-—–()\[\]0-9/\\]+', '', p[end_pos:])
+                        tail_p = _strip_leading_ascii_remnants(p[end_pos:])
+                        tail_p = re.sub(r'^[\s.:\'"`*\-—–()\[\]0-9/\\]+', '', tail_p)
                         if len(AR_RE.findall(tail_p)) >= 15 and not LATIN_RE.search(tail_p) and not PROMPT_ECHO_RE.search(tail_p):
                             tail_clean = tail_p.strip()
                             anchor_words = ' '.join(_norm_anchor(tail_clean).split()[:5])
@@ -372,6 +443,9 @@ def strip_preamble_and_header(text):
                 in_leak = False
             out_paras.append(p)
         text = '\n\n'.join(out_paras)
+
+    # إزالة مسودات التفكير بصيغة _1:...} وأسطر } اليتيمة وبقايا الحروف اللاتينية الملتصقة
+    text = _clean_json_thought_and_brace_leaks(text, reasons)
 
     # إزالة أسطر التوقيت الزمني لملفات الترجمة (SBV / SRT / VTT مثل 0;00:00.000,0;00:06.880)
     if SBV_SRT_LINE_RE.search(text):
@@ -418,7 +492,7 @@ def strip_preamble_and_header(text):
 
     cleaned = '\n'.join(lines[idx:]).lstrip()
 
-    # 2. إذا بقي في أول 250 حرفًا كلام لاتيني متصل يسبق فاتحة الدرس العربية
+    # 2. إذا بقي في أول 300 حرف كلام لاتيني متصل أو بقايا 1-3 أحرف لاتينية تسبق فاتحة الدرس العربية
     head = cleaned[:300]
     if LATIN_RE.search(head):
         m = OPENING_CUE_RE.search(cleaned[:600])
@@ -432,6 +506,12 @@ def strip_preamble_and_header(text):
                 cleaned = cleaned[m_ar.start():].lstrip()
                 if 'LATIN_PREAMBLE' not in reasons:
                     reasons.append('LATIN_PREAMBLE')
+    elif re.match(r'^(?:[\u4e00-\u9fff]+|[A-Za-z]{1,3}(?![A-Za-z]))[\s.:\'"`*\-—–()\[\]0-9/\\]*', cleaned):
+        new_cleaned = _strip_leading_ascii_remnants(cleaned).lstrip()
+        if new_cleaned != cleaned:
+            cleaned = new_cleaned
+            if 'LATIN_PREAMBLE' not in reasons:
+                reasons.append('LATIN_PREAMBLE')
 
     # 3. إزالة تداخل الجمل المكررة عند حدود المقاطع الصوتية مع حفظ التكرارات التعبدية
     if cleaned:
