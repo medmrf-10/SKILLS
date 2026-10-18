@@ -600,9 +600,187 @@ def run_gate_4_real_world_edge_cases() -> tuple[list[str], dict]:
     return gate4_errors, g4_stats
 
 
+def build_multi_zone_commentary_fixture(pages_dir: str) -> list[dict]:
+    """
+    يبني صفحتين من كتاب شرح وأصول متعدد المناطق (`Matn / Sharh / Footnotes`):
+      - ص 1: تحتوي `matn_top` محصوراً بين `﴿...﴾` مع عنوان زهري `﴿فصل في القياس وشروطه﴾` وإحالة معقوفة `[١]`،
+        و`sharh_body` يحوي كلمتين مقطوعتين عبر السطر بالكشيدة والشرطة (`المسـ\\nـألة`، `باجـ-\\nـتهاد`)،
+        وإحالتي حاشية `(٢)` و`(3)`، وآية قرآنية حقيقية `﴿وَأَقِيمُوا الصَّلَاةَ﴾ (٤٣)`،
+        و`footnotes` مهيكلة كقائمة قواميس `list[dict]` فيها رقم مختلط `١25`، ورقم صفحة مختلط `"١5"`.
+      - ص 2: تحتوي متناً وشرحاً مفصولين بفاصل `--- الشرح ---`، وحاشية نصية متعددة الأسطر تبدأ بتكملة
+        `= تكملة الحاشية السابقة...` وتليها حاشية `(١)` فيها كلمة مقطوعة `الاست-\\nحسان` ورقم مختلط `٢40`.
+    """
+    os.makedirs(pages_dir, exist_ok=True)
+    pages = [
+        {
+            "pdf_page": 1,
+            "tag": "p0001",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١5",
+                "running_header": "شرح مختصر المنتهى الأصولي",
+                "matn_top": (
+                    "﴿فصل في القياس وشروطه﴾\n"
+                    "﴿قال المصنف رحمه الله: القياس حمل معلوم على معلوم في إثبات حكم لهما [١] أو نفيه عنهما بأمر جامع بينهما﴾"
+                ),
+                "sharh_body": (
+                    "أقول: اعلم أن هذه المسـ\n"
+                    "ـألة من أمهات مسائل الأصول التي يدرك حكمها باجـ-\n"
+                    "ـتهاد النظر الصحيح (٢)، وقد دل على حجية القياس قوله تعالى: ﴿وَأَقِيمُوا الصَّلَاةَ﴾ (٤٣) "
+                    "في سياق الاعتبار والقياس الجلي (3)."
+                ),
+                "margin_notes": "[ق/ ٢١ أ]",
+                "footnotes": [
+                    {"id": "1", "text": "في النسخة الأزهرية زيادة بعد قوله لهما."},
+                    {"id": "2", "text": "انظر المستصفى للغزالي ص ١25."},
+                    {"id": "3", "text": "وهو القياس القطعي الذي لا يحتمل النقيض عند الأصوليين"},
+                ],
+                "uncertain_words": [],
+            },
+        },
+        {
+            "pdf_page": 2,
+            "tag": "p0002",
+            "layout": "standard_single_col",
+            "extracted": {
+                "printed_page": "١6",
+                "running_header": "شرح مختصر المنتهى الأصولي",
+                "text": (
+                    "﴿باب شروط العلة في القياس الشرعي﴾\n"
+                    "﴿ومن شرط علة الحكم أن تكون وصفا ظاهرا منضبطا مطردا (١)﴾\n"
+                    "--- الشرح ---\n"
+                    "الشرح: يعني أن الوصف الجامع بين الأصل والفرع لا يصح التعليل به إلا إذا كان ظاهرا جليا منضبطا "
+                    "بنفسه لا يختلف باختلاف الأشخاص والأحوال."
+                ),
+                "margin_notes": "",
+                "footnotes": (
+                    "= تكملة الحاشية السابقة من الصفحة الماضية في بيان القياس القطعي.\n"
+                    "(١) أخرجه أصحاب السنن وذكره الأصوليون في مبحث الاست-\nحسان القياسي ص ٢40."
+                ),
+                "uncertain_words": [],
+            },
+        },
+    ]
+
+    for p in pages:
+        p_path = os.path.join(pages_dir, f"{p['tag']}.json")
+        with open(p_path, "w", encoding="utf-8") as f:
+            json.dump(p, f, ensure_ascii=False, indent=2)
+
+    return pages
+
+
+def run_gate_5_multi_zone_and_validator_contract() -> tuple[list[str], dict]:
+    """
+    Gate 5: Multi-Zone Matn/Sharh/Footnote Page Layout & Validator Contract Gate:
+      - التحقق من توافق `validate_json.py` و`pdf_to_preflight_adapter.py` على صفحات `matn_top` + `sharh_body` + `footnotes`
+        بصيغتي القواميس المهيكلة `list[dict]` والنص متعدد الأسطر مع حواشي الاستمرار `= ...`.
+      - التحقق من إصلاح الكلمات المقطوعة بالكشيدة/الشرطة (`المسألة`، `باجتهاد`، `الاستحسان`) وتطبيع الأرقام المختلطة (`١٥`، `١٢٥`، `٢٤٠`).
+      - التحقق من حفظ محددات `matn_top` (`﴿...﴾`) بنسبة 100% وتطبيع إحالة `[١]` داخل المتن المشروح دون كسر الآية القرآنية `﴿وَأَقِيمُوا الصَّلَاةَ﴾ (٤٣)`.
+      - التحقق من نجاح `manifest_v4.py` و`fn_linker_v4.py` بصفر حواشٍ غير مربوطة وصفر رموز غير مصنفة.
+    """
+    from validate_json import validate_pages_payload
+
+    gate5_errors = []
+    g5_stats = {}
+
+    with tempfile.TemporaryDirectory(prefix="turath_pdf_gate5_test_") as tmp_root:
+        book_in_dir = os.path.join(tmp_root, "multi_zone_sharh_book")
+        pages_dir = os.path.join(book_in_dir, "pages")
+        preflight_out_dir = os.path.join(tmp_root, "preflight_v4_out")
+
+        raw_pages = build_multi_zone_commentary_fixture(pages_dir)
+
+        # 1. اختبار validate_json.py على الصفحات الخام قبل التحويل
+        val_report = validate_pages_payload({"pages": json.loads(json.dumps(raw_pages))}, normalize_in_place=True)
+        if not val_report.get("valid"):
+            gate5_errors.append(f"validate_json.py failed on multi-zone fixture: {val_report.get('errors')}")
+
+        p1_rep = val_report["page_reports"][0]
+        if p1_rep.get("printed_page") != "١٥":
+            gate5_errors.append(f"Expected normalized printed_page '١٥', got {p1_rep.get('printed_page')!r}")
+
+        p1_zones = p1_rep.get("zones", {})
+        if "(١)" not in p1_zones.get("matn_top", ""):
+            gate5_errors.append(f"Expected '[١]' inside matn_top ﴿...﴾ to normalize to '(١)', got: {p1_zones.get('matn_top')}")
+        if not p1_zones.get("matn_top_delimiters_preserved"):
+            gate5_errors.append("Expected matn_top_delimiters_preserved=True in Gate 5 page 1")
+
+        # 2. اختبار pdf_to_preflight_adapter.py + manifest_v4.py + fn_linker_v4.py
+        adapter_rep = convert_pdf_output_to_preflight(
+            input_path=book_in_dir,
+            out_dir=preflight_out_dir,
+            book_id=9003,
+            science="usul",
+            round_num=97,
+            title="شرح مختصر المنتهى الأصولي",
+            author="العضد الإيجي",
+            death="756",
+            juz=1,
+            run_manifest_v4=True,
+            deep_indexing_scripts_dir=DEFAULT_DEEP_INDEXING_SCRIPTS,
+        )
+
+        zl = adapter_rep.get("zero_loss_check", {})
+        if not zl.get("passed") or zl.get("retention_pct") != 100.0:
+            gate5_errors.append(f"Gate 5 Zero-Loss check failed: {zl.get('errors')}")
+
+        mv4 = adapter_rep.get("manifest_v4_verification", {})
+        if not mv4.get("passed"):
+            gate5_errors.extend(mv4.get("errors") or ["Gate 5 manifest_v4_verification failed"])
+
+        bm = mv4.get("book_manifest", {})
+        if bm.get("fn_linked_count") != 4:
+            gate5_errors.append(f"Expected 4 linked footnotes in Gate 5, got {bm.get('fn_linked_count')}")
+        if bm.get("fn_continuation_merged_count") != 1:
+            gate5_errors.append(f"Expected 1 continuation merged in Gate 5, got {bm.get('fn_continuation_merged_count')}")
+        if bm.get("fn_unlinked_in_window_count") != 0:
+            gate5_errors.append(f"Expected 0 unlinked footnotes in Gate 5, got {bm.get('fn_unlinked_in_window_count')}")
+        if bm.get("unclassified_tokens_count") != 0:
+            gate5_errors.append(f"Expected 0 unclassified tokens in Gate 5, got {bm.get('unclassified_tokens_count')}")
+
+        book_matn_txt = Path(adapter_rep["files_generated"]["book_matn_txt"]).read_text(encoding="utf-8")
+        fn_json_txt = Path(adapter_rep["files_generated"]["footnotes_json"]).read_text(encoding="utf-8")
+
+        for expected_word in ("المسألة", "باجتهاد"):
+            if expected_word not in book_matn_txt:
+                gate5_errors.append(f"Repaired word {expected_word!r} missing from book_matn.txt")
+        if "الاستحسان" not in fn_json_txt:
+            gate5_errors.append("Repaired word 'الاستحسان' missing from footnotes.json")
+        for expected_num in ("١٢٥", "٢٤٠"):
+            if expected_num not in fn_json_txt:
+                gate5_errors.append(f"Normalized mixed number {expected_num!r} missing from footnotes.json")
+
+        toc_data = json.loads(Path(adapter_rep["files_generated"]["toc_json"]).read_text(encoding="utf-8"))
+        toc_titles = [e["t"] for e in toc_data.get("toc", [])]
+        if not any("فصل في القياس وشروطه" in t for t in toc_titles):
+            gate5_errors.append(f"Floral-bracketed heading 'فصل في القياس وشروطه' missing from TOC: {toc_titles}")
+        if not any("باب شروط العلة في القياس الشرعي" in t for t in toc_titles):
+            gate5_errors.append(f"Floral-bracketed heading 'باب شروط العلة في القياس الشرعي' missing from TOC: {toc_titles}")
+
+        tmp_dump = "/tmp/r97_usul.txt"
+        if os.path.exists(tmp_dump):
+            try:
+                os.remove(tmp_dump)
+            except OSError:
+                pass
+
+        norm_totals = adapter_rep.get("normalization_totals", {})
+        g5_stats = {
+            "pages": adapter_rep.get("non_blank_pages"),
+            "parts": adapter_rep.get("total_parts_built"),
+            "fn_linked": bm.get("fn_linked_count", 0),
+            "continuations": bm.get("fn_continuation_merged_count", 0),
+            "splits_repaired": norm_totals.get("line_break_splits_repaired", 0),
+            "struct_fn_coerced": norm_totals.get("structured_footnote_items_coerced", 0),
+        }
+
+    return gate5_errors, g5_stats
+
+
 def main():
     print("======================================================================")
-    print("  turath-pdf-to-text v2.1 — Deterministic Quality & Pre-Flight Gates")
+    print("  turath-pdf-to-text v2.2 — Deterministic Quality & Pre-Flight Gates")
     print("======================================================================")
 
     g1_errors = run_gate_1_original_visual_gates()
@@ -625,7 +803,14 @@ def main():
         f"cont={g4_stats.get('continuations')}, horiz={g4_stats.get('horiz_splits')}]"
     )
 
-    all_errors = g1_errors + g2_errors + g3_errors + g4_errors
+    g5_errors, g5_stats = run_gate_5_multi_zone_and_validator_contract()
+    print(
+        f"[Gate 5] Multi-Zone Matn/Sharh & Validator Contract : {'PASS' if not g5_errors else 'FAIL'} ({len(g5_errors)} errors) "
+        f"[parts={g5_stats.get('parts')}, fn_linked={g5_stats.get('fn_linked')}/4, "
+        f"splits_fixed={g5_stats.get('splits_repaired')}, struct_fn={g5_stats.get('struct_fn_coerced')}]"
+    )
+
+    all_errors = g1_errors + g2_errors + g3_errors + g4_errors + g5_errors
     if all_errors:
         print("\n[ERRORS DETECTED]:")
         for err in all_errors:

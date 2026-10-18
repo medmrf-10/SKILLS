@@ -41,6 +41,24 @@ AR_TO_ASCII_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹¹²
 ASCII_TO_AR_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
 SUPERSCRIPT_CHARS = "¹²³⁴⁵⁶⁷⁸⁹"
 TASHKEEL_RE = re.compile(r"[\u0617-\u061A\u064B-\u065F\u0670\u0640]")
+ZONE_SENTINEL = "\n<<__TURATH_ZONE_SPLIT__>>\n"
+
+STANDALONE_NEXT_WORDS = {
+    "في", "من", "عن", "على", "إلى", "الى", "أن", "إن", "ان", "ما", "لا", "أو", "ثم",
+    "بل", "قد", "هل", "لم", "لن", "مع", "كل", "غير", "عند", "بين", "بعد", "قبل",
+    "فوق", "تحت", "نحو", "مثل", "قال", "قوله", "باب", "فصل", "كتاب", "مسألة",
+    "فرع", "تنبيه", "حاشية", "الشرح", "أقول", "وهو", "وهي", "وهم", "وهذا", "وهذه",
+}
+
+QURAN_INTRO_CUE_RE = re.compile(
+    r"(?:(?:قال|قوله|لقوله|بقوله|كقوله)\s+(?:الله\s+)?(?:تعالى|سبحانه|عز\s+وجل)|"
+    r"ذكرهم\s+الله\s+في\s+قوله|في\s+قوله\s*:|لقوله\s*:|قال\s+تعالى|قوله\s+تعالى|"
+    r"في\s+التنزيل|في\s+القرآن|سورة\s+[\u0621-\u064A]+|الآية)"
+)
+
+SHARH_ZONE_DIVIDER_LINE_RE = re.compile(
+    r"^\s*(?:[-─═=_]{3,}\s*(?:الشرح|الشَّرْحُ)?\s*[-─═=_]*|\[\s*(?:الشرح|الشَّرْحُ)\s*\])\s*$"
+)
 
 FOLIO_MARKER_RE = re.compile(
     r"(?:/\s*)?\((?=[^()\n]{1,16}\))(?=[^)]*[أابظوزدمه])\s*[٠-٩0-9]{1,4}\s*/?\s*[أابظو]?\u064e?\s*"
@@ -102,6 +120,162 @@ def parse_marker_val(raw_m: str) -> int | str | None:
     return None
 
 
+def repair_line_breaks_and_mixed_digits(text: str, is_page_number: bool = False) -> tuple[str, dict]:
+    """
+    ينظف النص العربي ويصلح:
+      1. الأرقام الفارسية (U+06F0..U+06F9) والحروف الفارسية (ی، ک).
+      2. الكلمات المقطوعة عبر نهاية السطر بالشرطة أو الكشيدة (`المسـ\\nـألة` -> `المسألة`, `باجـ-\\nـتهاد` -> `باجتهاد`, `الاست-\\nحسان` -> `الاستحسان`).
+      3. الأرقام الهندية/العربية المختلطة في أرقام الصفحات (`١5` -> `١٥`) أو داخل الأرقام المركبة (`١25` -> `١٢٥`).
+    """
+    norm_text, base_stats = normalize_arabic_output(str(text or ""))
+    line_break_splits_repaired = 0
+    mixed_digits_normalized = 0
+
+    if norm_text and not is_page_number:
+        # 1) كشيدة في نهاية السطر الأول وكشيدة في مطلع السطر الثاني: المسـ\nـألة أو باجـ-\nـتهاد
+        def _fix_double_kashida(m: re.Match) -> str:
+            nonlocal line_break_splits_repaired
+            line_break_splits_repaired += 1
+            return m.group(1) + m.group(2)
+
+        norm_text = re.sub(
+            r"([\u0621-\u063A\u0641-\u064A][\u064B-\u065F\u0670]*)ـ+[-‐‑]?\s*\n\s*ـ+([\u0621-\u063A\u0641-\u064A])",
+            _fix_double_kashida,
+            norm_text,
+        )
+
+        # 2) كشيدة في نهاية السطر الأول يليها تكملة الكلمة في السطر الثاني: المسـ\nألة
+        def _fix_trailing_kashida(m: re.Match) -> str:
+            nonlocal line_break_splits_repaired
+            frag2 = m.group(2)
+            frag2_bare = TASHKEEL_RE.sub("", frag2)
+            if frag2_bare.startswith("ال") or frag2_bare in STANDALONE_NEXT_WORDS:
+                return m.group(0)
+            line_break_splits_repaired += 1
+            return m.group(1) + frag2
+
+        norm_text = re.sub(
+            r"([\u0621-\u063A\u0641-\u064A][\u064B-\u065F\u0670]*)ـ+\s*\n\s*([\u0621-\u063A\u0641-\u064A][\u0621-\u063A\u0641-\u064A\u064B-\u065F\u0670]{0,7})(?=\s|[،.؛:!؟\)\]]|$)",
+            _fix_trailing_kashida,
+            norm_text,
+        )
+
+        # 3) شرطة ملتصقة بنهاية الشطر الأول للكلمة المقطوعة عبر السطر: الاست-\nحسان
+        def _fix_hyphen_split(m: re.Match) -> str:
+            nonlocal line_break_splits_repaired
+            frag2 = m.group(2)
+            frag2_bare = TASHKEEL_RE.sub("", frag2)
+            if frag2_bare.startswith("ال") or frag2_bare in STANDALONE_NEXT_WORDS:
+                return m.group(0)
+            line_break_splits_repaired += 1
+            return m.group(1) + frag2
+
+        norm_text = re.sub(
+            r"([\u0621-\u063A\u0641-\u064A][\u064B-\u065F\u0670]*)[-‐‑]\s*\n\s*ـ*([\u0621-\u063A\u0641-\u064A][\u0621-\u063A\u0641-\u064A\u064B-\u065F\u0670]{0,7})(?=\s|[،.؛:!؟\)\]]|$)",
+            _fix_hyphen_split,
+            norm_text,
+        )
+
+    if norm_text:
+        if is_page_number:
+            ascii_cnt = sum(1 for c in norm_text if "0" <= c <= "9")
+            if ascii_cnt > 0:
+                norm_text = norm_text.translate(ASCII_TO_AR_DIGITS)
+                mixed_digits_normalized += ascii_cnt
+        else:
+            def _fix_mixed_digits_token(m: re.Match) -> str:
+                nonlocal mixed_digits_normalized
+                tok = m.group(0)
+                has_ar = any("\u0660" <= c <= "\u0669" for c in tok)
+                has_ascii = any("0" <= c <= "9" for c in tok)
+                if has_ar and has_ascii:
+                    mixed_digits_normalized += 1
+                    return tok.translate(ASCII_TO_AR_DIGITS)
+                return tok
+
+            norm_text = re.sub(r"[٠-٩0-9]{2,}", _fix_mixed_digits_token, norm_text)
+
+    return norm_text, {
+        "persian_digits_fixed": base_stats.get("persian_digits_fixed", 0),
+        "persian_chars_fixed": base_stats.get("persian_chars_fixed", 0),
+        "line_break_splits_repaired": line_break_splits_repaired,
+        "mixed_digits_normalized": mixed_digits_normalized,
+    }
+
+
+def coerce_footnotes_to_raw_str(footnotes_val) -> tuple[str, str, int]:
+    """
+    يوحّد عقد بيانات الحواشي بين `validate_json.py` و`pdf_to_preflight_adapter.py`:
+    يقبل:
+      - نصاً (`str`) متعدد الأسطر أو أفقياً
+      - قائمة نصوص (`list[str]`، مثل `["= تكملة...", "(١) حاشية أولى"]`)
+      - قائمة قواميس (`list[dict]`، مثل `[{"id": "1", "text": "..."}, {"id": "=", "text": "..."}]`)
+      - قاموساً (`dict`، مثل `{"1": "حاشية أولى", "2": "حاشية ثانية"}`)
+    ويرجع `(raw_footnotes_str, input_format, structured_items_count)`.
+    """
+    if footnotes_val is None:
+        return "", "str", 0
+    if isinstance(footnotes_val, str):
+        return footnotes_val, "str", 0
+
+    lines = []
+    structured_count = 0
+
+    if isinstance(footnotes_val, dict):
+        items_iter = [{"id": k, "text": v} for k, v in footnotes_val.items()]
+        input_fmt = "dict"
+    elif isinstance(footnotes_val, list):
+        items_iter = footnotes_val
+        input_fmt = "list_dict" if any(isinstance(x, dict) for x in footnotes_val) else "list_str"
+    else:
+        return str(footnotes_val), "other", 0
+
+    for item in items_iter:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                lines.append(s)
+                structured_count += 1
+        elif isinstance(item, dict):
+            raw_id = ""
+            for k_id in ("id", "marker", "num", "number", "val"):
+                if item.get(k_id) is not None and str(item.get(k_id)).strip() != "":
+                    raw_id = str(item.get(k_id)).strip()
+                    break
+            txt = ""
+            for k_tx in ("text", "body", "content", "footnote"):
+                if item.get(k_tx) is not None and str(item.get(k_tx)).strip() != "":
+                    txt = str(item.get(k_tx)).strip()
+                    break
+            is_cont = bool(item.get("continued")) or raw_id in ("=", "(=)", "[=]") or bool(re.match(r"^\s*(?:=|[\(\[]\s*=\s*[\)\]])", txt))
+            if is_cont:
+                body_c = re.sub(r"^\s*(?:=|[\(\[]\s*=\s*[\)\]])\s*", "", txt).strip()
+                lines.append(f"= {body_c}" if body_c else "=")
+                structured_count += 1
+            elif raw_id:
+                m_existing = FN_LINE_HEAD_RE.match(txt)
+                existing_marker = next((g for g in m_existing.groups()[:7] if g is not None), "") if m_existing else ""
+                if m_existing and parse_marker_val(existing_marker) == parse_marker_val(raw_id):
+                    lines.append(txt)
+                else:
+                    v = parse_marker_val(raw_id)
+                    if v == "*":
+                        head = "(*)"
+                    elif isinstance(v, int):
+                        head = f"({to_ar_digits(v)})"
+                    elif raw_id.startswith(("(", "[")):
+                        head = raw_id
+                    else:
+                        head = f"({raw_id})"
+                    lines.append(f"{head} {txt}".strip())
+                structured_count += 1
+            elif txt:
+                lines.append(txt)
+                structured_count += 1
+
+    return "\n".join(lines), input_fmt, structured_count
+
+
 def arabic_skeleton(word: str) -> str:
     """يبني جذعاً مبسطاً للكلمة العربية لمطابقة الكلمات المحققة في الحواشي مع المتن."""
     w = TASHKEEL_RE.sub("", word or "")
@@ -147,6 +321,60 @@ INLINE_HORIZ_FN_CAND_RE = re.compile(
     r"(?:\(\s*([٠-٩0-9]{1,2}|\*+)\s*\)|\[\s*([٠-٩0-9]{1,2}|\*+)\s*\]|([٠-٩0-9]{1,2})\s*[-–—.)]\s+|([¹²³⁴⁵⁶⁷⁸⁹])\s+)"
     r"\s*(?=[\u0621-\u064A«\"\[\(])"
 )
+
+
+def is_quranic_floral_span(
+    text: str,
+    start: int,
+    end: int,
+    fn_entries_meta: list[tuple[int | str, str]],
+    fn_vals_set: set,
+) -> bool:
+    """
+    يميز بين الآية القرآنية `﴿...﴾` وبين المتن المشروح الموضوع بين قوسين زهريين `﴿...﴾` في كتب الشروح والحواشي:
+      - الآية القرآنية: تسبقها قرائن قرآنية (`قال تعالى`، `قوله تعالى`، `لقوله:`، `ذكرهم الله في قوله:`، `سورة`، `الآية`)،
+        أو يتبعها مباشرةً رقم حاشية خارج القوس `﴾(١)` بدون إحالات معقوفة/فوقية بالداخل،
+        أو تحوي أرقام آيات `(٤٣)` غير موجودة في حواشي الصفحة.
+      - المتن المشروح `﴿...﴾`: يقع في `matn_top` أو في صدر الفقرة دون قرائن قرآنية ويحوي إحالات حواشٍ حقيقية `[١]`، `²`، `(٣)`
+        تقابلها حواشٍ في ذيل الصفحة.
+    """
+    before = TASHKEEL_RE.sub("", text[max(0, start - 120):start])
+    after = text[end:min(len(text), end + 25)]
+    inner = text[start + 1:max(start + 1, end - 1)]
+
+    if QURAN_INTRO_CUE_RE.search(before):
+        return True
+
+    has_non_paren_fn_markers_inside = bool(re.search(r"\[\s*[٠-٩0-9\*]{1,2}\s*\]|[¹²³⁴⁵⁶⁷⁸⁹]", inner))
+    m_after = re.match(r"^\s*[\(\[]\s*([٠-٩0-9]{1,3}|\*+)\s*[\)\]]", after)
+    if m_after and not has_non_paren_fn_markers_inside:
+        return True
+
+    inner_paren_vals = [parse_marker_val(m.group(1)) for m in re.finditer(r"\(([٠-٩0-9]{1,3})\)", inner)]
+    if inner_paren_vals and not has_non_paren_fn_markers_inside:
+        if any(v not in fn_vals_set for v in inner_paren_vals):
+            return True
+        fn_bodies_for_vals = " ".join(b for v, b in fn_entries_meta if v in inner_paren_vals)
+        if re.search(r"\b(?:سورة|آية|الآية)\b", TASHKEEL_RE.sub("", fn_bodies_for_vals)) and not re.search(
+            r"(?:في\s+الأصل|في\s+النسخ|في\s+المطبوع|قوله)", TASHKEEL_RE.sub("", fn_bodies_for_vals)
+        ):
+            return True
+
+    return False
+
+
+def find_true_quran_spans(
+    text: str,
+    fn_entries_meta: list[tuple[int | str, str]] | None = None,
+    fn_vals_set: set | None = None,
+) -> list[tuple[int, int]]:
+    entries = fn_entries_meta or []
+    vals = fn_vals_set or set()
+    spans = []
+    for m in re.finditer(r"﴿[^﴾]*﴾", text):
+        if is_quranic_floral_span(text, m.start(), m.end(), entries, vals):
+            spans.append((m.start(), m.end()))
+    return spans
 
 
 def split_horizontal_footnote_lines(footnotes_raw: str) -> tuple[list[str], int]:
@@ -241,7 +469,14 @@ def is_likely_non_fn_token_in_page(matn_no_quran: str, start: int, end: int, raw
     return False
 
 
-def anchor_missing_fn_marker_in_matn(matn: str, marker_val: int | str, fn_body: str, min_pos: int, max_pos: int) -> tuple[str, int]:
+def anchor_missing_fn_marker_in_matn(
+    matn: str,
+    marker_val: int | str,
+    fn_body: str,
+    min_pos: int,
+    max_pos: int,
+    quran_spans: list[tuple[int, int]] | None = None,
+) -> tuple[str, int]:
     """
     يدرج إحالة الحاشية الساقطة مطبعياً في المتن داخل النطاق الرتيب [min_pos, max_pos] للصفحة نفسها،
     باستخدام مطابقة الكلمة المحققة في نص الحاشية (مثل `وفي المطبوع : ويتظاهرون` -> `يظهرون(١)`)
@@ -272,8 +507,9 @@ def anchor_missing_fn_marker_in_matn(matn: str, marker_val: int | str, fn_body: 
                 if len(sk) >= 3:
                     cand_words.append((w_clean, sk))
 
-    # فحص عدم الوقوع داخل آية قرآنية ﴿...﴾
     def is_inside_quran(pos_in_matn: int) -> bool:
+        if quran_spans is not None:
+            return any(qs <= pos_in_matn <= qe for qs, qe in quran_spans)
         b = matn[:pos_in_matn]
         return b.rfind("﴿") > b.rfind("﴾")
 
@@ -310,7 +546,7 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
     مع `fn_linker_v4.py`:
       1. شطر الحواشي الأفقية المشتركة في سطر واحد إلى أسطر مستقلة.
       2. توحيد رؤوس الحواشي غير القياسية (`[١]`, `١ -`, `١.`, `¹`, `(*)`, `( * )`, `[*]`, `*`) إلى `(١)` أو `(*)`.
-      3. تطبيع إحالات المتن غير القياسية خارج الآيات القرآنية (`[١]`, `¹`, الأرقام الملتصقة بالكلمات `هما1`، والنجمة `*`).
+      3. تطبيع إحالات المتن غير القياسية خارج الآيات القرآنية وبما يشمل المتن المشروح بين `﴿...﴾` (`[١]`, `¹`, `(1)`, `هما1`، والنجمة `*`).
       4. موازنة إحالات الصفحة الواحدة (منع الحواشي المشتركة المكررة من سرقة حواشي الصفحة التالية، وتثبيت الإحالات الساقطة).
     """
     stats = {
@@ -361,19 +597,14 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
     if not matn:
         return matn, norm_footnotes_raw, stats
 
-    # تطبيع إحالات المتن خارج الآيات القرآنية ﴿...﴾ فقط
-    segments = re.split(r"(﴿[^﴾]*﴾)", matn)
-    for idx_s in range(0, len(segments), 2):
-        seg = segments[idx_s]
+    def _normalize_matn_segment(seg: str) -> str:
         if not seg:
-            continue
-
+            return seg
         # 1. معالجة علامة النجمة (*) في المتن
         if "*" in fn_vals_set:
             seg, n1 = re.subn(r"\(\s*\*+\s*\)|\[\s*\*+\s*\]", "(*)", seg)
             stats["non_standard_matn_markers_normalized"] += n1
         else:
-            # إذا لم تكن في الصفحة حاشية نجمية، نضمن عدم التباس إشارة المخطوطة (*) بإحالة حاشية
             seg = re.sub(r"\(\*+\)", "( * )", seg)
 
         if fn_vals_set:
@@ -385,7 +616,24 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
                     return f"({to_ar_digits(v)})"
                 return m.group(0)
 
-            seg = re.sub(r"\(\s+([٠-٩0-9]{1,2})\s*\)|\(\s*([٠-٩0-9]{1,2})\s+\)", lambda m: _fix_spaced_paren(m if m.group(1) else re.match(r"\(\s*([٠-٩0-9]{1,2})\s*\)", m.group(0))), seg)
+            seg = re.sub(
+                r"\(\s+([٠-٩0-9]{1,2})\s*\)|\(\s*([٠-٩0-9]{1,2})\s+\)",
+                lambda m: _fix_spaced_paren(m if m.group(1) else re.match(r"\(\s*([٠-٩0-9]{1,2})\s*\)", m.group(0))),
+                seg,
+            )
+
+            # 2-ب. الأرقام اللاتينية أو المختلطة داخل أقواس هلالية: (1) -> (١)
+            def _fix_ascii_paren(m: re.Match) -> str:
+                raw_in = m.group(1)
+                v = parse_marker_val(raw_in)
+                if v in fn_vals_set:
+                    canon_in = to_ar_digits(v)
+                    if raw_in != canon_in:
+                        stats["non_standard_matn_markers_normalized"] += 1
+                        return f"({canon_in})"
+                return m.group(0)
+
+            seg = re.sub(r"\(([٠-٩0-9]{1,3})\)", _fix_ascii_paren, seg)
 
             # 3. الأقواس المعقوفة الرقمية: [١] -> (١) إذا كان الرقم ضمن حواشي الصفحة
             def _fix_brack_marker(m: re.Match) -> str:
@@ -420,8 +668,24 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
                 _fix_attached_bare_digit,
                 seg,
             )
+        return seg
 
-        segments[idx_s] = seg
+    # تطبيع إحالات المتن خارج الآيات القرآنية ﴿...﴾ مع دعم المتن المشروح بين ﴿...﴾
+    segments = re.split(r"(﴿[^﴾]*﴾)", matn)
+    cur_off = 0
+    for idx_s, seg in enumerate(segments):
+        seg_start = cur_off
+        seg_end = cur_off + len(seg)
+        cur_off = seg_end
+        if not seg:
+            continue
+        if idx_s % 2 == 1 and seg.startswith("﴿") and seg.endswith("﴾"):
+            if is_quranic_floral_span(matn, seg_start, seg_end, fn_entries_meta, fn_vals_set):
+                continue
+            inner_norm = _normalize_matn_segment(seg[1:-1])
+            segments[idx_s] = f"﴿{inner_norm}﴾"
+        else:
+            segments[idx_s] = _normalize_matn_segment(seg)
 
     norm_matn = "".join(segments)
 
@@ -439,8 +703,7 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
 
     # موازنة الإحالات داخل الصفحة الواحدة لضمان عدم سرقة حواشي الصفحات المجاورة في lcs_align
     if fn_vals_set:
-        # جمع مواقع الإحالات خارج الآيات القرآنية
-        quran_spans = [(m.start(), m.end()) for m in re.finditer(r"﴿[^﴾]*﴾", norm_matn)]
+        quran_spans = find_true_quran_spans(norm_matn, fn_entries_meta, fn_vals_set)
 
         def _in_quran(pos: int) -> bool:
             return any(qs <= pos < qe for qs, qe in quran_spans)
@@ -455,8 +718,6 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
             if v is not None:
                 tok_matches_by_val.setdefault(v, []).append(m_tok)
 
-        # أولاً: إذا زاد عدد إحالات الرقم v في متن الصفحة عن عدد حواشيه في أسفل الصفحة (حاشية مشتركة لمواضع متعددة في الصفحة)
-        # نُبقي أول target_k إحالات حقيقية بصيغة (١) لترتبط بالحاشية، ونباعد الزائد ( ١ ) لمنع سرقة حاشية الصفحة التالية
         spans_to_space = []
         for v, target_k in fn_val_counts.items():
             m_list = tok_matches_by_val.get(v, [])
@@ -467,17 +728,24 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
                 keep_starts = {m.start() for m in ordered_keep}
                 for m in m_list:
                     if m.start() not in keep_starts:
-                        spans_to_space.append((m.start(), m.end(), m.group(1)))
+                        spans_to_space.append((m.start(), m.end(), m.group(1), True))
+
+        for v, m_list in tok_matches_by_val.items():
+            if v not in fn_val_counts:
+                for m in m_list:
+                    if norm_matn[:m.start()].rstrip().endswith("﴾") or is_likely_non_fn_token_in_page(
+                        norm_matn, m.start(), m.end(), m.group(0)
+                    ):
+                        spans_to_space.append((m.start(), m.end(), m.group(1), False))
 
         if spans_to_space:
             spans_to_space.sort(key=lambda x: x[0], reverse=True)
-            for sp_s, sp_e, inner_m in spans_to_space:
+            for sp_s, sp_e, inner_m, is_shared_fn in spans_to_space:
                 norm_matn = norm_matn[:sp_s] + f"( {inner_m} )" + norm_matn[sp_e:]
-                stats["shared_markers_spaced"] += 1
+                if is_shared_fn:
+                    stats["shared_markers_spaced"] += 1
 
-        # ثانياً: إذا نقص عدد إحالات الرقم v في متن الصفحة عن عدد حواشيه (سقوط مطبعي لرقم الإحالة في المتن مثل ص 154)
-        # نثبت الإحالة في موضعها الرتيب داخل الصفحة نفسها لمنع انزياح حواشي الصفحات السابقة
-        quran_spans = [(m.start(), m.end()) for m in re.finditer(r"﴿[^﴾]*﴾", norm_matn)]
+        quran_spans = find_true_quran_spans(norm_matn, fn_entries_meta, fn_vals_set)
         tok_positions_by_val: dict[int | str, list[tuple[int, int]]] = {}
         for m_tok in re.finditer(r"\(([٠-٩0-9]+|\*+)\)", norm_matn):
             if any(qs <= m_tok.start() < qe for qs, qe in quran_spans):
@@ -491,7 +759,6 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
             cur_k = len(tok_positions_by_val.get(v, []))
             if cur_k >= target_k:
                 continue
-            # تحديد النطاق الرتيب [min_pos, max_pos] بين الإحالات السابقة واللاحقة في الصفحة
             min_pos = 0
             max_pos = len(norm_matn)
             if isinstance(v, int):
@@ -502,10 +769,11 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
                     if isinstance(next_v, int) and next_v > v and pos_list:
                         max_pos = min(max_pos, pos_list[0][0])
 
-            norm_matn, ins_end = anchor_missing_fn_marker_in_matn(norm_matn, v, fn_body, min_pos, max_pos)
+            norm_matn, ins_end = anchor_missing_fn_marker_in_matn(
+                norm_matn, v, fn_body, min_pos, max_pos, quran_spans=quran_spans
+            )
             stats["missing_matn_markers_anchored"] += 1
-            # إعادة تحديث مواقع الإحالات بعد الإدراج
-            quran_spans = [(m.start(), m.end()) for m in re.finditer(r"﴿[^﴾]*﴾", norm_matn)]
+            quran_spans = find_true_quran_spans(norm_matn, fn_entries_meta, fn_vals_set)
             tok_positions_by_val = {}
             for m_tok in re.finditer(r"\(([٠-٩0-9]+|\*+)\)", norm_matn):
                 if any(qs <= m_tok.start() < qe for qs, qe in quran_spans):
@@ -515,6 +783,168 @@ def normalize_page_footnotes_and_markers(matn: str, footnotes_raw: str) -> tuple
                     tok_positions_by_val.setdefault(v_re, []).append((m_tok.start(), m_tok.end()))
 
     return norm_matn, norm_footnotes_raw, stats
+
+
+def _get_page_field(p: dict, ext_in: dict, *keys: str, default=""):
+    for k in keys:
+        if k in ext_in and ext_in[k] not in (None, ""):
+            return ext_in[k]
+        if k in p and p[k] not in (None, ""):
+            return p[k]
+    return default
+
+
+def check_delimiters_balanced_and_preserved(matn_top: str, full_matn: str) -> bool:
+    """يتحقق من توازن علامات بداية ونهاية المتن المشروح (`﴿...﴾`, `(...)`, `[...]`, `«...»`) وحفظها الحرفي 100%."""
+    if not matn_top:
+        return True
+    if matn_top not in full_matn:
+        return False
+    for op, cl in (("﴿", "﴾"), ("(", ")"), ("[", "]"), ("«", "»")):
+        if matn_top.count(op) != matn_top.count(cl):
+            return False
+    return True
+
+
+def extract_and_normalize_page_zones(p: dict, update_in_place: bool = True) -> dict:
+    """
+    يستخلص ويطبع جميع مناطق الصفحة (المتن الأعلى `matn_top`، الشرح الأسفل `sharh_body`، المتن الموحد `matn`/`text`،
+    الهامش الجانبي `margin_notes`، والحواشي السفلية `footnotes` بجميع صيغها النصية والمهيكلة) مع الحفاظ الحرفي 100%.
+    """
+    ext_in = p.get("extracted") if isinstance(p.get("extracted"), dict) else {}
+
+    raw_printed_page = _get_page_field(p, ext_in, "printed_page", "page_number", default="")
+    raw_running_header = _get_page_field(p, ext_in, "running_header", "header", default="")
+    raw_matn_top = _get_page_field(p, ext_in, "matn_top", "top_matn", default="")
+    raw_sharh_body = _get_page_field(p, ext_in, "sharh_body", "sharh", default="")
+    raw_matn = _get_page_field(p, ext_in, "matn", default="")
+    raw_text = _get_page_field(p, ext_in, "text", "body", default="")
+    raw_margin_notes = _get_page_field(p, ext_in, "margin_notes", "hashiya_margin", "margin", default="")
+    raw_footnotes_val = _get_page_field(p, ext_in, "footnotes", "footnotes_raw", "fn", default="")
+
+    printed_page, st_pg = repair_line_breaks_and_mixed_digits(str(raw_printed_page), is_page_number=True)
+    running_header, st_rh = repair_line_breaks_and_mixed_digits(str(raw_running_header))
+    matn_top, st_mt = repair_line_breaks_and_mixed_digits(str(raw_matn_top))
+    sharh_body, st_sh = repair_line_breaks_and_mixed_digits(str(raw_sharh_body))
+    matn_base, st_mb = repair_line_breaks_and_mixed_digits(str(raw_matn))
+    text_base, st_tb = repair_line_breaks_and_mixed_digits(str(raw_text))
+    margin_notes, st_mn = repair_line_breaks_and_mixed_digits(str(raw_margin_notes))
+
+    fn_coerced_str, fn_input_format, fn_struct_count = coerce_footnotes_to_raw_str(raw_footnotes_val)
+    footnotes_pre, st_fn = repair_line_breaks_and_mixed_digits(fn_coerced_str)
+
+    if matn_base and text_base:
+        if text_base in matn_base:
+            extra_body = matn_base
+        elif matn_base in text_base:
+            extra_body = text_base
+        else:
+            extra_body = f"{matn_base}\n{text_base}"
+    else:
+        extra_body = matn_base or text_base
+
+    # إذا لم يُفصل matn_top وsharh_body في حقلين مستقلين ولكن نص المتن يحوي خط فصل صريح بين المتن الأعلى والشرح الأسفل
+    if not matn_top and not sharh_body and extra_body:
+        eb_lines = extra_body.splitlines()
+        div_idx = None
+        for idx_l, ln_eb in enumerate(eb_lines):
+            if 0 < idx_l < len(eb_lines) - 1 and SHARH_ZONE_DIVIDER_LINE_RE.match(ln_eb):
+                div_idx = idx_l
+                break
+        if div_idx is not None:
+            matn_top = "\n".join(eb_lines[:div_idx]).strip()
+            sharh_body = "\n".join(eb_lines[div_idx:]).strip()
+            extra_body = ""
+        else:
+            # كشف المتن الأعلى المحصور بين ﴿...﴾ أو (...) في صدر الصفحة متبوعاً بسطر يبدأ بـ «الشرح:» أو «قال الشارح:»
+            for idx_l in range(1, min(6, len(eb_lines))):
+                ln_norm = TASHKEEL_RE.sub("", eb_lines[idx_l].strip())
+                if re.match(r"^(?:الشرح|قال\s+الشارح)\s*:", ln_norm):
+                    top_cand = "\n".join(eb_lines[:idx_l]).strip()
+                    if (top_cand.startswith("﴿") and "﴾" in top_cand) or (top_cand.startswith("(") and ")" in top_cand):
+                        matn_top = top_cand
+                        sharh_body = "\n".join(eb_lines[idx_l:]).strip()
+                        extra_body = ""
+                    break
+
+    if matn_top or sharh_body:
+        if matn_top and sharh_body and extra_body == f"{matn_top}\n{sharh_body}":
+            extra_body = ""
+        elif matn_top and extra_body == matn_top:
+            extra_body = ""
+        elif sharh_body and extra_body == sharh_body:
+            extra_body = ""
+        elif extra_body:
+            rem = extra_body
+            if matn_top and matn_top in rem:
+                rem = rem.replace(matn_top, "", 1).strip()
+            if sharh_body and sharh_body in rem:
+                rem = rem.replace(sharh_body, "", 1).strip()
+            extra_body = rem
+
+    zone_keys = []
+    zone_texts = []
+    for zk, zt in (("matn_top", matn_top), ("sharh_body", sharh_body), ("extra_body", extra_body)):
+        if zt:
+            zone_keys.append(zk)
+            zone_texts.append(zt)
+
+    combined_for_norm = ZONE_SENTINEL.join(zone_texts)
+    norm_combined, footnotes_raw, fn_norm_stats = normalize_page_footnotes_and_markers(combined_for_norm, footnotes_pre)
+
+    if zone_keys:
+        split_Back = norm_combined.split(ZONE_SENTINEL)
+        zone_map = {zk: (split_Back[i] if i < len(split_Back) else "") for i, zk in enumerate(zone_keys)}
+        matn_top = zone_map.get("matn_top", "")
+        sharh_body = zone_map.get("sharh_body", "")
+        extra_body = zone_map.get("extra_body", "")
+        matn = "\n".join(part for part in (matn_top, sharh_body, extra_body) if part)
+    else:
+        matn = norm_combined
+
+    all_repair_dicts = (st_pg, st_rh, st_mt, st_sh, st_mb, st_tb, st_mn, st_fn)
+    merged_stats = dict(fn_norm_stats)
+    merged_stats["persian_digits_fixed"] = sum(d["persian_digits_fixed"] for d in all_repair_dicts)
+    merged_stats["persian_chars_fixed"] = sum(d["persian_chars_fixed"] for d in all_repair_dicts)
+    merged_stats["line_break_splits_repaired"] = sum(d["line_break_splits_repaired"] for d in all_repair_dicts)
+    merged_stats["mixed_digits_normalized"] = sum(d["mixed_digits_normalized"] for d in all_repair_dicts)
+    merged_stats["structured_footnote_items_coerced"] = fn_struct_count
+
+    has_multi_zone = bool(matn_top or sharh_body)
+    delims_ok = check_delimiters_balanced_and_preserved(matn_top, matn)
+    has_continuation_fn = any(ln.strip().startswith("=") for ln in footnotes_raw.splitlines() if ln.strip())
+
+    if update_in_place:
+        ext_out = dict(ext_in)
+        ext_out["printed_page"] = printed_page
+        ext_out["running_header"] = running_header
+        ext_out["matn"] = matn
+        if matn_top:
+            ext_out["matn_top"] = matn_top
+        if sharh_body:
+            ext_out["sharh_body"] = sharh_body
+        ext_out["margin_notes"] = margin_notes
+        ext_out["footnotes"] = footnotes_raw
+        if fn_input_format != "str":
+            ext_out["footnotes_structured"] = raw_footnotes_val
+        ext_out.setdefault("uncertain_words", p.get("uncertain_words", []))
+        p["extracted"] = ext_out
+
+    return {
+        "printed_page": printed_page,
+        "running_header": running_header,
+        "matn_top": matn_top,
+        "sharh_body": sharh_body,
+        "extra_body": extra_body,
+        "matn": matn,
+        "margin_notes": margin_notes,
+        "footnotes_raw": footnotes_raw,
+        "footnotes_input_format": fn_input_format,
+        "has_multi_zone": has_multi_zone,
+        "has_continuation_fn": has_continuation_fn,
+        "matn_top_delimiters_preserved": delims_ok,
+        "normalization_stats": merged_stats,
+    }
 
 
 def parse_footnote_lines_verbatim(
@@ -613,18 +1043,31 @@ def normalize_heading_key(text: str) -> str:
 def is_candidate_heading_line(line: str, running_header: str = "", seen_heading_keys: set[str] | None = None) -> tuple[bool, int, str]:
     """
     يفحص ما إذا كان السطر عنوان باب/فصل يصلح كبداية جزء هيكلي دون حذف السطر من المتن.
-    يدعم العناوين المستقلة والعناوين المدمجة في مطلع الفقرة (Run-in Headings مثل: `القسم الأول: المفتي المستقل، وشرطه: ...`)
+    يدعم العناوين المستقلة، وعناوين المتون المحصورة بين قوسين زهريين `﴿باب ...﴾`،
+    والعناوين المدمجة في مطلع الفقرة (Run-in Headings مثل: `القسم الأول: المفتي المستقل، وشرطه: ...`)
     ويمنع الرؤوس الجارية المتكررة (Running Headers) من تقطيع الأجزاء خطأً.
     يرجع (is_heading, level, clean_heading_title).
     """
     s = line.strip()
     if not s:
         return False, 0, ""
-    if s.startswith(("[ص:", "[هامش جانبي", "﴿", "«", "---")):
+    if s.startswith(("[ص:", "[هامش جانبي", "«", "---", "───", "===")):
         return False, 0, ""
 
     # إزالة أرقام الحواشي الطرفية من نهاية العنوان عند الفحص
     core = re.sub(r"\s*[\(\[]\s*[٠-٩0-9\*]{1,3}\s*[\)\]]\s*$", "", s).strip()
+
+    # دعم عناوين الأبواب والفصول الموضوعة بين قوسين زهريين في أعلى صفحات الشروح مثل: ﴿فصل في شروط الصلاة﴾
+    if core.startswith("﴿"):
+        if core.endswith("﴾") and not re.search(r"\([٠-٩0-9]+\)", core):
+            inner_floral = core[1:-1].strip()
+            inner_norm = TASHKEEL_RE.sub("", inner_floral).strip()
+            if HEADING_KEYWORDS_RE.match(inner_norm) and 1 <= len(inner_floral.split()) <= 12:
+                core = inner_floral
+            else:
+                return False, 0, ""
+        else:
+            return False, 0, ""
 
     # دعم العناوين المدمجة في أول السطر (Run-in Headings) مثل: `القسم الأوَّل: المفتي المستقل، وشَرْطُهُ: أنْ يكونَ...`
     norm_s = TASHKEEL_RE.sub("", core).strip()
@@ -818,6 +1261,11 @@ def convert_pdf_output_to_preflight(
         "shared_markers_spaced": 0,
         "missing_matn_markers_anchored": 0,
         "cross_page_continuations_merged": 0,
+        "line_break_splits_repaired": 0,
+        "mixed_digits_normalized": 0,
+        "structured_footnote_items_coerced": 0,
+        "persian_digits_fixed": 0,
+        "persian_chars_fixed": 0,
     }
 
     prev_pg_int = 0
@@ -838,30 +1286,31 @@ def convert_pdf_output_to_preflight(
                 "page_int": None,
                 "page_marker": "",
                 "running_header": "",
+                "matn_top": "",
+                "sharh_body": "",
+                "has_multi_zone": False,
+                "matn_top_delimiters_preserved": True,
                 "matn": "",
                 "margin_notes": "",
                 "footnotes_raw": "",
+                "footnotes_input_format": "str",
                 "footnotes_parsed": [],
-                "char_counts": {"matn": 0, "margin_notes": 0, "footnotes": 0},
+                "char_counts": {"matn": 0, "matn_top": 0, "sharh_body": 0, "margin_notes": 0, "footnotes": 0},
             })
             continue
 
-        ext = p.get("extracted") or {}
-        printed_page, _ = normalize_arabic_output(ext.get("printed_page", ""))
-        running_header, _ = normalize_arabic_output(ext.get("running_header", ""))
-        matn, _ = normalize_arabic_output(ext.get("matn", ""))
-        margin_notes, _ = normalize_arabic_output(ext.get("margin_notes", ""))
-        footnotes_raw, _ = normalize_arabic_output(ext.get("footnotes", ""))
+        zone_info = extract_and_normalize_page_zones(p, update_in_place=True)
+        printed_page = zone_info["printed_page"]
+        running_header = zone_info["running_header"]
+        matn_top = zone_info["matn_top"]
+        sharh_body = zone_info["sharh_body"]
+        matn = zone_info["matn"]
+        margin_notes = zone_info["margin_notes"]
+        footnotes_raw = zone_info["footnotes_raw"]
+        page_norm_stats = zone_info["normalization_stats"]
 
-        matn, footnotes_raw, page_norm_stats = normalize_page_footnotes_and_markers(matn, footnotes_raw)
         for k_st, v_st in page_norm_stats.items():
             normalization_totals[k_st] = normalization_totals.get(k_st, 0) + v_st
-
-        ext["printed_page"] = printed_page
-        ext["running_header"] = running_header
-        ext["matn"] = matn
-        ext["margin_notes"] = margin_notes
-        ext["footnotes"] = footnotes_raw
 
         pg_int = parse_printed_page_int(printed_page, pdf_page, prev_pg_int)
         prev_pg_int = pg_int
@@ -923,13 +1372,20 @@ def convert_pdf_output_to_preflight(
             "page_int": pg_int,
             "page_marker": page_marker,
             "running_header": running_header,
+            "matn_top": matn_top,
+            "sharh_body": sharh_body,
+            "has_multi_zone": zone_info["has_multi_zone"],
+            "matn_top_delimiters_preserved": zone_info["matn_top_delimiters_preserved"],
             "matn": matn,
             "margin_notes": margin_notes,
             "footnotes_raw": footnotes_raw,
+            "footnotes_input_format": zone_info["footnotes_input_format"],
             "footnotes_parsed": fn_parsed,
             "normalization_stats": page_norm_stats,
             "char_counts": {
                 "matn": len(matn),
+                "matn_top": len(matn_top),
+                "sharh_body": len(sharh_body),
                 "margin_notes": len(margin_notes),
                 "footnotes": len(footnotes_raw),
             },
@@ -1176,7 +1632,7 @@ def convert_pdf_output_to_preflight(
 
     all_passed = bool(zero_loss_report["passed"] and manifest_v4_verification["passed"])
     adapter_manifest = {
-        "schema": "turath_pdf_to_preflight_adapter_v2.1",
+        "schema": "turath_pdf_to_preflight_adapter_v2.2",
         "status": "PASS" if all_passed else "FAIL",
         "book_id": book_id,
         "book_slug": book_slug,
@@ -1188,6 +1644,7 @@ def convert_pdf_output_to_preflight(
         "total_pages": len(pages_preflight),
         "non_blank_pages": sum(1 for p in pages_preflight if p["layout"] != "blank_or_sparse"),
         "framed_hashiya_pages": sum(1 for p in pages_preflight if p["layout"] == "framed_hashiya"),
+        "multi_zone_pages": sum(1 for p in pages_preflight if p.get("has_multi_zone")),
         "total_parts_built": len(snapshot_parts),
         "total_footnotes_count": len(parsed_footnotes_all),
         "cross_page_continuations_merged": normalization_totals["cross_page_continuations_merged"],
@@ -1218,11 +1675,14 @@ def verify_zero_loss(
 ) -> dict:
     """
     يتحقق حسابياً وتشفيرياً (SHA-256 + Substring + Char Counts) من عدم ضياع أي حرف (0 Loss)
-    من المتن الأصلي أو الهوامش الجانبية أو الحواشي السفلية عبر جميع ملفات المخرجات.
+    من المتن الأصلي (بما يشمل المتن الأعلى `matn_top` وعلامات بدايته ونهايته، والشرح الأسفل `sharh_body`)
+    أو الهوامش الجانبية أو الحواشي السفلية عبر جميع ملفات المخرجات.
     """
     errors = []
     src_body_lines = []
     src_matn_chars = 0
+    src_matn_top_chars = 0
+    src_sharh_body_chars = 0
     src_margin_chars = 0
     src_fn_chars = 0
 
@@ -1239,10 +1699,14 @@ def verify_zero_loss(
         p_num = pg["pdf_page"]
         pg_key = str(pg["page_int"])
         matn = pg["matn"]
+        matn_top = pg.get("matn_top", "")
+        sharh_body = pg.get("sharh_body", "")
         margin = pg["margin_notes"]
         fn_raw = pg["footnotes_raw"]
 
         src_matn_chars += len(matn)
+        src_matn_top_chars += len(matn_top)
+        src_sharh_body_chars += len(sharh_body)
         src_margin_chars += len(margin)
         src_fn_chars += len(fn_raw)
 
@@ -1255,6 +1719,13 @@ def verify_zero_loss(
 
         if matn and matn not in book_matn_txt:
             errors.append(f"Page {p_num}: verbatim matn missing in book_matn.txt")
+        if matn_top:
+            if matn_top not in book_matn_txt:
+                errors.append(f"Page {p_num}: verbatim matn_top missing in book_matn.txt")
+            if not pg.get("matn_top_delimiters_preserved", True):
+                errors.append(f"Page {p_num}: matn_top opening/closing delimiters unbalanced or lost")
+        if sharh_body and sharh_body not in book_matn_txt:
+            errors.append(f"Page {p_num}: verbatim sharh_body missing in book_matn.txt")
         if margin and margin not in book_matn_txt:
             errors.append(f"Page {p_num}: verbatim margin_notes missing in book_matn.txt")
         if fn_raw:
@@ -1295,6 +1766,8 @@ def verify_zero_loss(
     return {
         "passed": len(errors) == 0 and body_char_loss == 0 and fn_char_loss == 0,
         "source_matn_chars": src_matn_chars,
+        "source_matn_top_chars": src_matn_top_chars,
+        "source_sharh_body_chars": src_sharh_body_chars,
         "source_margin_notes_chars": src_margin_chars,
         "source_footnotes_chars": src_fn_chars,
         "body_stream_chars": len(expected_body_stream),

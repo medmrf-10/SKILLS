@@ -323,36 +323,69 @@ def analyze_and_slice_page(arr: np.ndarray, out_dir: str, tag: str) -> dict:
 def run_quality_gates(extracted: dict, layout_meta: dict) -> dict:
     """
     تشغيل بوابات الجودة الحتمية الخمس على مخرجات المرحلة الأولى:
-      1) تطبيع الأرقام الفارسية والحروف الفارسية
+      1) تطبيع الأرقام الفارسية والحروف الفارسية وإصلاح الكلمات المقطوعة بالشرطة/الكشيدة وتوحيد صيغ الحواشي والمتن/الشرح
       2) بوابة التغطية السطرية (كشف سقوط الأسطر)
-      3) بوابة تطابق خط الحاشية وأرقام الإحالات بين المتن والهوامش
+      3) بوابة تطابق خط الحاشية وأرقام الإحالات بين المتن والهوامش (مع التمييز بين الآيات القرآنية ﴿...﴾ ومتن الشروح المحصور بين ﴿...﴾)
       4) بوابة توازن الأقواس وعلامات الآيات ﴿...﴾ و«...»
       5) بوابة تحديد الإحداثيات السطرية للكلمات المشتبه بها (uncertain_words) لتكبيرها بدقة 2800px
     """
-    raw_m = (extracted.get("matn") or "").strip()
-    if raw_m.startswith("{") and '"matn"' in raw_m:
+    from pdf_to_preflight_adapter import (
+        coerce_footnotes_to_raw_str,
+        find_true_quran_spans,
+        repair_line_breaks_and_mixed_digits,
+    )
+
+    raw_m = str(extracted.get("matn") or extracted.get("text") or "").strip()
+    if raw_m.startswith("{") and ('"matn"' in raw_m or '"text"' in raw_m or '"matn_top"' in raw_m):
         for ln_cand in reversed(raw_m.splitlines()):
             ln_cand = ln_cand.strip()
             if ln_cand.startswith("{"):
                 try:
                     inner = json.loads(ln_cand)
-                    if isinstance(inner, dict) and "matn" in inner:
-                        for k in ("matn", "footnotes", "running_header", "margin_notes", "printed_page", "uncertain_words"):
+                    if isinstance(inner, dict) and any(k in inner for k in ("matn", "text", "matn_top", "sharh_body")):
+                        for k in ("matn", "text", "matn_top", "sharh_body", "footnotes", "running_header", "margin_notes", "printed_page", "uncertain_words"):
                             if inner.get(k) and not extracted.get(k):
                                 extracted[k] = inner[k]
-                            elif k == "matn":
-                                extracted["matn"] = inner["matn"]
+                            elif k in ("matn", "text") and inner.get(k):
+                                extracted[k] = inner[k]
                         break
                 except Exception:
                     pass
 
-    matn_norm, norm_stats_m = normalize_arabic_output(extracted.get("matn", ""))
-    fn_norm, norm_stats_f = normalize_arabic_output(extracted.get("footnotes", ""))
-    hdr_norm, _ = normalize_arabic_output(extracted.get("running_header", ""))
-    margin_norm, _ = normalize_arabic_output(extracted.get("margin_notes", ""))
-    pg_norm, _ = normalize_arabic_output(extracted.get("printed_page", ""))
+    raw_matn_top, st_mt = repair_line_breaks_and_mixed_digits(str(extracted.get("matn_top") or ""))
+    raw_sharh_body, st_sb = repair_line_breaks_and_mixed_digits(str(extracted.get("sharh_body") or ""))
+    if raw_matn_top or raw_sharh_body:
+        matn_top_norm = raw_matn_top
+        sharh_norm = raw_sharh_body
+        extracted["matn_top"] = matn_top_norm
+        extracted["sharh_body"] = sharh_norm
+        combined_body = "\n".join(p for p in (matn_top_norm, sharh_norm) if p)
+        matn_norm = combined_body
+        norm_stats_m = {
+            "persian_digits_fixed": st_mt["persian_digits_fixed"] + st_sb["persian_digits_fixed"],
+            "persian_chars_fixed": st_mt["persian_chars_fixed"] + st_sb["persian_chars_fixed"],
+        }
+    else:
+        raw_body = str(extracted.get("matn") or extracted.get("text") or "")
+        matn_norm, st_mb = repair_line_breaks_and_mixed_digits(raw_body)
+        norm_stats_m = {
+            "persian_digits_fixed": st_mb["persian_digits_fixed"],
+            "persian_chars_fixed": st_mb["persian_chars_fixed"],
+        }
+
+    coerced_fn_str, _, _ = coerce_footnotes_to_raw_str(extracted.get("footnotes", ""))
+    fn_norm, st_fn = repair_line_breaks_and_mixed_digits(coerced_fn_str)
+    norm_stats_f = {
+        "persian_digits_fixed": st_fn["persian_digits_fixed"],
+        "persian_chars_fixed": st_fn["persian_chars_fixed"],
+    }
+    hdr_norm, _ = repair_line_breaks_and_mixed_digits(str(extracted.get("running_header") or ""))
+    margin_norm, _ = repair_line_breaks_and_mixed_digits(str(extracted.get("margin_notes") or ""))
+    pg_norm, _ = repair_line_breaks_and_mixed_digits(str(extracted.get("printed_page") or ""), is_page_number=True)
 
     extracted["matn"] = matn_norm
+    if "text" in extracted:
+        extracted["text"] = matn_norm
     extracted["footnotes"] = fn_norm
     extracted["running_header"] = hdr_norm
     extracted["margin_notes"] = margin_norm
@@ -392,6 +425,8 @@ def run_quality_gates(extracted: dict, layout_meta: dict) -> dict:
 
     fn_markers = []
     for ln in fn_lines:
+        if re.match(r"^\s*(?:=|[\(\[]\s*=\s*[\)\]])", ln):
+            continue
         for m in re.finditer(
             r"(?:^\s*(?:[\(\[]\s*([٠-٩0-9]{1,2}|\*+)\s*[\)\]]|([٠-٩0-9]{1,2})\s*[-–—.)]|([¹²³⁴⁵⁶⁷⁸⁹])|(\*+)\s*[-–—.]?(?=\s+\S))"
             r"|(?:\s{2,}|(?<=[.؛])\s+)[\(\[]\s*([٠-٩0-9]{1,2}|\*+)\s*[\)\]]\s*(?=[\u0621-\u064A«\"\[]))",
@@ -403,7 +438,17 @@ def run_quality_gates(extracted: dict, layout_meta: dict) -> dict:
                 fn_markers.append(val)
 
     has_star_fn = "*" in fn_markers
-    matn_without_quran = re.sub(r"﴿[^﴾]*﴾", " ", matn_norm)
+    # Only mask TRUE Quranic spans ﴿...﴾; preserve commented-upon Matn ﴿...﴾ so its footnote markers are counted
+    q_spans = find_true_quran_spans(matn_norm)
+    if q_spans:
+        chars = list(matn_norm)
+        for s_idx, e_idx in q_spans:
+            for k_idx in range(s_idx, e_idx):
+                chars[k_idx] = " "
+        matn_without_quran = "".join(chars)
+    else:
+        matn_without_quran = matn_norm
+
     matn_markers = []
     for m in re.finditer(
         r"[\(\[]\s*([٠-٩0-9]{1,2}|\*+)\s*[\)\]]|([¹²³⁴⁵⁶⁷⁸⁹])|(?<=[\u0621-\u064A\u064B-\u065F])([٠-٩0-9]{1,2})(?=\s|[،.؛:!؟«»\"'\)\]]|$)",
