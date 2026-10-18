@@ -17,6 +17,9 @@ import threading
 import time
 from datetime import datetime
 
+if not os.environ.get('HOME'):
+    os.environ['HOME'] = os.path.expanduser('~') if os.path.expanduser('~') != '~' else '/root'
+
 SELECTIONS_JSON = '/root/workspace/cheikh-exports/cheikh-selected-curated-2026-10-17.json'
 YTB_ROOT = '/root/workspace/ytb'
 ROW_MAP_JSON = '/root/workspace/ytb/_meta/row_map.json'
@@ -155,7 +158,7 @@ def main():
     yt_to_path = index_existing_ytb()
     log(f'إجمالي التفريغات الصالحة المرصودة في ytb حالياً: {len(yt_to_path)}')
 
-    min_completion_pct = float(os.environ.get('MIN_COMPLETION_PCT', '50.0'))
+    min_completion_pct = float(os.environ.get('MIN_COMPLETION_PCT', '70.0'))
     queue = []
     skipped_under_threshold = 0
     for s in data.get('series', []):
@@ -189,7 +192,7 @@ def main():
     queue.sort(key=lambda x: (x['rem_count'], x['total_count'], x['rem_dur']))
     total_q = len(queue)
     log(
-        f'وضع التصفية (>= {min_completion_pct:.1f}% فقط): تم استبعاد {skipped_under_threshold} سلسلة جديدة أو دون 50% | '
+        f'وضع التصفية (>= {min_completion_pct:.1f}% فقط): تم استبعاد {skipped_under_threshold} سلسلة جديدة أو دون 70% | '
         f'المتبقي لإكماله: {total_q} سلسلة فقط ({sum(x["rem_count"] for x in queue)} درساً)'
     )
 
