@@ -59,11 +59,16 @@ DEVOTIONAL_WORDS = {
 }
 
 
+SBV_SRT_LINE_RE = re.compile(
+    r'(?m)^(?:\s*\d+\s*\n)?\s*\d+[;:]\d{2}:\d{2}(?:[:.,]\d+)?\s*(?:,|-->)\s*\d+[;:]\d{2}:\d{2}(?:[:.,]\d+)?\s*$'
+)
+
+
 def _norm_word_for_dedup(w):
     s = re.sub(r'[\u064B-\u065F\u0670\u0640]', '', str(w))
     s = re.sub(r'[أإآٱ]', 'ا', s)
     s = s.replace('ة', 'ه').replace('ى', 'ي')
-    s = re.sub(r'[^\u0600-\u06FF0-9a-zA-Z]', '', s)
+    s = re.sub(r'[^\u0621-\u063A\u0641-\u064A0-9a-zA-Z]', '', s)
     return s.lower()
 
 
@@ -79,7 +84,7 @@ def _is_devotional_span(norm_words):
 
 def _extract_lexical_tokens(text):
     tokens = []
-    for m in re.finditer(r'\S+', text):
+    for m in re.finditer(r'[\u0621-\u065F\u0670\u06400-9a-zA-Z]+', text):
         nw = _norm_word_for_dedup(m.group(0))
         if nw:
             tokens.append((m.start(), m.end(), nw))
@@ -206,57 +211,85 @@ def deduplicate_chunk_boundary_overlap(text_or_chunks, min_overlap_words=4, max_
             cleaned_blocks.append(next_b)
 
     merged_txt = '\n\n'.join(b for b in cleaned_blocks if b)
-    return deduplicate_large_repeated_blocks(merged_txt, min_block_words=28)
+    return deduplicate_large_repeated_blocks(merged_txt, min_block_words=24)
 
 
-def deduplicate_large_repeated_blocks(text, min_block_words=28):
-    """إزالة الكتل النصية الكبيرة المكررة (≥28 كلمة متطابقة حرفياً في موضعين غير متجاورين) الناتجة عن إعادة تفريغ مقطع فرعي، مع استثناء الآيات القرآنية والتكرارات التعبدية."""
+def deduplicate_large_repeated_blocks(text, min_block_words=24):
+    """إزالة الكتل النصية الكبيرة المكررة (≥24 كلمة متطابقة في موضعين غير متجاورين) الناتجة عن إعادة تفريغ مقطع فرعي، مع دمج الفجوات القصيرة بين الكتل المكررة واستثناء الآيات القرآنية والتكرارات التعبدية."""
     if not text or not text.strip():
         return text
     cur_text = text
-    anchor_len = min(14, max(6, min_block_words // 2))
-    for _pass in range(8):
+    anchor_len = min(10, max(6, min_block_words // 2))
+    for _pass in range(6):
         tokens = _extract_lexical_tokens(cur_text)
         n = len(tokens)
         if n < min_block_words * 2:
             break
         seen = {}
-        found_cut = None
-        for i in range(0, n - min_block_words + 1):
+        spans = []
+        i = 0
+        while i <= n - min_block_words:
             key = tuple(tokens[k][2] for k in range(i, i + anchor_len))
-            prev_list = seen.get(key)
-            if prev_list:
-                for j0 in prev_list:
-                    if i - j0 < min_block_words:
+            best = None
+            for j0 in seen.get(key, ()):
+                if i - j0 < min_block_words:
+                    continue
+                L = anchor_len
+                while i + L < n and j0 + L < i and tokens[i + L][2] == tokens[j0 + L][2]:
+                    L += 1
+                if L >= min_block_words:
+                    span_words = [tokens[k][2] for k in range(i, i + L)]
+                    if _is_devotional_span(span_words):
                         continue
-                    L = anchor_len
-                    while i + L < n and j0 + L < i and tokens[i + L][2] == tokens[j0 + L][2]:
-                        L += 1
-                    if L >= min_block_words:
-                        span_words = [tokens[k][2] for k in range(i, i + L)]
-                        if _is_devotional_span(span_words):
-                            continue
-                        raw_slice = cur_text[tokens[i][0]:tokens[i + L - 1][1]]
-                        # لا تحذف آية قرآنية بين قوسين مزهرين { ... } إلا إذا تجاوز التكرار 55 كلمة (فقرة شرح كاملة)
-                        if L < 55 and ('{' in raw_slice or '}' in raw_slice or '﴿' in raw_slice or '﴾' in raw_slice):
-                            continue
-                        c_start = tokens[i][0]
-                        c_end = _consume_trailing_punct(cur_text, tokens[i + L - 1][1])
-                        found_cut = (c_start, c_end)
-                        break
-            if found_cut:
-                break
-            seen.setdefault(key, []).append(i)
-        if not found_cut:
+                    raw_slice = cur_text[tokens[i][0]:tokens[i + L - 1][1]]
+                    if L < 55 and ('{' in raw_slice or '}' in raw_slice or '﴿' in raw_slice or '﴾' in raw_slice):
+                        continue
+                    if best is None or L > best[0]:
+                        best = (L, j0)
+            if best:
+                L, j0 = best
+                spans.append([i, i + L, j0, j0 + L])
+                for k in range(i, i + L):
+                    if k <= n - anchor_len:
+                        seen.setdefault(tuple(tokens[m][2] for m in range(k, k + anchor_len)), []).append(k)
+                i += L
+            else:
+                seen.setdefault(key, []).append(i)
+                i += 1
+
+        if not spans:
             break
-        c_start, c_end = found_cut
-        head_part = cur_text[:c_start].rstrip()
-        tail_part = cur_text[c_end:].lstrip()
-        if head_part and tail_part:
-            sep = '\n\n' if ('\n\n' in cur_text[max(0, c_start - 4):min(len(cur_text), c_end + 4)]) else ' '
-            cur_text = head_part + sep + tail_part
-        else:
-            cur_text = head_part or tail_part
+
+        merged = []
+        for sp in spans:
+            if merged and (sp[0] - merged[-1][1] <= 35) and (merged[-1][2] <= sp[2] < merged[-1][0]):
+                merged[-1][1] = sp[1]
+                merged[-1][3] = sp[3]
+            else:
+                merged.append(sp[:])
+
+        for m_sp in merged:
+            if m_sp[1] - m_sp[0] >= 100:
+                lookback = max(0, m_sp[0] - 8)
+                for k in range(lookback, m_sp[0]):
+                    if [tokens[x][2] for x in range(k, min(n, k + 4))] == ['بسم', 'الله', 'الرحمن', 'الرحيم']:
+                        m_sp[0] = k
+                        break
+
+        # نفّذ الحذف من آخر مقطع مكرر إلى أوله للحفاظ على صحة الفهارس
+        for m_sp in reversed(merged):
+            c_start = tokens[m_sp[0]][0]
+            # إذا سبق بداية القطع علامات ترقيم ملتصقة مثل "..." احذفها أيضاً
+            while c_start > 0 and cur_text[c_start - 1] in '.;,،:؛-—–…':
+                c_start -= 1
+            c_end = _consume_trailing_punct(cur_text, tokens[m_sp[1] - 1][1])
+            head_part = cur_text[:c_start].rstrip()
+            tail_part = cur_text[c_end:].lstrip()
+            if head_part and tail_part:
+                sep = '\n\n' if ('\n\n' in cur_text[max(0, c_start - 4):min(len(cur_text), c_end + 4)]) else ' '
+                cur_text = head_part + sep + tail_part
+            else:
+                cur_text = head_part or tail_part
     return cur_text
 
 
@@ -331,6 +364,13 @@ def strip_preamble_and_header(text):
                 in_leak = False
             out_paras.append(p)
         text = '\n\n'.join(out_paras)
+
+    # إزالة أسطر التوقيت الزمني لملفات الترجمة (SBV / SRT / VTT مثل 0;00:00.000,0;00:06.880)
+    if SBV_SRT_LINE_RE.search(text):
+        text = SBV_SRT_LINE_RE.sub('', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        if 'SUBTITLE_TIMESTAMPS' not in reasons:
+            reasons.append('SUBTITLE_TIMESTAMPS')
 
     # إزالة الوسوم الوصفية غير المنطوقة مثل [شارة إنشادية] أو ترويسات المتحدثين غير المنطوقة مثل **السائل الثالث:**
     if re.search(r'\[شارة[^\]]*\]', text):
