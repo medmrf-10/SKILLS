@@ -134,6 +134,13 @@ def build_ordered_lessons():
 
 def cleanup_completed_in_bridge(allowed_vids=None):
     os.makedirs(BRIDGE_DIR, exist_ok=True)
+    now = time.time()
+    for p in glob.glob(os.path.join(BRIDGE_DIR, '*.part*')) + glob.glob(os.path.join(BRIDGE_DIR, '*.tmp')):
+        try:
+            if now - os.path.getmtime(p) > 120:
+                os.remove(p)
+        except OSError:
+            pass
     for jpath in glob.glob(os.path.join(BRIDGE_DIR, '*.job.json')):
         try:
             job = json.load(open(jpath, encoding='utf-8'))
@@ -149,6 +156,13 @@ def cleanup_completed_in_bridge(allowed_vids=None):
                     if os.path.exists(p):
                         os.remove(p)
         except Exception:
+            pass
+    for opath in glob.glob(os.path.join(BRIDGE_DIR, '*.opus')):
+        jpath = opath[:-5] + '.job.json'
+        try:
+            if not os.path.exists(jpath) and (now - os.path.getmtime(opath)) > 120:
+                os.remove(opath)
+        except OSError:
             pass
 
 
@@ -220,7 +234,8 @@ def prepare_one_opus(item):
             log(f'✗ فشل تحويل Opus لـ {key}: {(ff.stderr or "")[-200:]}')
             return False
 
-        shutil.move(tmp_opus, opus_out)
+        shutil.move(tmp_opus, opus_out + '.tmp')
+        os.replace(opus_out + '.tmp', opus_out)
         job_meta = {
             'key': key,
             'vid': item['vid'],
@@ -241,6 +256,15 @@ def prepare_one_opus(item):
 
 
 def main():
+    import fcntl
+    lock_fd = open('/tmp/vps_align_feeder.lock', 'w')
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fd.write(str(os.getpid()) + '\n')
+        lock_fd.flush()
+    except OSError:
+        log('نسخة أخرى من vps_align_feeder.py تعمل بالفعل — خروج لمنع الازدواج.')
+        return
     os.makedirs(BRIDGE_DIR, exist_ok=True)
     log(f'بدء مغذي المحاذاة المضغوط (Opus 12k VoIP · WORKERS={FEEDER_WORKERS} · MAX_BUFFER={MAX_BUFFER})...')
     while True:
