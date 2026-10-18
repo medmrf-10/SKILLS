@@ -753,8 +753,15 @@ KNOWN_HADITH_TAKHRIJ_MAP: list[tuple[str, str]] = [
     ("بضع وستون شعبه", "صحيح البخاري"),
     ("خيركم من تعلم القران وعلمه", "صحيح البخاري"),
     ("ان الرجل ليتكلم بالكلمه يضحك بها جلساءه", "صحيح البخاري"),
+    ("يدخلون الجنه في السلاسل", "صحيح البخاري"),
+    ("يهلك هذه الامه غلمه من قريش", "صحيح البخاري"),
+    ("هلاك امتي علي يدي غلمه من قريش", "صحيح البخاري"),
+    ("اول من يغزو القسطنطينيه", "صحيح البخاري"),
+    ("اول جيش من امتي يغزون مدينه قيصر", "صحيح البخاري"),
     ("الذين يعدلون في حكمهم واهليهم وما ولوا", "صحيح مسلم"),
     ("الدين النصيحه", "صحيح مسلم"),
+    ("القلوب بين اصبعين من اصابع الرحمن", "صحيح مسلم"),
+    ("ان قلوب بني ادم كلها بين اصبعين من اصابع الرحمن", "صحيح مسلم"),
     ("حرم من المسلم دمه وماله وعرضه", "صحيح مسلم"),
     ("كل المسلم علي المسلم حرام دمه وماله وعرضه", "صحيح مسلم"),
     ("اتدرون ما الغيبه", "صحيح مسلم"),
@@ -805,7 +812,7 @@ def resolve_hadith_source(h_txt: str, ctx_win: str = "", raw_src: str = "") -> s
     if sum(1 for kw in ("البخاري", "مسلم", "الترمذي", "داود", "النسايي", "ماجه") if kw in norm_ctx) >= 4:
         norm_ctx = ""
 
-    for probe in (norm_src, f"{norm_src} {norm_ctx}".strip()):
+    for probe in (norm_src, norm_ctx, f"{norm_src} {norm_ctx}".strip()):
         if not probe:
             continue
         # 1. Muttafaq 'Alayh (Bukhari & Muslim together)
@@ -855,7 +862,12 @@ def resolve_hadith_source(h_txt: str, ctx_win: str = "", raw_src: str = "") -> s
             if stem_norm in norm_h or (len(norm_h) >= 12 and norm_h in stem_norm):
                 return canon_src
 
-    if raw_src and raw_src.strip() not in ("", "مصدر حديثي", "حديث"):
+    if (
+        raw_src
+        and raw_src.strip() not in ("", "مصدر حديثي", "حديث", "السنة النبوية")
+        and len(raw_src.split()) <= 5
+        and not any(ch in raw_src for ch in ("«", "»", '"', ":", "،"))
+    ):
         return raw_src.strip()
     if re.search(r"(?:الحديث\s+الصحيح|حديث\s+صحيح|في\s+الصحيح\b)", f"{norm_src} {norm_ctx}"):
         return "الحديث الصحيح"
@@ -899,7 +911,7 @@ HADITH_FAMOUS_INLINE_RE = re.compile(
 
 HADITH_FALSE_COMMENTARY_RE = re.compile(
     r"(?:"
-    r"\b(?:يعني|طيب|خلي\s+بالك|ما\s+ينفعش|ده\s+حديث|هات\s+الصحابي|كانوا\s+بيعملوا|بتاع|إزاي|عشان|"
+    r"\b(?:يعني|طيب|خلي\s+بالك|ما\s+ينفعش|ده\s+حديث|هات\s+الصحابي|كانوا\s+بيعملوا|يروحوا|يروح\b|بيعملوا|بتاع|إزاي|عشان|كده\b|"
     r"سنتكلم\s+عنها|وهذا\s+يمكن\s+أن|تفسيرها\s+قراءتها|فكيف\s+إذا|إلى\s+آخر\s+ما\s+هنالك|"
     r"وصل\s+لنا\s+حتى\s+الآن|وعندنا\s+علم|متن\s+الحديث\s+وأصوله|بثلاث\s+روايات|مرسل\b|موضوع\b)\b"
     r"|^(?:فكيف|فهذا|وهذا|ولذلك|فلهذا|أي\s+|بمعنى|لا\s*،|نعم\s*،|ثم\s+انتقل|قال\s+المصنف|قال\s+الناظم|كذلك\b|شخص\s+الله)"
@@ -929,7 +941,7 @@ def _build_local_hadith_takhrij_window(p_raw: str, m_start: int, m_end: int) -> 
 
 def _clean_and_validate_hadith_span(cand: str, p_raw: str, is_quoted: bool) -> str:
     s = (cand or "").strip(" \t\r\n،.؛:؟!«»\"'()-")
-    if not s or "{" in s or "}" in s or "﴿" in s or "﴾" in s:
+    if not s or "{" in s or "}" in s or "﴿" in s or "﴾" in s or "..." in s or "…" in s:
         return ""
     if not is_quoted:
         s = re.split(

@@ -361,7 +361,11 @@ def parse_evidence_fields(ev: dict, passage_fn_refs: list, raw_text: str = "") -
             "footnote_ref": fn_ref,
         }
     norm_ev_type = "athar" if ev_type_raw in ("athar", "أثر") else "hadith"
-    resolved_h_src = yti.resolve_hadith_source(v_txt, raw_text, ev_src)
+    local_ctx = raw_text
+    if v_txt and raw_text and v_txt in raw_text:
+        v_pos = raw_text.find(v_txt)
+        local_ctx = yti._build_local_hadith_takhrij_window(raw_text, v_pos, v_pos + len(v_txt))
+    resolved_h_src = yti.resolve_hadith_source(v_txt, local_ctx, ev_src)
     return {
         "evidence_type": norm_ev_type,
         "surah_number": None,
