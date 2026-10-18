@@ -463,11 +463,22 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                     words = len(cleaned.split())
                     _log_agy_usage(audio_path, dur_s, words, ar_chars, cur_model, res.returncode, elapsed, usage)
                     min_ar = min(300, max(40, min_words * 3))
-                    if (ar_chars >= min_ar and words >= min_words) or (attempt >= 2 and res.returncode == 0 and ar_chars >= 60 and words >= 15):
+                    max_words_cap = int((dur_s / 60.0) * 215.0) if dur_s >= 60.0 else 999999
+                    w_list = cleaned.split()
+                    has_rep_loop = False
+                    if len(w_list) >= 60:
+                        from collections import Counter
+                        ngrams = Counter(tuple(w_list[i:i + 6]) for i in range(len(w_list) - 5))
+                        if ngrams and ngrams.most_common(1)[0][1] >= 10:
+                            has_rep_loop = True
+                    if not has_rep_loop and words <= max_words_cap and (
+                        (ar_chars >= min_ar and words >= min_words)
+                        or (attempt >= 2 and res.returncode == 0 and ar_chars >= 60 and words >= 15)
+                    ):
                         return cleaned.strip(), elapsed
                     sample = (cleaned[:180] if cleaned else ((res.stderr or '') + ' ' + (res.stdout or ''))[-240:]).replace('\n', ' ')
-                    print('  [محاولة %d/%d · %s] مخرجات قصيرة أو غير صالحة (rc=%s, words=%d/%d, ar=%d): %s' % (
-                        attempt, retries, cur_model, res.returncode, words, min_words, ar_chars, sample
+                    print('  [محاولة %d/%d · %s] مخرجات قصيرة أو غير صالحة/هلوسة (rc=%s, words=%d/%d..%d, loop=%s, ar=%d): %s' % (
+                        attempt, retries, cur_model, res.returncode, words, min_words, max_words_cap, has_rep_loop, ar_chars, sample
                     ), flush=True)
                     if 'unsupported mime type' in (raw_out + ' ' + (res.stderr or '')).lower():
                         for fb in audio_fallbacks:
@@ -656,7 +667,7 @@ def main():
             cleaned_ex, _ = strip_preamble_and_header(existing_txt)
             w_ex = len(cleaned_ex.split())
             wpm_ex = (w_ex / dur_m) if dur_m > 0 else 999.0
-            if w_ex >= max(12, int(dur_m * 24)) and wpm_ex >= min(args.min_wpm, 24.0):
+            if w_ex >= max(12, int(dur_m * 24)) and wpm_ex >= min(args.min_wpm, 24.0) and (dur_m < 1.0 or wpm_ex <= 215.0):
                 print('[تخطي] %s سليم مسبقًا (%d كلمة · %.1f ك/د)' % (base, w_ex, wpm_ex), flush=True)
                 return True
 

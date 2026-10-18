@@ -86,7 +86,7 @@
 
 ### تفصيل المهام المطلوب تنفيذها بالترتيب:
 
-#### [ ] المهمة 0 (تأسيسية): مهارة `agy-lean-cli` (`/Users/macm1pro/REPOS/SKILLS/agy-lean-cli/`)
+#### [x] المهمة 0 (تأسيسية): مهارة `agy-lean-cli` (`/Users/macm1pro/REPOS/SKILLS/agy-lean-cli/`)
 - **الهدف:** التخلص من عبء تحميل مخططات `MCP` (~38,000 توكن) في الاستدعاءات النصية أو استشارات الهندسة أو فحص ملف واحد عبر `agy`، مع دمج حارس الكوتة الحي.
 - **المطلوب بناؤه:**
   1. `SKILL.md`: توثيق معمارية العزل (`Isolated HOME` بدون `mcp_config.json` + `--mode ask` + `--disable-slash-commands`) وقواعد اختيار النموذج وحماية الكوتة (`10%` لـ 5h / `25%` للأسبوعي حتى آخر 12 ساعة).
@@ -95,7 +95,7 @@
      - تشغيل `agy` في بيئة `HOME` معزولة خالية من `MCP` (مع ربط رمزي لمجلد المصادقة فقط حتى لا يطلب تسجيل دخول)، ودعم إرفاق ملفات محددة فقط في مجلد عمل مؤقت.
   3. `scripts/test_agy_lean_gates.py`: اختبار حتمي يتحقق من فحص الكوتة وعزل `MCP` ونجاح الاستدعاء الخفيف.
 
-#### [ ] الموجة الأولى (`Wave 1` — 3 وكلاء فرعيين بالتوازي):
+#### [x] الموجة الأولى (`Wave 1` — 3 وكلاء فرعيين بالتوازي):
 1. **المهمة 1 (`person-discovery-intake` + ربطها بـ `sheikh-curation`):**
    - بناء مهارة `/Users/macm1pro/REPOS/SKILLS/person-discovery-intake/` (وربطها بـ `sheikh-curation`) تستلم **اسم الشخصية فقط** وتجلب آلياً:
      - قنوات يوتيوب الرسمية والأرشيفية، قوائم التشغيل (`Playlists`)، الفيديوهات المنفردة، والبثوث المباشرة (`Streams`) مع مددها (`duration`) وتواريخ رفعها.
@@ -111,7 +111,7 @@
      - تجريد `SKILL.md` ليكون محرك استخراج بصري حرفي صافي 100% للمتون والحواشي (`pages/pNNNN.json` + `.txt`) ونقل أي مهام فهرسة/تلخيص إلى `turath-deep-indexing`.
      - بناء المحول `scripts/pdf_to_preflight_adapter.py` الذي يحول مخرجات `turath-pdf-to-text` (`pages/pNNNN.json`) تلقائياً إلى الصيغة التي يستقبلها `manifest_v4.py` في `turath-deep-indexing`، مع `scripts/test_pdf_adapter_gates.py`.
 
-#### [ ] الموجة الثانية (`Wave 2` — 3 وكلاء فرعيين بالتوازي بعد اعتماد الموجة الأولى):
+#### [x] الموجة الثانية (`Wave 2` — 3 وكلاء فرعيين بالتوازي بعد اعتماد الموجة الأولى):
 4. **المهمة 2 (`sheikh-curation v2 — Automated Semantic Curation`):**
    - تطوير خط أنابيب آلي (`scripts/auto_curate_person.py`) داخل [`/Users/macm1pro/REPOS/SKILLS/sheikh-curation/`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-curation/SKILL.md) يستلم `<person_id>_raw.json` وينفذ آلياً:
      - تصنيف `Unclassified`، عزل المقاطع القصيرة (`<300s`) والبروموهات والضيوف، إصلاح انقلاب الأب والابن في البثوث المنقطعة، استيفاء التواريخ الهجرية والعناوين المبتورة بعد حرف 100، منع تصفير الترقيم، وتحديد حالة السلسلة (`completed / stopped / ongoing`).
@@ -126,7 +126,7 @@
      - `SKILL.md` + `scripts/embed_corpus_gemma2.py` لتوليد التضمين الشعاعي المزدوج بـ **`EmbeddingGemma 2`**: متجه المتن (`vec_matn` من `embed_matn_text`) ومتجه المفهوم (`vec_concept` من `embed_concept_text`) لكل مقطع ولكل قاعدة علمية.
      - ربط المتجهات بقاعدة بيانات الكيانات (`SQLite`) وبناء محرك البحث الهجين `scripts/hybrid_search.py` (`FTS5` حرفي + `EmbeddingGemma 2` دلالي مزدوج + فلترة بالكيانات: الأعلام، الأماكن، الأحداث، الآيات/الأحاديث) + `scripts/test_embedding_gemma2_gates.py`.
 
-#### [ ] الموجة الثالثة (`Wave 3` — المايسترو الشامل والاعتماد النهائي):
+#### [x] الموجة الثالثة (`Wave 3` — المايسترو الشامل والاعتماد النهائي):
 7. **المهمة 7 (`person-to-knowledge-orchestrator`):**
    - بناء مهارة المايسترو [`/Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/`](file:///Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/) (`SKILL.md` + `scripts/orchestrate_person.py` + `scripts/test_orchestrator_gates.py`) التي تستلم `اسم الشخصية` وتشغّل المراحل الخمس بالتتابع المحكوم ببوابات الجودة حتى إخراج المستودع الكامل (النصوص + المحاذاة بالثانية + قاعدة بيانات الكيانات `SQLite` + الفهرس الشعاعي `EmbeddingGemma 2`).
    - تحديث [`TODO.md`](file:///Users/macm1pro/REPOS/SKILLS/TODO.md) و[`README.md`](file:///Users/macm1pro/REPOS/SKILLS/README.md) في مستودع `SKILLS` ورفع كل شيء إلى GitHub.

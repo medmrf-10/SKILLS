@@ -847,6 +847,9 @@ def process_single_page(job: dict) -> dict:
         }
         with open(chk_path, "w", encoding="utf-8") as f:
             json.dump(res_obj, f, ensure_ascii=False, indent=2)
+        txt_path = os.path.join(pages_dir, f"{tag}.txt")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(format_page_verbatim_txt(res_obj))
         return res_obj
 
     prompt = build_prompt_for_layout(layout_meta["layout"], layout_meta["files_map"])
@@ -896,6 +899,9 @@ def process_single_page(job: dict) -> dict:
     }
     with open(chk_path, "w", encoding="utf-8") as f:
         json.dump(res_obj, f, ensure_ascii=False, indent=2)
+    txt_path = os.path.join(pages_dir, f"{tag}.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(format_page_verbatim_txt(res_obj))
 
     if not job.get("keep_crops", False):
         for p in layout_meta["files_map"].values():
@@ -926,6 +932,23 @@ def parse_page_selection(pages_arg: str, only_arg: str, total_pages: int) -> lis
     else:
         selected_1.update(range(1, total_pages + 1))
     return [p - 1 for p in sorted(selected_1) if 1 <= p <= total_pages]
+
+
+def format_page_verbatim_txt(p: dict) -> str:
+    """توليد النص الحرفي الصافي لصفحة واحدة (pages/pNNNN.txt) بعلامة الصفحة المعيارية [ص: N]."""
+    if p.get("layout") == "blank_or_sparse":
+        return ""
+    ext = p.get("extracted") or {}
+    pdf_p = p.get("pdf_page", 1)
+    pg_str = (ext.get("printed_page") or "").strip() or str(pdf_p)
+    blocks = [f"[ص: {pg_str}]"]
+    if (ext.get("matn") or "").strip():
+        blocks.append(ext["matn"].strip())
+    if (ext.get("margin_notes") or "").strip():
+        blocks.append(f"[هامش جانبي — ص {pg_str}]\n{ext['margin_notes'].strip()}")
+    if (ext.get("footnotes") or "").strip():
+        blocks.append("--- الحاشية ---\n" + ext["footnotes"].strip())
+    return "\n\n".join(blocks) + "\n"
 
 
 def format_book_markdown(pages_data: list[dict]) -> str:

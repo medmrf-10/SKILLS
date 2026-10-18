@@ -1,13 +1,13 @@
 ---
 name: turath-deep-indexing
 description: >-
-  Use when indexing, extracting, auditing, merging, or repairing Islamic heritage books across 22 sciences, spoken video lectures with CTC forced alignment and Matn-Sharh triangulation, technical/educational courses with User Cognitive DNA, developing the Quality Gate (Gate v4.3 / USDB v5.6), building cross-corpus knowledge graphs, preparing dual-layer embeddings (EmbeddingGemma 2), or running regression tests across multi-genre corpora.
-version: 5.6
+  Use when indexing, extracting, auditing, merging, or repairing Islamic heritage books across 22 sciences, spoken video lectures with CTC forced alignment and Matn-Sharh triangulation (`ytb_to_usdb_intake.py`), technical/educational courses with User Cognitive DNA, developing the Quality Gate (Gate v4.3 / USDB v5.7), building cross-corpus knowledge graphs and relational SQLite+FTS5 entity databases (`build_objects_sqlite.py`), preparing dual-layer embeddings (EmbeddingGemma 2), or running regression tests across multi-genre corpora.
+version: 5.7
 ---
 
-# مهارة `turath-deep-indexing`: الفهرسة العميقة وتحويل المصادر إلى قواعد بيانات معرفية (الإصدار 5.6 — Gate v4.3 & USDB v5.6)
+# مهارة `turath-deep-indexing`: الفهرسة العميقة وتحويل المصادر إلى قواعد بيانات معرفية (الإصدار 5.7 — Gate v4.3 & USDB v5.7)
 
-هذه المهارة تمثل **الدستور المعماري والمواصفة الهندسية القياسية** لمنظومة الفهرسة العميقة وتحويل المصادر النصية والمرئية والتعليمية إلى قواعد بيانات معرفية (`Universal Source-to-Database Architecture — USDB v5.6`) في مستودع الكتب (`$TURATH_BOOKS_REPO`) ومستودعات التفريغات والمتون والتفاسير. هدفها تمكين أي وكيل قادم من استكمال العمل أو تدقيق البيانات أو إصلاح العيوب أو استخراج جولات وكتب وسلاسل مرئية ودورات تقنية جديدة وفق أعلى معايير الحرفية والتأصيل المعرفي والدلالي **دون تكرار أي خطأ من الأخطاء الـ 38 الموثقة ودون الحاجة للتخمين في تفاصيل المعمارية أو البوابات الحتمية**.
+هذه المهارة تمثل **الدستور المعماري والمواصفة الهندسية القياسية** لمنظومة الفهرسة العميقة وتحويل المصادر النصية والمرئية والتعليمية إلى قواعد بيانات معرفية وعلائقية (`Universal Source-to-Database Architecture — USDB v5.7`) في مستودع الكتب (`$TURATH_BOOKS_REPO`) ومستودعات التفريغات والمتون والتفاسير. هدفها تمكين أي وكيل قادم من استكمال العمل أو تدقيق البيانات أو إصلاح العيوب أو استخراج جولات وكتب وسلاسل مرئية ودورات تقنية جديدة وبناء قاعدة بيانات الكيانات العلائقية (`objects.sqlite`) وفق أعلى معايير الحرفية والتأصيل المعرفي والدلالي **دون تكرار أي خطأ من الأخطاء الـ 38 الموثقة ودون الحاجة للتخمين في تفاصيل المعمارية أو البوابات الحتمية**.
 
 > **ملاحظة تشغيلية:** جميع السكربتات في `scripts/` مكتفية ذاتياً (`Self-Contained`) وتدعم خيار `--work-dir <dir>` للتشغيل على أي مجلد عمل أو مختبر تجارب معزول على macOS أو VPS.
 
@@ -46,20 +46,23 @@ version: 5.6
 | [`scripts/merge_round.py`](./scripts/merge_round.py) | بوابة الجودة الصارمة والدمج الحتمي للكتب (`Gate v4.3 — v4.3_universal_strict_grounded`): يدعم 22 علماً قياسياً + أي علم جديد ديناميكياً، يفك محارف الترضية المدمجة (`\ufd40..\ufd4f`)، يدعم تحويل الإسناد `[ح]`، العقود الهجرية التقريبية (`نيف / بضع`)، الآيات المعقوفة `{...}`، وفواصل الشعر `**`، ويدعم `--work-dir <dir>`. |
 | [`scripts/check_round_p0.py`](./scripts/check_round_p0.py) | فاحص تشخيصي سريع لأخطاء `P0` عبر جولة واحدة أو جميع الجولات أو علم محدد (يدعم `--work-dir <dir>`). |
 | [`scripts/merge_lecture.py`](./scripts/merge_lecture.py) | بوابة الجودة والدمج الحتمي للدروس المرئية وتثليث المتون (`Gate v5.1`): يحاذي المقاطع 100%، يسقط التوقيت الصوتي بالكلمة من `.align.json` بنافذة محلية وحدود كلمات صارمة تمنع قفز المؤشر، يتحقق من الأعلام القصيرة (`1–3` كلمات)، ويدعم الدروس القصيرة (`< 6,000` حرف) وخيار `--work-dir <dir>`. |
+| [`scripts/ytb_to_usdb_intake.py`](./scripts/ytb_to_usdb_intake.py) | جسر الإدخال التلقائي لسلاسل `sheikh-series-pipeline` (`_meta.json` + `.txt` + `.align.json`) إلى `merge_lecture.py` (`USDB v5.7`) مع التحقق من التطابق الحرفي 100% وإسقاط التوقيت الصوتي وتوليد نصوص التضمين المزدوج. |
 | [`scripts/merge_course.py`](./scripts/merge_course.py) | بوابة الجودة والدمج الحتمي للدورات التقنية (`Gate v5.1`): يحمي الكتل الذرية الخمس (`code_fence`, `markdown_table`, `display_math`, `callout_blockquote`, `details_block`)، ويفرض البصمة المعرفية للمستخدم وقانون `UAX #9 Rule P2` للمحارف المحايدة في بداية السطر العربي، ويدعم `--work-dir <dir>`. |
 | [`scripts/build_cross_corpus_graph.py`](./scripts/build_cross_corpus_graph.py) | محرك بناء الجسر المعرفي العابر للمدونات: يوحد الشواهد القرآنية (`surah:ayah`) ويربطها بالتفاسير الأربعين (`firdaws`)، ويبني تثليث المتون المتعدد، ويوحد أسماء الأعلام مع حماية الكنى المشتركة (`أبو بكر / ابن عمر / عبد الله`) من التصادم الجزئي. |
-| [`scripts/test_skill_gates.py`](./scripts/test_skill_gates.py) | حزمة الاختبارات الانحدارية الآلية (`11` اختباراً حتمياً في `< 0.02` ثانية) تفحص جميع القواعد والحالات الحدية (`#27–#38`). |
+| [`scripts/build_objects_sqlite.py`](./scripts/build_objects_sqlite.py) | محرك قاعدة بيانات الكيانات العلائقية القياسية (`objects.sqlite` — `SQLite + FTS5`): يحول مخرجات الكتب والدروس المرئية والدورات إلى 11 جدولاً علائقياً مترابطاً + `passages_fts` مع فهارس الربط الكاملة وعزل طبقة الإسناد `isnad` عن المتن `matn` للتوافق مع `turath-embedding-gemma2`. |
+| [`scripts/test_skill_gates.py`](./scripts/test_skill_gates.py) | حزمة الاختبارات الانحدارية الآلية (`12` اختباراً حتمياً في `< 0.02` ثانية) تفحص جميع القواعد والحالات الحدية (`#27–#38`). |
+| [`scripts/test_objects_sqlite_gates.py`](./scripts/test_objects_sqlite_gates.py) | بوابة الفحص الثلاثية (`3-Layer Quality Gate`) لفحص `test_skill_gates.py` + `ytb_to_usdb_intake.py` + `build_objects_sqlite.py` (`objects.sqlite` + استعلامات SQL العلائقية وتثليث المتون). |
 | [`scripts/audit_corpus_health.py`](./scripts/audit_corpus_health.py) | فاحص الصحة الشامل للمدونة وبوابات الجودة عبر جميع الجولات والمسارات. |
 
 ---
 
-## 3. القواعد الثماني عشرة الحاكمة للوكيل (`Gate v4.3 & USDB v5.6 Golden Rules` — لا تكسرها أبداً)
+## 3. القواعد الثماني عشرة الحاكمة للوكيل (`Gate v4.3 & USDB v5.7 Golden Rules` — لا تكسرها أبداً)
 
 1. **أمر طرفية واحد في كل خطوة (`One Shell Command at a Time`):**
    - يُمنع ربط الأوامر بـ `&&` أو `;`. نفذ كل أمر منفرداً وتحقق من مخرجه.
    - لا تستخدم `\"` داخل تعبيرات `{...}` في `f-string` عند استدعاء `python3 -c '...'`.
 2. **افحص قبل أن تفترض، وشغّل حزمة اختبارات البوابات بعد أي تعديل في السكربتات:**
-   - شغّل `python3 "$SKILLS_DIR/turath-deep-indexing/scripts/test_skill_gates.py"` للتأكد من سلامة جميع البوابات الحتمية، و`audit_corpus_health.py` لفحص حالة المدونة.
+   - شغّل `python3 "$SKILLS_DIR/turath-deep-indexing/scripts/test_skill_gates.py"` و`python3 "$SKILLS_DIR/turath-deep-indexing/scripts/test_objects_sqlite_gates.py"` للتأكد من سلامة جميع البوابات الحتمية، و`audit_corpus_health.py` لفحص حالة المدونة.
 3. **لا تعدل حرفاً واحداً في النص الخام (`raw_text`):**
    - يبقى `raw_text` مطابقاً للمصدر 100%، وعند استخراج جوهرة أو اقتباس يجب أن يبدأ الاقتباس من بداية الجملة الصحيحة دلالياً لا من بعد النقطتين آلياً.
 4. **ممنوع الاقتباس الآلي لما بعد النقطتين (`No Blind Colon-Splitting`):**
@@ -100,5 +103,6 @@ version: 5.6
 4. **[`references/04-all-mistakes-and-postmortems.md`](./references/04-all-mistakes-and-postmortems.md)** — السجل التاريخي الكامل للأخطاء الـ **38** ودراسة أسبابها الجذرية وعلاجاتها الحتمية.
 5. **[`references/05-open-backlog-and-roadmap.md`](./references/05-open-backlog-and-roadmap.md)** — سجل الإنجازات الشامل وخارطة الطريق.
 6. **[`references/06-usdb-v5-universal-adapters.md`](./references/06-usdb-v5-universal-adapters.md)** — المواصفة الهندسية الكاملة للمحولات الأربعة (`USDB v5.6`) وحزمة الاختبارات الانحدارية `scripts/test_skill_gates.py`.
+7. **[`references/07-entity-db-sqlite-schema.md`](./references/07-entity-db-sqlite-schema.md)** — المعمارية العلائقية لقاعدة بيانات الكيانات (`objects.sqlite` — `11` جدولاً + `FTS5`) وجسر الإدخال الصوتي `scripts/ytb_to_usdb_intake.py` وبوابة الفحص الثلاثية `scripts/test_objects_sqlite_gates.py`.
 
 

@@ -1,14 +1,14 @@
 ---
 name: sheikh-curation
-version: 1.1
-description: "Use when building, auditing, correcting, or curating series and lessons for any scholar / channel from raw YouTube metadata (<sheikh>_raw.json) to curated JSON (<sheikh>.json) and database (curated.db) under the zero-error standard (0 Errors). Handles short clip contamination, broken livestreams, truncated Hijri dates, numbering resets, and chapter boundary verification."
+version: 2.0
+description: "Use when building, auditing, correcting, or automatically curating series and lessons for any scholar / person from raw discovery metadata (<person_id>_raw.json from person-discovery-intake) to curated JSON (<person_id>.json), SQLite database (curated.db), and per-series pipeline directories (<person_id>/sXXX/_meta.json for sheikh-series-pipeline v5) under the zero-error standard (0 Errors). Includes the 9-stage deterministic auto-curator (scripts/auto_curate_person.py) and 3-layer quality gates (scripts/test_curation_v2_gates.py)."
 ---
 
-# مهارة `sheikh-curation`: الهندسة والتحقيق الدقيق لسلاسل ودروس المشايخ (معيار 0 خطأ)
+# مهارة `sheikh-curation` (v2.0): الهندسة والتحقيق الدلالي الآلي لسلاسل ودروس المشايخ والأعلام (معيار 0 خطأ)
 
-توثق هذه المهارة القواعد الصارمة، والعلل الجذرية المكتشفة، والخوارزميات المعتمدة لبناء وتدقيق سلاسل المشايخ العلمية والدعوية من بيانات يوتيوب الخام (`data/curated_sheikhs/<sheikh>_raw.json`) إلى الملفات المنقحة (`data/curated_sheikhs/<sheikh>.json`) وقاعدة البيانات (`data/curated.db`) وملفات الواجهة (`data/catalog_curated.json` و`data/series_curated/*.json`).
+توثق هذه المهارة القواعد الصارمة، والعلل الجذرية التسع المكتشفة، والخوارزميات المعتمدة لبناء وتدقيق سلاسل المشايخ والأعلام العلمية والدعوية والفكرية من بيانات الاكتشاف الخام (`<person_id>_raw.json` الناتجة عن مهارة `person-discovery-intake` أو `data/curated_sheikhs/<sheikh>_raw.json`) إلى الملفات المنقحة (`data/curated_sheikhs/<person_id>.json`) وهياكل السلاسل الجاهزة للتفريغ (`<output_series_dir>/<person_id>/sXXX/_meta.json` المتوافقة مع `sheikh-series-pipeline v5`) وقاعدة البيانات (`data/curated.db`) وملفات الواجهة (`data/catalog_curated.json` و`data/series_curated/*.json`).
 
-وتشمل أيضًا **جرد التغطية** (ما هو مفرَّغ فعلًا عبر مخزون `ytb`/`irth`، وما هو جاهز للعرض) حين يسأل المالك «ما الموجود؟» أو يطلب اختيار سلاسل لبرنامج دروس — راجع القسم 6 والمرجع [transcription-inventory.md](./references/transcription-inventory.md).
+وتشمل أيضًا **جرد التغطية** (ما هو مفرَّغ فعلًا عبر مخزون `ytb`/`irth`، وما هو جاهز للعرض) حين يسأل المالك «ما الموجود؟» أو يطلب اختيار سلاسل لبرنامج دروس — راجع القسم 6 والمرجع [transcription-inventory.md](./references/transcription-inventory.md)، كما تشمل في الإصدار `v2.0` **خط الأنابيب الآلي ذو المراحل التسع** ([auto_curate_person.py](./scripts/auto_curate_person.py)) و**بوابات الفحص الحتمية** ([test_curation_v2_gates.py](./scripts/test_curation_v2_gates.py)) في القسمين 7 و8.
 
 ---
 
@@ -267,3 +267,85 @@ python3 "${SHEIKH_CURATION_SKILL_DIR}/scripts/global_audit.py" --min-duration 30
 4. **`declared_total` حدّ أدنى**: الصفوف المدموجة من قوائم بديلة تتجاوز 100% — أبلغ «≥» مع السبب ولا تُصلح المعلن بتخمين.
 5. **صنّف بعنوان السلسلة وحدود الكلمات العربية** لا بالاحتواء (`الحج`⊂`الحجر`، `توبة`⊂`التوبة`)، واستثنِ المقاطع والمترجمات وعلوم الآلة قبل إعلان أي «مرشّح لدروس المسجد».
 6. **أخرج الجرد ملفًا** (`.json` للبيانات و`.md` للتقرير) واعرض في المحادثة أرقامًا مجمّعة، ثم اختم بترتيب مقترح مرقّم وانتظر اختيار المالك.
+
+---
+
+## 7. خط الأنابيب الآلي للتحقيق الدلالي (`v2.0 Auto-Curation Pipeline`)
+
+في الإصدار `v2.0`، ينفذ المحرك الموحد [auto_curate_person.py](./scripts/auto_curate_person.py) جميع القواعد التسع آلياً وحتمياً، ليربط مخرجات مهارة الاكتشاف (`person-discovery-intake`) بمُدخلات مهارة التفريغ والمحاذاة (`sheikh-series-pipeline v5`) دون أي تدخل يدوي عشوائي ودون أي أخطاء هيكلية (`0 errors`).
+
+### 7.1 موقع المهارة في المعمارية المتكاملة
+1. **المدخلات (`Upstream Input`)**:
+   - يستهلك `<person_id>_raw.json` (سواء وُلِّد من `person-discovery-intake/scripts/intake_engine.py` أو وُجد في `data/curated_sheikhs/<person_id>_raw.json`).
+   - يقبل كلاً من صيغة `raw_series[].videos` و`unique_videos` أو صيغة `series[].lessons` الخام.
+2. **المخرجات (`Downstream Outputs`)**:
+   - **ملف العَلَم المنقح (`<person_id>.json`)**: جاهز للاستيراد الفوري في `curated.db` وتصدير الواجهة.
+   - **شجرة السلاسل الجاهزة للتفريغ (`<output_series_dir>/<person_id>/sXXX/_meta.json`)**: متوافقة 100% مع `sheikh-series-pipeline v5` بحيث تحتوي كل سلسلة `s001 .. sNNN` على ملف `_meta.json` موحد يضم بيانات السلسلة وقائمة دروسها المنقحة (`order_no`, `file_prefix`, `vid`, `yt_id`, `title`, `duration`, `dur_s`, `display_no`, `is_child`, `parent_yt_id`).
+
+### 7.2 المراحل التسع المتتالية داخل `scripts/auto_curate_person.py`
+1. **`Stage 1 — Duration Import & Dead-Stream Purge`**:
+   - استيراد مدد الفيديوهات (`duration`) من `unique_videos` و`raw_series` لكل درس.
+   - حذف البثوث الميتة (`<= 15 ثانية`) والفيديوهات غير العلمية (شاشات روابط التحميل الصامتة) مع ترقية أطول فرع إذا حُذف أبوه الميت.
+2. **`Stage 2 — Semantic Classification & Guest/Collision Isolation`**:
+   - كشف وعزل محاضرات الضيوف (`محاضرة الدكتور ...`، `كلمة الشيخ ...`) وحفلات الجوائز والمسابقات (`حفل اختتام المسابقة...`) ونقلها بوحدات المجموعات الكاملة (`Group = [Parent, Child_1, ...]`) إلى سلسلة **«محاضرات وفعاليات عامة»**.
+   - فضّ التصادم اللفظي للكلمات المشتركة (مثل نقل المباحث الفقهية التي تحوي كلمة `خطبة` كـ `مسألة الصلاة أثناء خطبة الإمام` من سلسلة `خطب الجمعة والعيدين` إلى سلسلة الفقه، وتصنيف الدروس غير المصنفة في `غير مصنف` نحو سلاسلها المنهجية المطابقة).
+3. **`Stage 3 — False Merge Ungrouping`**:
+   - فكّ الدمج الخاطئ للدروس الطويلة المستقلة (`>= 1200s`) التي جُمعت كفروع (`ج2`، `ج3`) لمجرد تشابه عنوانها العام دون نص صريح على التجزئة ودون تلاصق في الموضع (`|pos1 - pos2| > 1`).
+4. **`Stage 4 — Inverted Parent-Child Livestream Repair`**:
+   - إصلاح المجموعات التي يكون فيها الأب قصيراً (`< 300s`) وأحد الأبناء محاضرة كاملة (`>= 300s`) بترقية الدرس الكامل ليكون الأب الرئيسي وتحويل البث المنقطع إلى فرع (`display_no: "مقطع"`).
+   - ربط البثوث المباشرة القصيرة المنفصلة (`< 300s`) التي تحمل نفس التاريخ الهجري (`DD/MM/YYYY`) لبث كامل في نفس السلسلة كفروع (`مقطع`) تحت ذلك البث الكامل.
+5. **`Stage 5 — Short Clip & Promo Routing`**:
+   - في السلاسل الطويلة (`median >= --min-series-median`، افتراضياً `900s`):
+     * نقل بروموهات وتشويقات السلسلة إلى **أول السلسلة** قبل الدرس `1` بشارة `"برومو"` (والثاني فرع `"برومو 2"` تحت الأول).
+     * ربط المقتطفات القصيرة (`< --min-duration`، افتراضياً `300s`) المأخوذة من درس محدد في نفس السلسلة (بنفس التاريخ الهجري أو رقم الدرس) كفروع (`display_no: "مقطع"`) تحت درسها الأب.
+     * نقل الأدعية القصيرة المستقلة إلى سلسلة **«أدعية وابتهالات وتضرع إلى الله»**، والمقاطع والفوائد القصيرة العامة إلى سلسلة **«مقتطفات وفوائد قصيرة»**.
+6. **`Stage 6 — Hijri Date Interpolation for 100-Char Truncated Titles`**:
+   - استدعاء خوارزمية الاستيفاء الخطي من [hijri_interpolator.py](./scripts/hijri_interpolator.py) بالاعتماد على `season_hijri_map` ومواضع الفيديوهات في `raw_series` لاستيفاء تواريخ العناوين المبتورة عند 100 حرف وإعادتها من ذيل السلسلة إلى موضعها الزمني الصحيح مع كامل فروعها.
+7. **`Stage 7 — Strictly Monotonic Numbering & Offset Alignment`**:
+   - توحيد وضبط `display_no` للدروس الرئيسية (`is_child: false`) ليكون متصاعداً بصرامة (`Strictly Monotonic: n > prev_n`) بلا أي تصفير (`NUM_RESET`) أو تعارض مع رقم العنوان (`NUM_MISMATCH`)، مع احترام إزاحة البداية (`Offset`) إذا كانت السلسلة تبدأ من درس معلوم رقمه (`الدرس 2` أو `الدرس 35`)، وربط مجالس القصائد الفرعية كـ `"قسم القصيدة"` تحت مجالس الكتاب المجاورة.
+8. **`Stage 8 — Series State & Chapter Boundary Verification`**:
+   - منع بقاء `"state": null` في أي سلسلة، وتحديد `"completed"` أو `"stopped"` أو `"ongoing"` بدقة.
+   - في السلاسل المتوقفة (`"stopped"`) قبل تمام المتن، استخراج أول باب وآخر باب مشروح وتوثيقهما تلقائياً بين قوسين في عنوان السلسلة `title` وفي حقل `note` (`من ... إلى ... — N درساً`).
+9. **`Stage 9 — Mandatory Self-Audit & Pipeline Export`**:
+   - تصدير `<person_id>.json` وتوليد شجرة `<output_series_dir>/<person_id>/sXXX/_meta.json` وبناء جدول SQLite المتوافق مع `curated.db` وتشغيل [deep_scanner_all.py](./scripts/deep_scanner_all.py) و[global_audit.py](./scripts/global_audit.py) آلياً للتثبت من نتيجة **`0 errors`**.
+
+### 7.3 واجهة سطر الأوامر (`CLI`) والواجهة البرمجية (`Python API`)
+لتشغيل التنقيح الآلي الكامل من الطرفية:
+```bash
+python3 "${SHEIKH_CURATION_SKILL_DIR}/scripts/auto_curate_person.py" \
+  --raw-input /path/to/<person_id>_raw.json \
+  --output-json /path/to/<person_id>.json \
+  --output-series-dir /path/to/series_export \
+  --min-duration 300 \
+  --min-series-median 900 \
+  --min-duration-contemplative 120
+```
+
+أو باستيراده كوحدة برمجية في Python:
+```python
+from auto_curate_person import auto_curate_person
+
+result = auto_curate_person(
+    raw_input="/path/to/<person_id>_raw.json",
+    output_json_path="/path/to/<person_id>.json",
+    output_series_dir="/path/to/series_export",
+    min_duration=300,
+    min_series_median=900,
+    min_duration_contemplative=120,
+)
+assert result["report"]["stage9"]["passed"] is True
+```
+
+---
+
+## 8. بوابات الجودة الحتمية (`3-Layer Quality Gate`)
+
+يُفحص المحرك الآلي عبر سكربت الاختبار الحتمي [test_curation_v2_gates.py](./scripts/test_curation_v2_gates.py):
+```bash
+python3 "${SHEIKH_CURATION_SKILL_DIR}/scripts/test_curation_v2_gates.py"
+```
+ويتحقق من ثلاث بوابات إلزامية:
+1. **`Gate 1 (All 9 Defect Repairs)`**: تمرير ملف `<person_id>_raw.json` اختباري شامل يحتوي على جميع العلل التسع (مقاطع قصيرة داخل سلسلة طويلة، برومو في آخر السلسلة، بث مقلوب الأب=45ث والابن=3600ث، بث ميت 5ث، عنوان مبتور بعد 100 حرف في ذيل السلسلة، دمج خاطئ لدرسين طويلين بعنوان عام، تصفير ترقيم `1..3 -> 1..2` وإزاحة ترقيم يبدأ من الدرس 2، محاضرة ضيف وحفل مسابقة وتصادم كلمة «خطبة» في مسألة فقهية، وسلسلة متوقفة بـ `state=null`) والتأكد الحتمي من إصلاح كل علة منها.
+2. **`Gate 2 (Zero-Error Scanner & Global Audit Gate)`**: تشغيل `deep_scanner_all.py` و`global_audit.py` على المخرجات المنقحة والتحقق من أن النتيجة `0 errors` (`0 SHORT_IN_LONG`, `0 INVERTED_PARENT`, `0 NUM_RESET`, `0 NUM_MISMATCH`, `0 NULL_STATE`).
+3. **`Gate 3 (Series Directory Export)`**: التحقق من توليد مجلدات `<person_id>/sXXX/_meta.json` صالحة ومتوافقة 100% مع متطلبات `sheikh-series-pipeline v5`.
+
