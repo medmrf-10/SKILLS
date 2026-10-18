@@ -194,7 +194,7 @@ GENERIC_SINGLE_PERSON_WORDS = {
 
 UNIT_MAP = {
     "واحد": 1, "واحده": 1, "احد": 1, "احدي": 1,
-    "اثنين": 2, "اثنتين": 2, "اثنا": 2, "اثنتا": 2, "ثنتي": 2, "ثنتين": 2, "ثنتا": 2,
+    "اثنين": 2, "اثنتين": 2, "اثنا": 2, "اثنتا": 2, "اثنتي": 2, "اثني": 2, "ثنتي": 2, "ثنتين": 2, "ثنتا": 2,
     "ثلاث": 3, "ثلاثه": 3,
     "اربع": 4, "اربعه": 4,
     "خمس": 5, "خمسه": 5,
@@ -216,15 +216,15 @@ TENS_MAP = {
 }
 HUNDREDS_MAP = {
     "مائه": 100, "مئه": 100, "مايه": 100,
-    "مائتين": 200, "مئتين": 200, "مائتان": 200, "مئتان": 200,
-    "ثلاثمائه": 300, "ثلثمائه": 300, "ثلاثمئه": 300, "ثلثمئه": 300,
-    "اربعمائه": 400, "اربعمئه": 400,
-    "خمسمائه": 500, "خمسمئه": 500,
-    "ستمائه": 600, "ستمئه": 600,
-    "سبعمائه": 700, "سبعمئه": 700,
-    "ثمانمائه": 800, "ثمانيمائه": 800, "ثمانمئه": 800, "ثمانيمئه": 800,
-    "تسعمائه": 900, "تسعمئه": 900,
-    "الف": 1000,
+    "مائتين": 200, "مئتين": 200, "مائتان": 200, "مئتان": 200, "مائتا": 200, "مئتا": 200,
+    "ثلاثمائه": 300, "ثلثمائه": 300, "ثلاثمئه": 300, "ثلثمئه": 300, "ثلاثمايه": 300, "ثلثمايه": 300,
+    "اربعمائه": 400, "اربعمئه": 400, "اربعمايه": 400,
+    "خمسمائه": 500, "خمسمئه": 500, "خمسمايه": 500,
+    "ستمائه": 600, "ستمئه": 600, "ستمايه": 600,
+    "سبعمائه": 700, "سبعمئه": 700, "سبعمايه": 700,
+    "ثمانمائه": 800, "ثمانيمائه": 800, "ثمانمئه": 800, "ثمانيمئه": 800, "ثمانمايه": 800,
+    "تسعمائه": 900, "تسعمئه": 900, "تسعمايه": 900,
+    "الف": 1000, "الفين": 2000, "الفي": 2000,
 }
 ORDINAL_MAP = {
     "الاولي": 1, "الاول": 1,
@@ -524,8 +524,12 @@ def find_anchor_offset(text: str, anchor: str, min_offset: int = 0):
     if len(anc_words) < min_required_words:
         return -1, "failed"
 
-    # 1. Try full exact match first
+    # 1. Try full exact match first (allowing spaces or newlines between exact tokens)
     idx = text.find(anchor, min_offset)
+    ws_pat = re.compile(r"\s+".join(re.escape(w) for w in anchor.split()))
+    m_ws = ws_pat.search(text, min_offset)
+    if m_ws is not None and (idx == -1 or m_ws.start() < idx):
+        idx = m_ws.start()
     if idx != -1:
         return idx, "exact"
 
@@ -899,6 +903,8 @@ def parse_number_tokens(tokens: list) -> int:
 
 def extract_date_years_from_text(chunk_text: str) -> list:
     work = TASHKEEL_RE.sub("", chunk_text)
+    # Mark spoken false-start / cut-off tokens ending with tatweel (e.g. 'سنة ثمان وثـ') before normalize_with_map strips '\u0640'
+    work = re.sub(r"[\u0621-\u064A]{1,6}\u0640+(?=\s|[،.؟!؛:\n]|$)", " TRUNCWORD ", work)
     work = re.sub(r"\(¬?[٠-٩0-9]+\)", " ", work)
     work = re.sub(r"\[[^\]]*\]", " ", work)
     work = re.sub(r"[٠-٩0-9]+\s*/\s*[٠-٩0-9]+", " ", work)
@@ -914,75 +920,89 @@ def extract_date_years_from_text(chunk_text: str) -> list:
             extracted_years.append(ORDINAL_MAP[tokens[idx + 1]])
             continue
 
-        if tok in ("سنه", "عام", "لسنه", "لعام", "سنتي"):
-            if idx > 0:
-                prev_t = tokens[idx - 1]
-                prev_clean = prev_t[1:] if prev_t.startswith("و") and prev_t[1:] in ALL_NUM_WORDS else prev_t
-                if prev_clean in ALL_NUM_WORDS or prev_clean.translate(DIGITS_MAP).isdigit():
-                    continue
-                if prev_t in ("مائه", "مئه", "مايه", "ولايته", "خلافته", "مدته", "اقام", "بقي", "مقدار", "تجاوز", "بلغ", "صغر", "كبر"):
-                    continue
+        is_year_kw = tok in ("سنه", "عام", "لسنه", "لعام", "سنتي")
+        is_bio_kw = tok in ("توفي", "وتوفي", "مات", "ومات", "ولد", "وولد", "قتل", "وقتل", "حدود")
+        if not (is_year_kw or is_bio_kw):
+            continue
 
-            if idx + 1 >= len(tokens):
+        if is_year_kw and idx > 0:
+            prev_t = tokens[idx - 1]
+            prev_clean = prev_t[1:] if prev_t.startswith("و") and prev_t[1:] in ALL_NUM_WORDS else prev_t
+            if prev_clean in ALL_NUM_WORDS or prev_clean.translate(DIGITS_MAP).isdigit():
                 continue
-            nxt = tokens[idx + 1]
-            # 'سنة واحدة' is always a 1-year duration, never Year 1 AH
-            if nxt in ("واحده", "واحد"):
-                continue
-            if nxt.translate(DIGITS_MAP).isdigit():
-                val = int(nxt.translate(DIGITS_MAP))
-                if 1 <= val <= 1500:
-                    extracted_years.append(val)
+            if prev_t in ("مائه", "مئه", "مايه", "ولايته", "خلافته", "مدته", "اقام", "بقي", "مقدار", "تجاوز", "بلغ", "صغر", "كبر"):
                 continue
 
-            num_toks = []
-            j = idx + 1
-            approx_prefix = False
-            if j < len(tokens) and tokens[j] in ("نيف", "نيفا", "بضع", "بضعه", "نحو", "حدود", "قرابه"):
-                approx_prefix = True
+        j = idx + 1
+        if is_bio_kw:
+            while j < len(tokens) and tokens[j] in ("رحمه", "الله", "تعالي", "في", "حدود", "نحو", "قرابه"):
                 j += 1
-            while j < len(tokens):
-                tj = tokens[j]
-                tj_clean = tj[1:] if tj.startswith("و") and tj[1:] in ALL_NUM_WORDS else tj
-                if tj == "و" or tj_clean in ALL_NUM_WORDS:
-                    num_toks.append(tj)
-                    j += 1
-                else:
-                    break
-            # Skip age/duration expressions like 'مقدار سنه عشر سنين'
-            if j < len(tokens) and tokens[j] in ("سنين", "اعوام"):
+            if j < len(tokens) and tokens[j] in ("سنه", "عام", "لسنه", "لعام", "سنتي"):
                 continue
-            if num_toks:
-                val = parse_number_tokens(num_toks)
-                # Handle shared tens/hundreds across 'وقيل' / 'أو' (e.g. 'سنة سبعين وقيل ستين ومائتين' or 'سنة ثلاث وقيل سبع وتسعين')
-                if 1 <= val < 100 and j < len(tokens) and tokens[j] in ("وقيل", "او"):
-                    alt_groups = [[num_toks]]
-                    k_scan = j
-                    while k_scan < len(tokens) and tokens[k_scan] in ("وقيل", "او"):
-                        k_scan += 1
-                        grp = []
-                        while k_scan < len(tokens):
-                            tk = tokens[k_scan]
-                            tk_c = tk[1:] if tk.startswith("و") and tk[1:] in ALL_NUM_WORDS else tk
-                            if tk == "و" or tk_c in ALL_NUM_WORDS:
-                                grp.append(tk)
-                                k_scan += 1
-                            else:
-                                break
-                        if grp:
-                            alt_groups.append(grp)
+        if j >= len(tokens):
+            continue
+
+        nxt = tokens[j]
+        # 'سنة واحدة' is always a 1-year duration, never Year 1 AH
+        if nxt in ("واحده", "واحد"):
+            continue
+        if nxt.translate(DIGITS_MAP).isdigit():
+            val = int(nxt.translate(DIGITS_MAP))
+            if (100 if is_bio_kw else 1) <= val <= 1500:
+                extracted_years.append(val)
+            continue
+
+        num_toks = []
+        approx_prefix = False
+        if j < len(tokens) and tokens[j] in ("نيف", "نيفا", "بضع", "بضعه", "نحو", "حدود", "قرابه"):
+            approx_prefix = True
+            j += 1
+        while j < len(tokens):
+            tj = tokens[j]
+            tj_clean = tj[1:] if tj.startswith("و") and tj[1:] in ALL_NUM_WORDS else tj
+            if tj == "و" or tj_clean in ALL_NUM_WORDS:
+                num_toks.append(tj)
+                j += 1
+            else:
+                break
+        # Skip spoken false-start / cut-off number phrases (e.g. 'سنة ثمان وثـ')
+        if j < len(tokens) and tokens[j] == "TRUNCWORD":
+            continue
+        # Skip age/duration expressions like 'مقدار سنه عشر سنين'
+        if j < len(tokens) and tokens[j] in ("سنين", "اعوام", "اشهر", "شهرا", "يوما"):
+            continue
+        if num_toks:
+            val = parse_number_tokens(num_toks)
+            # Handle shared tens/hundreds across 'وقيل' / 'أو' (e.g. 'سنة سبعين وقيل ستين ومائتين' or 'سنة ثلاث وقيل سبع وتسعين')
+            if 1 <= val < 100 and j < len(tokens) and tokens[j] in ("وقيل", "او"):
+                alt_groups = [[num_toks]]
+                k_scan = j
+                while k_scan < len(tokens) and tokens[k_scan] in ("وقيل", "او"):
+                    k_scan += 1
+                    grp = []
+                    while k_scan < len(tokens):
+                        tk = tokens[k_scan]
+                        tk_c = tk[1:] if tk.startswith("و") and tk[1:] in ALL_NUM_WORDS else tk
+                        if tk == "و" or tk_c in ALL_NUM_WORDS:
+                            grp.append(tk)
+                            k_scan += 1
                         else:
                             break
-                    if len(alt_groups) > 1:
-                        last_grp = alt_groups[-1]
-                        last_val = parse_number_tokens(last_grp)
-                        shared_base = (last_val // 100) * 100 if last_val >= 100 else ((last_val // 10) * 10 if last_val >= 20 and val < 10 else 0)
-                        if shared_base > 0:
-                            extracted_years.append(val + shared_base)
-                            extracted_years.append(last_val)
-                            continue
-                if 1 <= val <= 1500:
-                    extracted_years.append(val)
+                    if grp:
+                        alt_groups.append(grp)
+                    else:
+                        break
+                if len(alt_groups) > 1:
+                    last_grp = alt_groups[-1]
+                    last_val = parse_number_tokens(last_grp)
+                    shared_base = (last_val // 100) * 100 if last_val >= 100 else ((last_val // 10) * 10 if last_val >= 20 and val < 10 else 0)
+                    if shared_base > 0:
+                        extracted_years.append(val + shared_base)
+                        extracted_years.append(last_val)
+                        continue
+            min_valid_yr = 100 if is_bio_kw else 1
+            if min_valid_yr <= val <= 1500:
+                extracted_years.append(val)
     return extracted_years
 
 

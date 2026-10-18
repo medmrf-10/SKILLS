@@ -641,6 +641,184 @@ def run_all_3_gates() -> int:
                 "person disambiguation ('رجل مسلم' vs 'أبي هريرة'/'الترمذي'), and Muqaddimah gem hygiene verified."
             )
 
+        # -------------------------------------------------------------------------
+        # GATE 4: Auto-Matn Clause Triangulation & Arabic Word-Year Chronology Gate
+        # -------------------------------------------------------------------------
+        print("\n[Gate 4] Running Auto-Matn Clause Triangulation & Arabic Word-Year Chronology Gate...")
+        g4_dir = tmp_dir / "gate4_auto_matn"
+        g4_series_dir = g4_dir / "s008"
+        g4_out_dir = g4_dir / "out"
+        g4_series_dir.mkdir(parents=True, exist_ok=True)
+        g4_out_dir.mkdir(parents=True, exist_ok=True)
+
+        # 4.1 Native sheikh-series-pipeline _meta.json WITHOUT manual base_matn_clauses or base_work_id
+        g4_meta = {
+            "slug": "sariri__s008",
+            "sheikh": "عبد الحميد السريري",
+            "series": "شرح نظم الورقات للعمريطي",
+            "category": "أصول الفقه",
+            "videos": [
+                {
+                    "n": 1,
+                    "vid": "vWaraqat01",
+                    "title": "شرح نظم الورقات للعمريطي — الدرس الأول: تعريف أصول الفقه والأحكام التكليفية والنص والظاهر",
+                    "dur_s": 240,
+                }
+            ],
+        }
+        (g4_series_dir / "_meta.json").write_text(json.dumps(g4_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # Classical book 2176 (Al-Waraqat) without pre-tagged explained_matn_clause_id on book passages
+        g4_books = [
+            {
+                "book_id": 2176,
+                "source_id": "book:2176",
+                "title": "الورقات في أصول الفقه",
+                "author": "إمام الحرمين الجويني",
+                "science": "usul",
+                "orig_toc": [
+                    {"part": 1, "heading": "أنواع الحكم التكليفي والوضعي"},
+                    {"part": 2, "heading": "باب الظاهر والنص والعام والخاص"},
+                ],
+                "deep_toc_passages": [
+                    {
+                        "pid": "2176:1:1",
+                        "part": 1,
+                        "pg": 7,
+                        "sub_heading": "الأحكام التكليفية الخمسة والحكمان الوضعيان الصحيح والباطل",
+                        "raw_text": "والأحكام سبعة الواجب والمندوب والمباح والمحظور والمكروه والصحيح والباطل فالواجب ما يثاب على فعله ويعاقب على تركه.",
+                        "summary": "بيان الأحكام السبعة في أصول الفقه عند إمام الحرمين الجويني.",
+                        "topics": ["الأحكام التكليفية والوضعية", "تعريف الواجب والمندوب"],
+                        "search_queries": ["ما هي الأحكام السبعة في متن الورقات؟"],
+                    },
+                    {
+                        "pid": "2176:2:1",
+                        "part": 2,
+                        "pg": 14,
+                        "sub_heading": "تعريف النص والظاهر وصيغ العموم والخصوص",
+                        "raw_text": "والنص ما لا يحتمل إلا معنى واحدا وقيل ما تأويله تنزيله والظاهر ما احتمل أمرين أحدهما أظهر من الآخر.",
+                        "summary": "تحرير حد النص والظاهر عند الأصوليين.",
+                        "topics": ["حد النص والظاهر", "دلالة اللفظ على المعنى"],
+                        "search_queries": ["ما الفرق بين النص والظاهر في الورقات؟"],
+                    },
+                ],
+            }
+        ]
+        g4_books_fp = g4_dir / "all_9_books_deep.json"
+        g4_books_fp.write_text(json.dumps(g4_books, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        g4_lec_p1 = (
+            "اطلب العلم أخي فهو درب به نور الأصاغر فيه تعلو. بسم الله الرحمن الرحيم الحمد لله رب العالمين "
+            "نرحب بشيخنا الفاضل في مستهل هذا المجلس. "
+            "قال المصنف رحمه الله تعالى في متن الورقات: والأحكام سبعة الواجب والمندوب والمباح والمحظور والمكروه والصحيح والباطل. "
+            "والقاعدة المقررة عند الأصوليين أن الحكم الشرعي ينقسم إلى تكليفي ووضعي بحسب تعلق الخطاب بفعل المكلف. "
+            "تقول مثلاً: الظاهر، العام دلالته ظاهرة، فإذا ورد الدليل المخصص عملنا بالخاص وتركنا الظاهر. "
+            "وقد توفي الإمام أبو الحسن الأشعري سنة أربع وعشرين وثلاثمائة ببغداد، وتوفي بعض أصحابه سنة اثنتي عشرة وثلاثمائة، "
+            "واستقر الاصطلاح الأصولي في القرن الرابع الهجري."
+        )
+        g4_lec_p2 = (
+            "ثم انتقل الناظم رحمه الله في القرن الثامن إلى مبحث النص والظاهر حيث قال: "
+            "النص عرفاً كل لفظ وارد *** لم يحتمل إلا لمعنى واحد. "
+            "والضابط في هذا الباب أن النص الصريح لا يقبل التأويل بخلاف الظاهر الذي يقبل التأويل بالدليل الراجح. "
+            "كقولك مثلاً: رأيت أسداً في المسجد، فالظاهر الحيوان المفترس ويؤول بالرجل الشجاع لقيام القرينة المانعة. "
+            "وقد صنف الإمام الغزالي كتابه بعد سنة ثمان وثـ، في حدود سنة تسع وتسعين وأربعمائة، وكان الخروج من بغداد في ذي القعدة سنة ثمان وثمانين."
+        )
+        g4_raw_text = g4_lec_p1 + "\n" + g4_lec_p2
+        (g4_series_dir / "001_vWaraqat01.txt").write_text(g4_raw_text, encoding="utf-8")
+
+        g4_words = g4_raw_text.split()
+        g4_timed_x = []
+        t_cur = 1.0
+        for w in g4_words:
+            dur = round(max(0.25, min(0.8, len(w) * 0.08)), 2)
+            g4_timed_x.append([w, round(t_cur, 2), round(t_cur + dur, 2), "a"])
+            t_cur += dur + 0.05
+        (g4_series_dir / "001_vWaraqat01.align.json").write_text(
+            json.dumps({"cov": 100.0, "x": g4_timed_x}, ensure_ascii=False), encoding="utf-8"
+        )
+
+        g4_intake = yti.intake_series(
+            series_dir=g4_series_dir,
+            out_dir=g4_out_dir,
+            books_json_path=g4_books_fp,
+        )
+        if not g4_intake["passed"]:
+            errors.append(f"Gate 4.1 FAILED: auto-matn intake reported P0 errors: {g4_intake['gate_reports']}")
+
+        g4_db_path = g4_out_dir / "objects.sqlite"
+        g4_stats = bos.build_objects_sqlite(
+            db_path=g4_db_path,
+            work_dir=g4_out_dir,
+            books_list=g4_books,
+        )
+        if g4_stats["chars_lost"] != 0:
+            errors.append(f"Gate 4.1 FAILED: chars_lost={g4_stats['chars_lost']}")
+
+        g4_conn = sqlite3.connect(str(g4_db_path))
+        g4_cur = g4_conn.cursor()
+
+        # Verify automatic cross-media matn_triangulation JOIN between book:2176 and series:sariri__s008
+        g4_cur.execute(
+            """
+            SELECT mt_lec.explained_matn_clause_id, mt_book.passage_id AS book_pid,
+                   mt_lec.passage_id AS lec_pid, mt_lec.start_sec, mt_lec.end_sec,
+                   mt_lec.explained_matn_verbatim
+            FROM matn_triangulation mt_lec
+            JOIN matn_triangulation mt_book
+              ON mt_book.explained_matn_clause_id = mt_lec.explained_matn_clause_id
+             AND mt_book.source_id = mt_lec.explained_matn_book_id
+            WHERE mt_lec.start_sec IS NOT NULL AND mt_book.start_sec IS NULL
+            ORDER BY mt_lec.start_sec
+            """
+        )
+        g4_tri = g4_cur.fetchall()
+        if len(g4_tri) < 2:
+            errors.append(f"Gate 4.1 FAILED: Expected >= 2 auto-extracted cross-media matn_triangulation links, got {g4_tri}")
+        for cid, b_pid, l_pid, s_sec, e_sec, verb in g4_tri:
+            if s_sec <= 0 or e_sec <= s_sec:
+                errors.append(f"Gate 4.1 FAILED: Invalid clause CTC timestamps {s_sec}..{e_sec} on {cid}")
+
+        # Verify Arabic word-year & Hijri century chronology in `events_chronology`
+        g4_cur.execute(
+            "SELECT year_hijri, year_raw, is_approximate, event_title FROM events_chronology ORDER BY year_hijri"
+        )
+        g4_chron = g4_cur.fetchall()
+        g4_years = {r[0] for r in g4_chron}
+        expected_years = {312, 324, 350, 488, 499, 750}
+        missing_yrs = expected_years - g4_years
+        if missing_yrs:
+            errors.append(f"Gate 4.2 FAILED: Missing expected Arabic word/century years {missing_yrs} from {g4_chron}")
+        if 8 in g4_years or 88 in g4_years:
+            errors.append(
+                f"Gate 4.2 FAILED: Spoken false-start 'سنة ثمان وثـ' (8) or unexpanded century ellipsis (88) leaked into {g4_chron}"
+            )
+
+        # Verify real applied cases in `stories_cases` (no opening jingle 'اطلب العلم أخي')
+        g4_cur.execute("SELECT title, anchor_start, summary FROM stories_cases")
+        g4_stories = g4_cur.fetchall()
+        if not g4_stories or any("اطلب العلم" in r[1] or "نرحب بشيخنا" in r[1] for r in g4_stories):
+            errors.append(f"Gate 4.3 FAILED: Opening jingle/greeting leaked into stories_cases: {g4_stories}")
+
+        # Verify newline-separated anchor_start monotonicity guard
+        nl_text = "مقدمة الدرس الأول في هذا الباب.\nهل أستمر\nأم أتوقف\nحتى يحضر بقية الطلاب في المجلس العلمي.\nثم قال في آخر الدرس: هل أستمر أم أتوقف حتى يحضر الجميع."
+        nl_pos, _ = mr.find_anchor_offset(nl_text, "هل أستمر أم أتوقف حتى يحضر", 10)
+        if nl_pos == -1 or nl_pos > 45:
+            errors.append(
+                f"Gate 4.3 FAILED: find_anchor_offset jumped over newline-separated occurrence (got pos={nl_pos}, expected <= 45)"
+            )
+
+        g4_conn.close()
+        if not errors:
+            print(
+                f"  [OK] Gate 4.1 (Zero-Config Auto-Matn Triangulation): {len(g4_tri)} cross-media links between 'book:2176' and 'series:sariri__s008' with clause-level CTC timestamps."
+            )
+            print(
+                f"  [OK] Gate 4.2 (Arabic Word-Year & Hijri Century Chronology): verified years {sorted(g4_years)} (including 312, 324, 350 [4th c.], 488 [ellipsis], 499, 750 [8th c.]; 0 false-start leaks)."
+            )
+            print(
+                f"  [OK] Gate 4.3 (Applied Cases & Newline Anchor Guard): {len(g4_stories)} applied cases verified and newline anchor resolved at offset {nl_pos}."
+            )
+
     print("\n" + "=" * 78)
     if errors:
         print(f"FAIL ({len(errors)} errors):")

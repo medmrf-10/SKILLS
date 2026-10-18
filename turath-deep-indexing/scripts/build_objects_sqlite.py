@@ -390,6 +390,20 @@ def build_objects_sqlite(
     persons_registry = {}  # person_id -> {canonical_name, role_or_sect, death_year_hijri, aliases: set()}
     places_registry = {}   # place_id -> {canonical_name, region_or_type, aliases: set()}
     book_alias_to_source_id = {}
+    book_passages_by_source: dict[str, list[tuple[str, str]]] = {}  # source_id -> [(pid, raw_text), ...]
+    book_clauses_inserted: set[tuple[str, str]] = set()             # (source_id, clause_id)
+
+    def resolve_verbatim_year_raw(ch: dict, raw_text: str, hy: int | None) -> str:
+        if ch.get("year_raw"):
+            return str(ch["year_raw"])
+        if hy is None:
+            return ""
+        # Check if raw_text contains an Arabic word-year phrase that evaluates to `hy`
+        for m_wy in re.finditer(r"((?:سنة|عام|سنه)\s+[^\n.!؟،؛:()0-9٠-٩]{3,50})", raw_text or ""):
+            phrase = m_wy.group(1).strip()
+            if hy in mr.extract_date_years_from_text(phrase):
+                return phrase
+        return f"سنة {hy} هـ"
 
     def register_person(per: dict, raw_text: str, isnad_prefix: str, clean_matn: str) -> tuple[str, str, str, str, str] | None:
         cname_raw = (per.get("canonical_name") or per.get("mentioned_as") or "").strip()
@@ -475,8 +489,15 @@ def build_objects_sqlite(
             book_alias_to_source_id[str(bk["slug"])] = source_id
         if raw_bid == 3418 or "الأخضري" in title:
             book_alias_to_source_id["matn-al-akhdari"] = source_id
+        if "الورقات" in title:
+            book_alias_to_source_id["matn-al-waraqat"] = source_id
+            book_alias_to_source_id["book:2176"] = source_id
         if "السنوسي" in title or "أم البراهين" in title:
             book_alias_to_source_id["umm-al-barahin"] = source_id
+        if "التبيان" in title:
+            book_alias_to_source_id["book:1969"] = source_id
+        if "المنقذ" in title:
+            book_alias_to_source_id["book:9246"] = source_id
 
         meta_json = json.dumps(
             {
@@ -536,6 +557,9 @@ def build_objects_sqlite(
                 pg_num = p.get("pg") or p.get("pg_start") or pg_s
                 emb_matn = p.get("embed_matn_text") or mr.clean_for_embed(clean_matn, science=science)
                 emb_concept = p.get("embed_concept_text") or summary
+                book_passages_by_source.setdefault(source_id, []).append(
+                    (pid, f"{sub_h} {' '.join(topics)} {raw_text}")
+                )
 
                 cur.execute(
                     """
@@ -618,7 +642,7 @@ def build_objects_sqlite(
                     etag = (ch.get("event_tag") or ch.get("event_title") or ch.get("event") or "").strip()
                     raw_layer = (ch.get("event_layer") or "").strip()
                     ev_layer = "transmission" if raw_layer == "transmission" else "historical"
-                    y_raw = str(ch.get("year_raw") or (f"سنة {hy} هـ" if hy is not None else ""))
+                    y_raw = resolve_verbatim_year_raw(ch, raw_text, hy if isinstance(hy, int) else None)
                     is_approx = 1 if (
                         ch.get("is_approximate")
                         or ch.get("year_source") in ("text_expanded", "metadata_inferred")
@@ -660,6 +684,7 @@ def build_objects_sqlite(
 
                 # Optional matn_triangulation on book passage if explicitly tagged
                 if p.get("explained_matn_clause_id"):
+                    book_clauses_inserted.add((source_id, str(p["explained_matn_clause_id"])))
                     cur.execute(
                         """
                         INSERT INTO matn_triangulation
@@ -941,10 +966,10 @@ def build_objects_sqlite(
                     etag = (ch.get("event_tag") or ch.get("event_title") or ch.get("event") or "").strip()
                     raw_layer = (ch.get("event_layer") or "").strip()
                     ev_layer = "transmission" if raw_layer == "transmission" else "historical"
-                    y_raw = str(ch.get("year_raw") or (f"سنة {hy} هـ" if hy is not None else ""))
+                    y_raw = resolve_verbatim_year_raw(ch, raw_text, hy if isinstance(hy, int) else None)
                     is_approx = 1 if (
                         ch.get("is_approximate")
-                        or any(w in (y_raw + " " + etag) for w in ("نيف", "بضع", "نحو", "قرابة"))
+                        or any(w in (y_raw + " " + etag) for w in ("نيف", "بضع", "نحو", "قرابة", "القرن"))
                     ) else 0
                     cur.execute(
                         """
@@ -984,6 +1009,9 @@ def build_objects_sqlite(
                 if mt and isinstance(mt, dict) and mt.get("clause_id"):
                     mt_bwid = mt.get("base_work_id") or raw_bwid
                     target_book_id = book_alias_to_source_id.get(str(mt_bwid), resolved_matn_book_id or str(mt_bwid))
+                    mt_s_sec = float(mt.get("start_sec", s_sec)) if mt.get("start_sec") is not None else s_sec
+                    mt_e_sec = float(mt.get("end_sec", e_sec)) if mt.get("end_sec") is not None else e_sec
+                    mt_verb = mt.get("explained_matn_verbatim", "")
                     cur.execute(
                         """
                         INSERT INTO matn_triangulation
@@ -995,11 +1023,57 @@ def build_objects_sqlite(
                             src_id,
                             target_book_id,
                             mt["clause_id"],
-                            mt.get("explained_matn_verbatim", ""),
-                            s_sec,
-                            e_sec,
+                            mt_verb,
+                            mt_s_sec,
+                            mt_e_sec,
                         ),
                     )
+                    # If target_book_id is loaded in `passages` and doesn't yet have a book-side row for `mt["clause_id"]`, link the best matching book passage
+                    if (
+                        target_book_id in book_passages_by_source
+                        and (target_book_id, str(mt["clause_id"])) not in book_clauses_inserted
+                    ):
+                        bp_list = book_passages_by_source[target_book_id]
+                        matched_bp_id = None
+                        for bp_id, bp_raw in bp_list:
+                            if mt_verb and (
+                                mt_verb in bp_raw
+                                or mr.verify_and_locate_span_in_part(mt_verb, bp_raw, allow_elision=False)[0] != "failed"
+                            ):
+                                matched_bp_id = bp_id
+                                break
+                        if not matched_bp_id:
+                            q_norm, _ = mr.normalize_words_only(
+                                f"{mt_verb} {mt.get('clause_full_text', '')} {sub_h}"
+                            )
+                            q_tokens = {w for w in q_norm.split() if len(w) >= 4}
+                            best_score = -1
+                            for bp_id, bp_raw in bp_list:
+                                bp_norm, _ = mr.normalize_words_only(bp_raw)
+                                bp_tokens = {w for w in bp_norm.split() if len(w) >= 4}
+                                sc = len(q_tokens & bp_tokens)
+                                if sc > best_score:
+                                    best_score = sc
+                                    matched_bp_id = bp_id
+                            if not matched_bp_id:
+                                matched_bp_id = bp_list[0][0]
+                        book_clauses_inserted.add((target_book_id, str(mt["clause_id"])))
+                        cur.execute(
+                            """
+                            INSERT INTO matn_triangulation
+                            (passage_id, source_id, explained_matn_book_id, explained_matn_clause_id, explained_matn_verbatim, start_sec, end_sec)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                matched_bp_id,
+                                target_book_id,
+                                target_book_id,
+                                mt["clause_id"],
+                                mt_verb,
+                                None,
+                                None,
+                            ),
+                        )
 
             default_lec_pid = passages[0]["passage_id"] if passages else f"{lid}:P1"
             for st_idx, st in enumerate(lec.get("stories", []), start=1):

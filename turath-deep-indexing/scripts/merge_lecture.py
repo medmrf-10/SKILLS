@@ -234,11 +234,18 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
                     )
                 else:
                     matn_links_count += 1
+                    _, m_pos, _ = mr.verify_and_locate_span_in_part(matn_verbatim, p_raw, allow_elision=False)
+                    if m_pos != -1:
+                        ms_sec, me_sec, _ = time_mapper(c_start + m_pos, c_start + m_pos + len(matn_verbatim))
+                    else:
+                        ms_sec, me_sec = s_sec, e_sec
                     matn_link_obj = {
                         "base_work_id": raw_lec.get("base_work_id"),
                         "clause_id": matn_clause_id,
                         "explained_matn_verbatim": matn_verbatim,
                         "clause_full_text": target_clause_text,
+                        "start_sec": ms_sec,
+                        "end_sec": me_sec,
                         "verified": True,
                     }
 
@@ -283,7 +290,7 @@ def audit_and_merge_lecture(lecture_id: str, raw_lec: dict, deep_lec: dict):
             f"[{lecture_id}] P0_RECONSTRUCTION_MISMATCH: reconstructed len={len(''.join(reconstructed))} != raw len={len(raw_text)}"
         )
 
-    min_matn_links = 1 if len(raw_text) < 6000 else 2
+    min_matn_links = 1 if (len(raw_text) < 6000 or len(base_clauses) <= 1) else 2
     if raw_lec.get("base_work_id") and matn_links_count < min_matn_links:
         p0_errors.append(
             f"[{lecture_id}] P0_MISSING_MATN_TRIANGULATION: lecture has base_work_id={raw_lec['base_work_id']} but < {min_matn_links} passages linked via explained_matn_clause_id"
