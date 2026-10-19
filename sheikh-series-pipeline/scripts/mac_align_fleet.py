@@ -49,9 +49,42 @@ PREFETCH_THREADS = int(os.environ.get('MAC_ALIGN_PREFETCH_THREADS', '2'))
 BATCH_SIZE = int(os.environ.get('MAC_ALIGN_BATCH_SIZE', '3'))
 COOLDOWN_S = float(os.environ.get('MAC_ALIGN_COOLDOWN_S', '3.5'))
 MIN_ACCEPTABLE_ALIGN_PCT = float(os.environ.get('MAC_ALIGN_MIN_PCT', '95.0'))
+MIN_BATTERY_PCT = int(os.environ.get('MAC_ALIGN_MIN_BATTERY_PCT', '10'))
 LOCAL_QUOTA_JSON = '/tmp/agy_quota_snapshot.json'
 REMOTE_QUOTA_JSON = '/root/workspace/ytb-build/live_quota.json'
 AGY_USAGE_BIN = '/Users/macm1pro/.hermes/node/bin/antigravity-usage'
+
+
+def _get_mac_battery_status(pmset_text=None):
+    """إرجاع (on_battery: bool, pct: int) من مخرجات pmset -g batt."""
+    import re
+    try:
+        if pmset_text is None:
+            res = subprocess.run(
+                ['pmset', '-g', 'batt'],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5, check=False
+            )
+            pmset_text = res.stdout or ''
+        on_battery = ("'Battery Power'" in pmset_text) and ('discharging' in pmset_text.lower())
+        m = re.search(r'(\d+)%', pmset_text)
+        pct = int(m.group(1)) if m else 100
+        return on_battery, pct
+    except Exception:
+        return False, 100
+
+
+def _wait_if_low_battery(min_pct=MIN_BATTERY_PCT):
+    """إيقاف المحاذاة مؤقتاً إذا وصلت البطارية إلى <= min_pct% بدون شاحن حتى يوصل الشاحن."""
+    on_batt, pct = _get_mac_battery_status()
+    if not (on_batt and pct <= min_pct):
+        return
+    log(f'[⏸ حماية البطارية] البطارية وصلت {pct}% بدون شاحن (<= {min_pct}%) — إيقاف المحاذاة مؤقتاً لحين توصيل الشاحن...')
+    while True:
+        time.sleep(10)
+        on_batt, pct = _get_mac_battery_status()
+        if not on_batt or pct > min_pct:
+            log(f'[▶ استئناف الطاقة] تم توصيل الشاحن أو ارتفعت الطاقة ({pct}%) — استئناف المحاذاة فوراً!')
+            return
 
 
 def _ssh_control_path(slot='main'):
@@ -261,6 +294,7 @@ def prefetch_worker(worker_id=0):
     mux_opts = _ssh_mux_opts(slot)
     while True:
         try:
+            _wait_if_low_battery()
             if PREFETCH_QUEUE.qsize() >= MAX_PREFETCH:
                 time.sleep(1.5)
                 continue
@@ -508,7 +542,9 @@ def main():
     align_args = make_align_args()
 
     while True:
+        _wait_if_low_battery()
         job = PREFETCH_QUEUE.get()
+        _wait_if_low_battery()
         key = job['key']
         local_opus = job['local_opus']
         local_txt = job['local_txt']
