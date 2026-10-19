@@ -47,6 +47,10 @@ description: استدعاء أداة Antigravity CLI (agy) في بيئة معز�
    - يميّز `classify_agy_error()` و`run_agy_lean()` أخطاء تجاوز المعدل (`error_type="rate_limit"`) وينتظر بـ `Exponential Backoff + Jitter` (مع احترام `Retry-After`) قبل إعادة المحاولة الذكية بدلاً من الفشل الفوري.
 6. **التنظيف الحتمي الشامل بعد كل استدعاء (`Deterministic Session & DB Cleanup`):**
    - ينظف `_cleanup_lean_conv()` تلقائياً داخل `finally` (حتى عند حدوث `TimeoutExpired` أو إعادة المحاولة): مجلدات `brain/*`، `conversations/*`، `annotations/*`، `presence/*`، ملفات `implicit/<uuid>.pb` ذات المعرفات المستقلة، قواعد البيانات المتضخمة (`conversation_summaries.db*` و`jetbox_summaries_proto.pb*.tmp`)، وأي ملف `.gemini/config/mcp_config.json` فارغ ينشئه `agy` تلقائياً عند الإقلاع على Linux.
+7. **حذف `--effort` تلقائياً مع نماذج Claude أو النماذج مسبقة التحديد (`Smart Effort Flag Omission`):**
+   - ترفض أداة `agy` الخيار `--effort` مع نماذج Claude (مثل `Claude Opus 5.5 (High)` و`Claude Sonnet 4.7 (Thinking)`) أو أي نموذج يحمل درجة الجهد بين قوسين في اسمه الرسمي؛ لذلك تفحص دالة `_model_supports_effort_flag(resolved_model)` اسم النموذج وتحذف `--effort` تلقائياً لمنع خطأ `Effort level is not supported for model`.
+8. **التضمين الفوري للملفات النصية الصغيرة في وضع الاستشارة (`Fast Ask-Mode Text Inlining`):**
+   - عند تمرير ملفات نصية صغيرة (`<= 64KB`) عبر `--file` في وضع `ask` / `plan`، يضمّن `run_agy_lean()` محتواها مباشرة داخل `full_prompt` إلى جانب نسخها لمجلد العمل المؤقت، مما يتيح للنموذج الإجابة في جولة واحدة (`1-Turn Fast Response`) دون إهدار الوقت في استدعاءات `view_file` المتتالية أو الوقوع في `Timeout`.
 
 ---
 
