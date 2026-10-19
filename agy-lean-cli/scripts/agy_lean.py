@@ -1099,6 +1099,9 @@ def run_agy_lean(
         ws_dir = os.path.realpath(raw_ws)
         attached_names: List[str] = []
         used_names: set = set()
+        inline_blocks: List[str] = []
+        total_inline_bytes = 0
+        is_ask_mode = (mode or "ask").strip().lower() == "ask"
         for idx, fpath in enumerate(files or [], 1):
             if not fpath or not os.path.exists(fpath):
                 raise FileNotFoundError(f"الملف المرفق غير موجود: {fpath}")
@@ -1113,9 +1116,22 @@ def run_agy_lean(
                 os.link(real_f, dst_f)
             except Exception:
                 shutil.copy2(real_f, dst_f)
+            fsize = os.path.getsize(real_f)
+            ext_low = os.path.splitext(bname)[1].lower()
+            if is_ask_mode and fsize <= 65536 and total_inline_bytes + fsize <= 90000 and ext_low in (".txt", ".md", ".json", ".py", ".kt", ".ts", ".js", ".html", ".css", ".sql", ".sh", ".yaml", ".yml", ".xml"):
+                try:
+                    txt_c = open(real_f, encoding="utf-8").read()
+                    inline_blocks.append(f"=== FILE: {bname} ===\n{txt_c}")
+                    total_inline_bytes += fsize
+                    continue
+                except Exception:
+                    pass
             attached_names.append(bname)
 
         final_prompt = prompt
+        if inline_blocks:
+            joined_inline = "\n\n".join(inline_blocks)
+            final_prompt = f"[محتوى الملفات المرفقة مدمج أدناه — أجب مباشرة في جولة واحدة دون استدعاء أداة view_file]\n\n{joined_inline}\n\n{final_prompt}"
         if attached_names:
             refs = " ".join(f"@{name}" for name in attached_names if f"@{name}" not in final_prompt)
             if refs:
@@ -1149,7 +1165,12 @@ def run_agy_lean(
             ]
             if active_model:
                 cmd += ["--model", active_model]
-            if effort:
+            # لا تمرر --effort إذا كان اسم النموذج يتضمن الطبقة سلفاً مثل (High) أو كان من عائلة Claude التي ترفض --effort
+            model_low = (active_model or "").lower()
+            supports_effort = not (
+                any(t in model_low for t in ("(high)", "(medium)", "(low)", "claude", "opus", "sonnet", "haiku"))
+            )
+            if effort and supports_effort:
                 cmd += ["--effort", effort]
             if json_schema:
                 cmd += ["--json-schema", json_schema]
