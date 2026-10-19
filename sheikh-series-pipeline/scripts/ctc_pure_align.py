@@ -589,6 +589,9 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             if rem_ev_rate > 0 and slice_ev_rate >= 0.45 * rem_ev_rate:
                 floor_words = min(N - wc, int(round(min(avg_rate, 3.0) * slice_dur * 0.82)))
                 n_est = min(max_phys_words, max(n_est, floor_words))
+            elif ev_slice >= 15 and slice_dur >= 40.0:
+                floor_words = min(N - wc, max(45, int(round(min(avg_rate, 2.5) * slice_dur * 0.55))))
+                n_est = min(max_phys_words, max(n_est, floor_words))
             eff_margin = min(a.margin, max(8, int(round(0.18 * n_est))))
             wi1 = min(N, wc + n_est + eff_margin)
         is_last_speech_slice = (fi1 >= T) or (ev_after == 0 and wi1 >= N)
@@ -629,6 +632,15 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
                 new = {i: v for i, v in new.items() if i <= cut_i}
                 if dropped:
                     print('[%s]   ↳ تسليم صلب عند الكلمة %d (أُعيد %d كلمة للشريحة التالية)' % (tag, cut_i, dropped), flush=True)
+            elif len(new) >= 8:
+                raw_span = max(0.2, max(v[1] for v in new.values()) - tc)
+                if (len(new) / raw_span) > 4.2:
+                    if cut_i is not None and ((cut_i - min(new) + 1) / max(0.2, new[cut_i][1] - tc)) <= 4.0:
+                        new = {i: v for i, v in new.items() if i <= cut_i}
+                    else:
+                        max_keep = max(1, int(round(min(3.5, max(1.2, avg_rate)) * raw_span)))
+                        keep_keys = sorted(new)[:max_keep]
+                        new = {k: new[k] for k in keep_keys}
         if times:
             prev_max_e = max(v[1] for k, v in times.items() if k < min(new)) if any(k < min(new) for k in times) else None
             if prev_max_e is not None:
