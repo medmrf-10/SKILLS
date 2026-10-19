@@ -488,14 +488,17 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                     max_words_cap = int((dur_s / 60.0) * 215.0) if dur_s >= 60.0 else 999999
                     w_list = cleaned.split()
                     has_rep_loop = False
+                    if len(re.findall(r'[ٹڈڑںےگچپژ]', cleaned)) >= 3:
+                        has_rep_loop = True
                     if len(w_list) >= 60:
                         from collections import Counter
                         ngrams = Counter(tuple(w_list[i:i + 6]) for i in range(len(w_list) - 5))
                         if ngrams and ngrams.most_common(1)[0][1] >= 10:
                             has_rep_loop = True
+                    retry_min_words = max(45, int(min_words * 0.55)) if dur_s >= 180.0 else 15
                     if not has_rep_loop and 'use-policy' not in raw_out.lower() and words <= max_words_cap and (
                         (ar_chars >= min_ar and words >= min_words)
-                        or (attempt >= 2 and res.returncode == 0 and ar_chars >= 60 and words >= 15)
+                        or (attempt >= 2 and res.returncode == 0 and ar_chars >= 60 and words >= retry_min_words)
                         or (dur_s > 0 and dur_s < 60.0 and res.returncode == 0 and ar_chars >= 20 and words >= 5)
                     ):
                         return cleaned.strip(), elapsed
