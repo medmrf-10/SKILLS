@@ -464,10 +464,12 @@ def upload_and_finalize(job, local_align_path, rep):
 
 
 def main():
-    from agy_transcribe import strip_preamble_and_header
+    import importlib
+    import sanitize_preamble
     os.makedirs(LOCAL_SPOOL, exist_ok=True)
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     _reset_stale_ssh_mux()
+    _mod_mtimes = {}
 
     device = 'mps' if (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()) else 'cpu'
     dtype = torch.float16 if device == 'mps' else torch.float32
@@ -515,9 +517,16 @@ def main():
 
         try:
             import base64 as _b64
+            for _mod in (sanitize_preamble, ctc_pure_align):
+                _mf = getattr(_mod, '__file__', None)
+                if _mf and os.path.exists(_mf):
+                    _mt = os.path.getmtime(_mf)
+                    if _mod_mtimes.get(_mf) not in (None, _mt):
+                        importlib.reload(_mod)
+                    _mod_mtimes[_mf] = _mt
             raw_txt = open(local_txt, encoding='utf-8', errors='replace').read()
-            cleaned_txt, stripped_reasons = strip_preamble_and_header(raw_txt)
-            if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt:
+            cleaned_txt, stripped_reasons = sanitize_preamble.strip_preamble_and_header(raw_txt)
+            if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt and len(cleaned_txt.split()) >= len(raw_txt.split()) * 0.75:
                 with open(local_txt, 'w', encoding='utf-8') as tf:
                     tf.write(cleaned_txt)
                 job['cleaned_txt_b64'] = _b64.b64encode(cleaned_txt.encode('utf-8')).decode('ascii')
