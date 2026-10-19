@@ -281,15 +281,24 @@ def main():
             except Exception as e:
                 log(f'[خطأ غير متوقع في عامل السلسلة] {e}')
 
-    yt_after = index_existing_ytb()
+    yt_after, retrans_after = index_existing_ytb()
     still_missing_series = 0
-    for item in queue:
-        rem_now = [vid for _, vid, _ in item['missing'] if vid not in yt_after]
-        if rem_now:
+    for s in data.get('series', []):
+        lessons = [l for l in (s.get('lessons') or []) if l.get('yt_id')]
+        if not lessons:
+            continue
+        rem_now = [
+            l['yt_id'] for l in lessons
+            if not (l.get('duration') is None and l.get('is_child')) and l['yt_id'] not in yt_after
+        ]
+        if not rem_now:
+            continue
+        elig_done = sum(1 for l in lessons if (l['yt_id'] in yt_after or l['yt_id'] in retrans_after))
+        if (elig_done / len(lessons)) * 100.0 >= min_completion_pct:
             still_missing_series += 1
     if still_missing_series > 0:
-        log(f'تبقّت {still_missing_series} سلسلة تحتاج إعادة محاولة لبعض الدروس — لن يُكتب علم الإغلاق حتى تكتمل 100%.')
-        return
+        log(f'تبقّت {still_missing_series} سلسلة تحتاج إعادة محاولة لبعض الدروس — سيُعاد التشغيل لإكمالها 100%.')
+        sys.exit(1)
 
     flag_path = '/root/workspace/ytb-build/TRANSCRIBE_DRAIN_COMPLETE.flag'
     try:
