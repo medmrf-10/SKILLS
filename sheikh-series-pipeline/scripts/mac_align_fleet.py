@@ -526,7 +526,8 @@ def main():
                     _mod_mtimes[_mf] = _mt
             raw_txt = open(local_txt, encoding='utf-8', errors='replace').read()
             cleaned_txt, stripped_reasons = sanitize_preamble.strip_preamble_and_header(raw_txt)
-            if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt and len(cleaned_txt.split()) >= len(raw_txt.split()) * 0.75:
+            min_keep_ratio = 0.55 if 'CHUNK_BOUNDARY_OVERLAP' in (stripped_reasons or []) else 0.70
+            if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt and len(cleaned_txt.split()) >= len(raw_txt.split()) * min_keep_ratio:
                 with open(local_txt, 'w', encoding='utf-8') as tf:
                     tf.write(cleaned_txt)
                 job['cleaned_txt_b64'] = _b64.b64encode(cleaned_txt.encode('utf-8')).decode('ascii')
