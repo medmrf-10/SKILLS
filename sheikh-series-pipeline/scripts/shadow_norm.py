@@ -48,6 +48,7 @@ _HUNDREDS = ['', 'مئة', 'مئتان', 'ثلاثمئة', 'أربعمئة', 'خ
 
 
 def _below_1000(n):
+    n = max(0, int(n)) % 1000
     out = []
     h, r = divmod(n, 100)
     if h:
@@ -63,17 +64,33 @@ def _below_1000(n):
     return ' و'.join(out)
 
 
+def _digits_to_words(digit_str):
+    return ' '.join(('صفر' if ch == '0' else _UNITS[int(ch)]) for ch in digit_str if ch.isdigit())
+
+
 def number_to_words(n):
+    n = int(n)
+    if n < 0:
+        return number_to_words(-n)
     if n == 0:
         return 'صفر'
+    if n >= 1_000_000_000:
+        return _digits_to_words(str(n))
     parts = []
-    thousands, rest = divmod(n, 1000)
+    millions, rem = divmod(n, 1_000_000)
+    if millions == 1:
+        parts.append('مليون')
+    elif millions == 2:
+        parts.append('مليونان')
+    elif millions:
+        parts.append(_below_1000(millions) + (' ملايين' if 3 <= millions <= 10 else ' مليون'))
+    thousands, rest = divmod(rem, 1000)
     if thousands == 1:
         parts.append('ألف')
     elif thousands == 2:
         parts.append('ألفان')
     elif thousands:
-        parts.append(_below_1000(thousands) + (' آلاف' if thousands <= 10 else ' ألفاً'))
+        parts.append(_below_1000(thousands) + (' آلاف' if 3 <= thousands <= 10 else ' ألفاً'))
     if rest:
         parts.append(_below_1000(rest))
     return ' و'.join(parts)
@@ -83,10 +100,12 @@ _AR_DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
 
 
 def texturize_numbers(word):
-    """يُعيد كلمات منطوقة للرمز الرقمي الخالص (وإلّا الكلمة كما هي)."""
+    """يُعيد كلمات منطوقة للرمز الرقمي الخالص (بما في ذلك أرقام الهواتف والرموز الطويلة)."""
     w = word.translate(_AR_DIGITS)
     if not w.isdigit():
         return word
+    if (len(w) > 1 and w.startswith('0')) or len(w) >= 8:
+        return _digits_to_words(w)
     return number_to_words(int(w))
 
 

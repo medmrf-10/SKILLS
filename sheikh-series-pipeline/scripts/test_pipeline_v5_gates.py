@@ -633,6 +633,12 @@ def run_gate_5_chunk_boundary_dedup_and_post_breath_duration(errors):
         'وحافظ 100% على التكرارات التعبدية المشروعة («آمين آمين»، «صلى الله عليه وسلم»)'
     )
 
+    sw_phone = ctc_pure_align.shadow_words_1to1(['00971656669999.', '2500000'])
+    if len(sw_phone) != 2 or not sw_phone[0].startswith('صفرصفر') or 'مليون' not in sw_phone[1]:
+        errors.append(f'Gate 5: فشل shadow_words_1to1 في تفقيط أرقام الهواتف أو الملايين: {sw_phone}')
+    else:
+        print(f'  ✓ shadow_words_1to1 سليم لأرقام الهواتف الطويلة والملايين: {sw_phone[0][:18]}... / {sw_phone[1]}')
+
     # 2) فحص سقف مدة الكلمة بعد سكتة النفس (Post-Breath Onset Duration Gate) عبر أطوال كلمات متعددة
     with tempfile.TemporaryDirectory(prefix='v5_gate5_postbreath_') as tmpd:
         words = ['قال', 'المصنف:', 'فالمعاملات', 'المالية', 'مبنية', 'على', 'العدل']
