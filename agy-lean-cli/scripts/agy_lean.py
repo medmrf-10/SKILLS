@@ -1111,11 +1111,6 @@ def run_agy_lean(
                 stem, ext = os.path.splitext(bname)
                 bname = f"{stem}_{idx}{ext}"
             used_names.add(bname)
-            dst_f = os.path.join(ws_dir, bname)
-            try:
-                os.link(real_f, dst_f)
-            except Exception:
-                shutil.copy2(real_f, dst_f)
             fsize = os.path.getsize(real_f)
             ext_low = os.path.splitext(bname)[1].lower()
             if is_ask_mode and fsize <= 65536 and total_inline_bytes + fsize <= 90000 and ext_low in (".txt", ".md", ".json", ".py", ".kt", ".ts", ".js", ".html", ".css", ".sql", ".sh", ".yaml", ".yml", ".xml"):
@@ -1126,6 +1121,11 @@ def run_agy_lean(
                     continue
                 except Exception:
                     pass
+            dst_f = os.path.join(ws_dir, bname)
+            try:
+                os.link(real_f, dst_f)
+            except Exception:
+                shutil.copy2(real_f, dst_f)
             attached_names.append(bname)
 
         final_prompt = prompt
