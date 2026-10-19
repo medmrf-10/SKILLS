@@ -32,13 +32,15 @@ OPENING_CUE_RE = re.compile(
 
 PROMPT_ECHO_RE = re.compile(
     r'(اقرأ الملف الصوتي @[^\n]*|تنبيه صارم:\s*ينتهي هذا المقطع[^\n.!]*[.!]*|'
-    r'في منتصف الكلام[؛;،,]\s*توقف فور انتهاء الصوت[^\n.!]*[.!]*|'
+    r'في منتصف الكلام[؛;،,]\s*توق[\u064B-\u065F]*ف فور انتهاء الصوت[^\n]*|'
     r'(?:أخرج|إخراج)\s+النص(?:\s+العربي)?\s+فقط\s+بلا\s+أي\s+تعليق(?:\s+أو\s+مقدمة\s+أو\s+خاتمة\.?)?|'
-    r'لا\s+تلخّ?ص،?\s*ولا\s+تعيد\s+أي\s+جملة\s+مرتين(?:\s*،?\s*ولا\s+تكتب\s+حوار[اً]*\s+وهمي[اً]*\.?)?|'
+    r'لا\s+تلخ[\u064B-\u065F]*ص،?\s*ولا\s+تعيد\s+أي\s+جملة\s+مرتين(?:\s*،?\s*ولا\s+تكتب\s+حوار[اً]*\s+وهمي[اً]*\.?)?|'
     r'هذا هو المقطع\s*\(\d+\s*من\s*\d+\)\s*من المحاضرة[^\n.!]*[.!]*|'
     r'النص جاهز ومكتمل[^.\n]*\.|فلنتأكد من دقة\s*:|نستمع بدقة لكلمات الشيخ\s*:|'
     r'لتسمع النص بدقة|دعنا نستمع بدقة|دعنا نتأكد من الكلمات|'
     r'دعنا نتأكد من النص بدقة متناهية[^.\n]*\.?|'
+    r'دعنا نراجع التفريغ بدقة[^\n]*|'
+    r'فلنقم بكتابة التفريغ بدقة[^\n]*|'
     r'كما سمعت التسجيل بدقة متناهية[^.\n]*\.?|'
     r'دعنا نراجع بداية النص ونهايته\s*:?\s*(?:البداية\s*:)?|'
     r'معلومات إضافية حول الملف[^.\n]*\.|دعنا نتأكد من سماع النص[^:\n]*:|'
@@ -50,9 +52,9 @@ RESIDUAL_PROMPT_LINE_RE = re.compile(
     r'(?:'
     r'^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:أخرج|إخراج|النص\s+العربي\s+فقط|الآن\s+سأقوم\s+بإخراج\s+النص\s+فقط)[^\n]{0,80}أو\s+مقدمة\s+أو\s+خاتمة[."\')]*\s*'
     r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:ولا\s+يوجد\s+تعليق|النص\s+دقيق\s+جد[اً]+\s+وجاهز\s+للإخراج|كل\s+كلمة\s+مطابقة\s+تمام[اً]+\s+للملف\s+الصوتي)[^\n]{0,90}أو\s+مقدمة\s+أو\s+خاتمة(?:،\s*النص\s+العربي\s+فقط)?[."\')]*\s*'
-    r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:دعنا\s+نتأكد\s+من\s+النص\s+بدقة\s+متناهية|كما\s+سمعت\s+التسجيل\s+بدقة\s+متناهية|دعنا\s+نراجع\s+بداية\s+النص\s+ونهايته|البداية\s*:)[^\n]*$'
-    r'|(?:\bأو\s+مقدمة\s+أو\s+خاتمة[."\')]*\s*)?(?:[-*•]|\d+\.)?\s*["\']?\s*لا\s+تلخّ?ص،?\s*ولا\s+تعيد\s+أي\s+جملة\s+مرتين(?:،?\s*ولا\s+تكتب\s+حوار[اً]*\s+وهمي[اً]*)?[."\')]*\s*(?:->\s*لا\s+نكتب\s+أي\s+كلمة\s+سوى\s+التفريغ\s+النصي\s+العربي\s+للملف\.?)?\s*'
-    r'|(?:تنبيه صارم:\s*ينتهي هذا المقطع\s*)?في منتصف الكلام[؛;،,]\s*توقف فور انتهاء الصوت[^\n.!]*[.!]*\s*'
+    r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:دعنا\s+نتأكد\s+من\s+النص\s+بدقة\s+متناهية|دعنا\s+نراجع\s+التفريغ\s+بدقة|فلنقم\s+بكتابة\s+التفريغ\s+بدقة|كما\s+سمعت\s+التسجيل\s+بدقة\s+متناهية|دعنا\s+نراجع\s+بداية\s+النص\s+ونهايته|البداية\s*:)[^\n]*$'
+    r'|(?:\bأو\s+مقدمة\s+أو\s+خاتمة[."\')]*\s*)?(?:[-*•]|\d+\.)?\s*["\']?\s*لا\s+تلخ[\u064B-\u065F]*ص،?\s*ولا\s+تعيد\s+أي\s+جملة\s+مرتين(?:،?\s*ولا\s+تكتب\s+حوار[اً]*\s+وهمي[اً]*)?[."\')]*\s*(?:->\s*لا\s+نكتب\s+أي\s+كلمة\s+سوى\s+التفريغ\s+النصي\s+العربي\s+للملف\.?)?\s*'
+    r'|(?:تنبيه صارم:\s*ينتهي هذا المقطع\s*)?في منتصف الكلام[؛;،,]\s*توق[\u064B-\u065F]*ف فور انتهاء الصوت[^\n]*\s*'
     r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*أو\s+مقدمة\s+أو\s+خاتمة[."\')]+\s*'
     r')'
 )
@@ -79,6 +81,15 @@ DEVOTIONAL_WORDS = {
 
 SBV_SRT_LINE_RE = re.compile(
     r'(?m)^(?:\s*\d+\s*\n)?\s*\d+[;:]\d{2}:\d{2}(?:[:.,]\d+)?\s*(?:,|-->)\s*\d+[;:]\d{2}:\d{2}(?:[:.,]\d+)?\s*$'
+)
+SINGLE_TS_LINE_RE = re.compile(
+    r'^\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*$'
+)
+STAGE_DIR_LINE_RE = re.compile(
+    r'^\s*(?:قارئ\s+يقرأ|القارئ\s+يقرأ|ثم\s+يتكلم\s+الشيخ[^\n:：]*|يتكلم\s+الشيخ[^\n:：]*)\s*[:：]\s*$'
+)
+INLINE_STAGE_DIR_RE = re.compile(
+    r'\(\s*(?:الشيخ\s+يصحح|القارئ\s+يقرأ|يتكلم\s+الشيخ)\s*[:：][^\)]*\)'
 )
 
 
@@ -441,6 +452,85 @@ def _strip_single_block_thinking(block):
     return block, False
 
 
+def _strip_timestamped_draft_and_stage_dirs(text, reasons):
+    """إزالة المسودات الموقّتة المكررة (أسطر توقيت 0:08:49.760 متبوعة بالفقرة النهائية النظيفة) وتوجيهات المتحدثين."""
+    lines = text.splitlines()
+    n = len(lines)
+    ts_indices = [i for i, l in enumerate(lines) if SINGLE_TS_LINE_RE.match(l.strip())]
+    if len(ts_indices) >= 4:
+        # تحديد نطاقات المسودة الموقّتة المتصلة (حيث تتناوب أسطر التوقيت مع جمل قصيرة)
+        clusters = []
+        cur_start = ts_indices[0]
+        cur_end = ts_indices[0]
+        for idx in ts_indices[1:]:
+            if idx - cur_end <= 4:
+                cur_end = idx
+            else:
+                clusters.append((cur_start, cur_end))
+                cur_start = idx
+                cur_end = idx
+        clusters.append((cur_start, cur_end))
+
+        drop_line_ranges = []
+        for c_start, c_end in clusters:
+            # ضم السطر النصي الذي يلي آخر طابع زمني في الكتلة
+            end_line = min(n - 1, c_end + 1)
+            while end_line + 1 < n and not lines[end_line].strip():
+                end_line += 1
+            draft_text_lines = [
+                lines[k].strip() for k in range(c_start, end_line + 1)
+                if lines[k].strip() and not SINGLE_TS_LINE_RE.match(lines[k].strip())
+            ]
+            draft_norm = _norm_anchor(' '.join(draft_text_lines))
+            after_norm = _norm_anchor('\n'.join(lines[end_line + 1:min(n, end_line + 40)]))
+            draft_words = draft_norm.split()
+            if len(draft_words) >= 6 and after_norm:
+                anchor_head = ' '.join(draft_words[:5])
+                anchor_mid = ' '.join(draft_words[len(draft_words) // 2:len(draft_words) // 2 + 5])
+                if (len(anchor_head) >= 10 and anchor_head in after_norm) or (len(anchor_mid) >= 10 and anchor_mid in after_norm):
+                    # إذا كان السطر السابق لـ c_start جزءاً مكرراً من نهاية الفقرة (مثل "السماع." / "على سـالسماع.")
+                    if c_start > 0 and len(lines[c_start - 1].strip().split()) <= 2:
+                        c_start -= 1
+                    drop_line_ranges.append((c_start, end_line))
+
+        if drop_line_ranges:
+            keep = [True] * n
+            for a, b in drop_line_ranges:
+                for k in range(a, b + 1):
+                    keep[k] = False
+            lines = [lines[k] for k in range(n) if keep[k]]
+            if 'TIMESTAMPED_DRAFT_REPEAT' not in reasons:
+                reasons.append('TIMESTAMPED_DRAFT_REPEAT')
+
+    # إزالة أي أسطر توقيت منفردة متبقية وتوجيهات المتحدثين غير المنطوقة
+    out_lines = []
+    modified_lines = False
+    for line in lines:
+        s = line.strip()
+        if SINGLE_TS_LINE_RE.match(s):
+            modified_lines = True
+            if 'SUBTITLE_TIMESTAMPS' not in reasons:
+                reasons.append('SUBTITLE_TIMESTAMPS')
+            continue
+        if STAGE_DIR_LINE_RE.match(s):
+            modified_lines = True
+            if 'METADATA_HEADER' not in reasons:
+                reasons.append('METADATA_HEADER')
+            continue
+        if INLINE_STAGE_DIR_RE.search(line):
+            line = INLINE_STAGE_DIR_RE.sub('', line)
+            line = re.sub(r'  +', ' ', line)
+            modified_lines = True
+            if 'METADATA_HEADER' not in reasons:
+                reasons.append('METADATA_HEADER')
+        out_lines.append(line)
+
+    if modified_lines or len(ts_indices) >= 4:
+        text = '\n'.join(out_lines)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+    return text
+
+
 def strip_preamble_and_header(text):
     """إزالة الترويسات الوصفية والمقدمات غير المنطوقة ومونولوج التفكير المتسرب وتكرارات حدود المقاطع.
 
@@ -456,7 +546,7 @@ def strip_preamble_and_header(text):
         if not s_init:
             init_idx += 1
             continue
-        if METADATA_LINE_RE.match(s_init):
+        if METADATA_LINE_RE.match(s_init) or STAGE_DIR_LINE_RE.match(s_init):
             if 'METADATA_HEADER' not in reasons:
                 reasons.append('METADATA_HEADER')
             init_idx += 1
@@ -467,6 +557,9 @@ def strip_preamble_and_header(text):
         break
     if init_idx > 0:
         text = '\n'.join(init_lines[init_idx:]).lstrip()
+
+    # 0.5 إزالة المسودات الموقّتة المكررة وتوجيهات المتحدثين غير المنطوقة
+    text = _strip_timestamped_draft_and_stage_dirs(text, reasons)
 
     # إذا وجد مونولوج تفكير لاتيني أو صدى لتعليمات الموجه في أي موضع من الملف:
     if LATIN_RE.search(text) or PROMPT_ECHO_RE.search(text):
@@ -495,7 +588,6 @@ def strip_preamble_and_header(text):
                             tail_clean = tail_p.strip()
                             anchor_words = ' '.join(_norm_anchor(tail_clean).split()[:5])
                             if len(anchor_words) >= 10 and out_paras:
-                                # إذا وُجدت مسودة سابقة لنفس المقطع تبدأ بنفس الجملة المفتتاحية ضمن آخر الفقرات، احذف المسودة المكررة
                                 char_back = 0
                                 cut_from = None
                                 for back_i in range(len(out_paras) - 1, -1, -1):
@@ -510,7 +602,8 @@ def strip_preamble_and_header(text):
                             in_leak = False
                 continue
             if in_leak:
-                if more_leak_ahead:
+                # لا نبتلع فقرة عربية صافية طويلة (≥25 كلمة) بين تسربين منفصلين في مقطعين مختلفين
+                if more_leak_ahead and len(p.split()) < 25:
                     continue
                 in_leak = False
             out_paras.append(p)
