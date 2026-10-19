@@ -104,7 +104,7 @@ def texturize_numbers(word):
     w = word.translate(_AR_DIGITS)
     if not w.isdigit():
         return word
-    if (len(w) > 1 and w.startswith('0')) or len(w) >= 8:
+    if (len(w) >= 6 and w.startswith('0')) or len(w) >= 8:
         return _digits_to_words(w)
     return number_to_words(int(w))
 
