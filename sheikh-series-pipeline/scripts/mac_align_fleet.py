@@ -666,7 +666,11 @@ def main():
         except Exception as e:
             log(f'[✗ خطأ محاذاة] {key}: {e}')
         finally:
-            cleanup_paths = [local_opus, local_txt, em_path, tok_path, meta_path, rep_path]
+            cleanup_paths = [
+                local_opus, local_txt, em_path, tok_path, meta_path, rep_path,
+                os.path.join(LOCAL_SPOOL, key + '.align.report.json'),
+                os.path.join(LOCAL_SPOOL, key + '.align.json.report.json'),
+            ]
             if not submitted_upload:
                 cleanup_paths.append(out_align)
             for p in cleanup_paths:

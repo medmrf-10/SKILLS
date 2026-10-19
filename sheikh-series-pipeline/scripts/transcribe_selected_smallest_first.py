@@ -81,7 +81,13 @@ def wait_for_safe_ram(sid):
 def index_existing_ytb():
     """يرصد كل ملفات .txt الصالحة في /root/workspace/ytb بمعرّف يوتيوب."""
     yt_to_path = {}
+    retranscribing_vids = set()
     for root, dirs, files in os.walk(YTB_ROOT):
+        if os.path.basename(root) == '_truncated_legacy_backup':
+            for f in files:
+                if f.endswith('.txt') and '_' in f[:-4]:
+                    retranscribing_vids.add(f[:-4].split('_', 1)[1])
+            continue
         for skip in ('.git', '_variants', '_raw_preamble_backup'):
             if skip in dirs:
                 dirs.remove(skip)
@@ -98,7 +104,7 @@ def index_existing_ytb():
                     yt_to_path[parts[1]] = p
             except OSError:
                 pass
-    return yt_to_path
+    return yt_to_path, retranscribing_vids
 
 
 def resolve_series_dir(series_obj, yt_to_path, row_map):
@@ -155,7 +161,7 @@ def main():
     log(f'بدء محرك تفريغ الاختيارات المتوازي (SERIES_WORKERS={SERIES_WORKERS} × CHUNK_WORKERS={CHUNK_WORKERS})...')
     data = json.load(open(SELECTIONS_JSON, encoding='utf-8'))
     row_map = json.load(open(ROW_MAP_JSON, encoding='utf-8')) if os.path.exists(ROW_MAP_JSON) else {}
-    yt_to_path = index_existing_ytb()
+    yt_to_path, retranscribing_vids = index_existing_ytb()
     log(f'إجمالي التفريغات الصالحة المرصودة في ytb حالياً: {len(yt_to_path)}')
 
     min_completion_pct = float(os.environ.get('MIN_COMPLETION_PCT', '70.0'))
@@ -176,8 +182,8 @@ def main():
         if not missing:
             continue
         total_count = len(lessons)
-        done_count = total_count - len(missing)
-        done_pct = (done_count / total_count) * 100.0
+        elig_done = sum(1 for l in lessons if (l['yt_id'] in yt_to_path or l['yt_id'] in retranscribing_vids))
+        done_pct = (elig_done / total_count) * 100.0
         if done_pct < min_completion_pct:
             skipped_under_threshold += 1
             continue

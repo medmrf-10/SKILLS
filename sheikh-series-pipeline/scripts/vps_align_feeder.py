@@ -44,7 +44,13 @@ def index_ytb_txt_and_align():
     """يرصد كل ملفات .txt الصالحة في /root/workspace/ytb والتي ليس لها .align.json بعد."""
     yt_to_txt = {}
     aligned_vids = set()
+    retranscribing_vids = set()
     for root, dirs, files in os.walk(YTB_ROOT):
+        if os.path.basename(root) == '_truncated_legacy_backup':
+            for f in files:
+                if f.endswith('.txt') and '_' in f[:-4]:
+                    retranscribing_vids.add(f[:-4].split('_', 1)[1])
+            continue
         for skip in ('.git', '_variants', '_raw_preamble_backup'):
             if skip in dirs:
                 dirs.remove(skip)
@@ -68,13 +74,13 @@ def index_ytb_txt_and_align():
                     yt_to_txt[vid] = p
             except OSError:
                 pass
-    return yt_to_txt, aligned_vids
+    return yt_to_txt, aligned_vids, retranscribing_vids
 
 
 def build_ordered_lessons():
     """يرتب السلاسل بنفس ترتيب طابور التفريغ الأصلي (الأصغر فالأكبر) ويستخرج الدروس المفرغة التي تنتظر المحاذاة."""
     data = json.load(open(SELECTIONS_JSON, encoding='utf-8'))
-    yt_to_txt, aligned_vids = index_existing_and_aligned = index_ytb_txt_and_align()
+    yt_to_txt, aligned_vids, retranscribing_vids = index_ytb_txt_and_align()
 
     series_list = []
     allowed_vids = set()
@@ -87,7 +93,10 @@ def build_ordered_lessons():
         ]
         if not lessons:
             continue
-        done_cnt = sum(1 for l in lessons if (l['yt_id'] in yt_to_txt or l['yt_id'] in aligned_vids))
+        done_cnt = sum(
+            1 for l in lessons
+            if (l['yt_id'] in yt_to_txt or l['yt_id'] in aligned_vids or l['yt_id'] in retranscribing_vids)
+        )
         done_pct = (done_cnt * 100.0) / len(lessons)
         if done_pct < min_pct:
             continue
