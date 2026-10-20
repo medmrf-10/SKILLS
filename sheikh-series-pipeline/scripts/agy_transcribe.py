@@ -435,10 +435,56 @@ def _global_agy_slot(min_avail_mb=1350, model_hint='gemini'):
                 pass
 
 
+def _measure_chunk_speech(cpath, len_s=0.0, max_vol_floor_db=-48.0):
+    """فحص الصوت الفعلي داخل المقطع: يكشف الصمت الرقمي الخالص (-inf dB أو <= -48dB) ويحسب مدة الكلام النشط لمنع هلوسة النموذج في الذيل الصامت."""
+    try:
+        vr = subprocess.run(
+            [FFMPEG_BIN, '-nostdin', '-ss', '0', '-t', '900', '-i', cpath,
+             '-af', 'volumedetect,silencedetect=noise=-45dB:d=2.0', '-f', 'null', '-'],
+            capture_output=True, text=True, timeout=25
+        )
+        err = vr.stderr or ''
+        m_max = re.search(r'max_volume:\s*(-inf|[-0-9.]+)\s*dB', err)
+        m_mean = re.search(r'mean_volume:\s*(-inf|[-0-9.]+)\s*dB', err)
+        max_v = -99.0 if (m_max and m_max.group(1) == '-inf') else (float(m_max.group(1)) if m_max else 0.0)
+        mean_v = -99.0 if (m_mean and m_mean.group(1) == '-inf') else (float(m_mean.group(1)) if m_mean else 0.0)
+        if m_max and (max_v <= max_vol_floor_db or mean_v <= -62.0):
+            return True, max_v, 0.0
+        sil_total = sum(float(m.group(1)) for m in re.finditer(r'silence_duration:\s*([0-9.]+)', err))
+        # إذا كان هناك silence_start في النهاية لم يُغلق بـ silence_end قبل نهاية المقطع
+        starts = [float(m.group(1)) for m in re.finditer(r'silence_start:\s*([0-9.]+)', err)]
+        ends = [float(m.group(1)) for m in re.finditer(r'silence_end:\s*([0-9.]+)', err)]
+        eff_len = len_s if len_s > 0 else get_audio_duration(cpath)
+        if len(starts) > len(ends) and eff_len > starts[-1]:
+            sil_total += (eff_len - starts[-1])
+        if eff_len > 0:
+            active_s = max(0.0, eff_len - sil_total)
+            if active_s < 2.5:
+                return True, max_v, active_s
+            return False, max_v, active_s
+    except Exception:
+        pass
+    return False, 0.0, len_s
+
+
+def _is_dead_silent_chunk(cpath, max_vol_floor_db=-48.0):
+    """فحص ما إذا كان المقطع الصوتي صامتاً بالكامل (-inf dB أو <= max_vol_floor_db)."""
+    is_sil, max_v, _ = _measure_chunk_speech(cpath, max_vol_floor_db=max_vol_floor_db)
+    return is_sil, max_v
+
+
 def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=None, total_parts=None, min_words=200, timeout_s=240, retries=3, stagger_s=0.0, sem=None, dur_s=0.0):
     """تشغيل agy داخل مجلد مؤقت معزول مع حجز خانة عالمية محمية بقفل النواة طوال مدة عمل العملية."""
     if stagger_s > 0:
         time.sleep(stagger_s)
+    is_sil_top, max_v_top, active_s_top = _measure_chunk_speech(audio_path, len_s=dur_s)
+    if is_sil_top:
+        print('  [تخطي مقطع صامت] %s صمت رقمي خالص (max_volume=%.1f dB, active=%.1fs)' % (
+            os.path.basename(audio_path), max_v_top, active_s_top
+        ), flush=True)
+        return '__SILENT_CHUNK__', 0.0
+    if active_s_top > 0 and dur_s > 0 and active_s_top < dur_s * 0.75:
+        min_words = max(15, min(min_words, int((active_s_top / 60.0) * 24)))
     cur_model = model or 'gemini-3.8-flash-high'
     audio_fallbacks = [
         'gemini-3.8-flash-high',
@@ -485,7 +531,8 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                     words = len(cleaned.split())
                     _log_agy_usage(audio_path, dur_s, words, ar_chars, cur_model, res.returncode, elapsed, usage)
                     min_ar = min(300, max(40, min_words * 3))
-                    max_words_cap = int((dur_s / 60.0) * 215.0) if dur_s >= 60.0 else 999999
+                    eff_cap_dur = active_s_top if (active_s_top > 0 and active_s_top < dur_s * 0.85) else dur_s
+                    max_words_cap = int((eff_cap_dur / 60.0) * 215.0) if eff_cap_dur >= 60.0 else 999999
                     w_list = cleaned.split()
                     has_rep_loop = False
                     if len(re.findall(r'[ٹڈڑںےگچپژ]', cleaned)) >= 3:
@@ -550,6 +597,12 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                         p2, model, sheikh, series, title, part_idx=part_idx, total_parts=total_parts,
                         min_words=sub_min, timeout_s=timeout_s, retries=2, sem=sem, dur_s=(dur_s - mid_s)
                     )
+                    if t1 == '__SILENT_CHUNK__' and t2 == '__SILENT_CHUNK__':
+                        return '__SILENT_CHUNK__', round(e1 + e2, 1)
+                    if t1 == '__SILENT_CHUNK__' and t2:
+                        return t2.strip(), round(e1 + e2, 1)
+                    if t2 == '__SILENT_CHUNK__' and t1:
+                        return t1.strip(), round(e1 + e2, 1)
                     if t2:
                         return deduplicate_chunk_boundary_overlap([t1.strip(), t2.strip()]), round(e1 + e2, 1)
             except Exception as e:
@@ -721,19 +774,6 @@ def main():
                             cached_chunks = {}
                     cache_lock = threading.Lock()
 
-                    def _is_dead_silent_chunk(cpath, max_vol_floor_db=-48.0):
-                        try:
-                            vr = subprocess.run(
-                                [FFMPEG_BIN, '-nostdin', '-ss', '0', '-t', '900', '-i', cpath, '-af', 'volumedetect', '-f', 'null', '-'],
-                                capture_output=True, text=True, timeout=20
-                            )
-                            m_max = re.search(r'max_volume:\s*([-0-9.]+)\s*dB', vr.stderr or '')
-                            if m_max and float(m_max.group(1)) <= max_vol_floor_db:
-                                return True, float(m_max.group(1))
-                        except Exception:
-                            pass
-                        return False, 0.0
-
                     def _run_chunk(item):
                         idx, (cpath, st_s, len_s) = item
                         if str(idx) in cached_chunks and cached_chunks[str(idx)]:
@@ -742,13 +782,14 @@ def main():
                                 idx, len(chunks), len_s / 60.0, len(c_txt.split())
                             ), flush=True)
                             return idx, len_s, c_txt, 0.0
-                        is_sil, max_v = _is_dead_silent_chunk(cpath)
+                        is_sil, max_v, active_s = _measure_chunk_speech(cpath, len_s=len_s)
                         if is_sil:
-                            print('     [تخطي مقطع صامت] المقطع %d/%d (%.1fد) صمت رقمي خالص (max_volume=%.1f dB) — تخطي تفريغه لمنع الهلوسة' % (
-                                idx, len(chunks), len_s / 60.0, max_v
+                            print('     [تخطي مقطع صامت] المقطع %d/%d (%.1fد) صمت رقمي خالص (max_volume=%.1f dB, active=%.1fs) — تخطي تفريغه لمنع الهلوسة' % (
+                                idx, len(chunks), len_s / 60.0, max_v, active_s
                             ), flush=True)
                             return idx, len_s, '__SILENT_CHUNK__', 0.0
-                        req_w = max(50, int((len_s / 60.0) * 24))
+                        eff_s = active_s if (active_s > 0 and active_s < len_s * 0.8) else len_s
+                        req_w = max(15 if eff_s < 180.0 else 50, int((eff_s / 60.0) * 24))
                         stg = (idx - 1) * 0.8 if idx <= worker_limit else 0.0
                         ptxt, elapsed = transcribe_single_file(
                             cpath, args.model, sheikh, series, title,
