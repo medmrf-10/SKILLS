@@ -271,10 +271,37 @@ def build_prompt(audio_filename, sheikh='', series='', title='', part_idx=None, 
     )
 
 
-def _cleanup_agy_conv_db(conv_id):
+_PROFILE_RR_COUNTER = 0
+
+
+def _resolve_agy_profile_home(part_idx=None):
+    """تحديد مجلد HOME للبروفايل المطلوب (يدعم AGY_PROFILE المفرد أو AGY_PROFILES المتعدد بالتناوب)."""
+    global _PROFILE_RR_COUNTER
+    raw = (os.environ.get('AGY_PROFILES') or os.environ.get('AGY_PROFILE') or '').strip()
+    if not raw:
+        return 'default', None
+    profs = [p.strip() for p in raw.split(',') if p.strip()]
+    if not profs:
+        return 'default', None
+    if len(profs) == 1:
+        chosen = profs[0]
+    elif part_idx is not None:
+        chosen = profs[(int(part_idx) - 1) % len(profs)]
+    else:
+        chosen = profs[_PROFILE_RR_COUNTER % len(profs)]
+        _PROFILE_RR_COUNTER += 1
+    roots = ['/root/.agy-profiles', os.path.expanduser('~/.agy-profiles'), '/Users/macm1pro/.agy-profiles']
+    for r in roots:
+        cand = os.path.join(r, chosen)
+        if os.path.isdir(cand):
+            return chosen, cand
+    return chosen, None
+
+
+def _cleanup_agy_conv_db(conv_id, home_dir=None):
     if not conv_id or not sys.platform.startswith('linux'):
         return
-    base_dir = os.path.expanduser('~/.gemini/antigravity-cli')
+    base_dir = os.path.join(home_dir, '.gemini', 'antigravity-cli') if home_dir else os.path.expanduser('~/.gemini/antigravity-cli')
     for sub, suffixes in (
         ('conversations', ('.pb', '.db', '.db-wal', '.db-shm')),
         ('annotations', ('.pbtxt',)),
@@ -295,7 +322,7 @@ def _cleanup_agy_conv_db(conv_id):
 
 
 
-def extract_agy_json_response(stdout_text):
+def extract_agy_json_response(stdout_text, home_dir=None):
     """استخراج حقل response وبيانات usage من مخرجات agy JSON مع تنظيف قاعدة بيانات الجلسة المؤقتة."""
     txt = (stdout_text or '').strip()
     if not txt:
@@ -304,7 +331,7 @@ def extract_agy_json_response(stdout_text):
         try:
             payload = json.loads(line)
             if isinstance(payload, dict) and 'response' in payload:
-                _cleanup_agy_conv_db(payload.get('conversation_id'))
+                _cleanup_agy_conv_db(payload.get('conversation_id'), home_dir=home_dir)
                 return (payload.get('response') or '').strip(), (payload.get('usage') or {})
         except Exception:
             pass
@@ -314,7 +341,7 @@ def extract_agy_json_response(stdout_text):
         try:
             payload = json.loads(txt[idx:ridx + 1])
             if isinstance(payload, dict) and 'response' in payload:
-                _cleanup_agy_conv_db(payload.get('conversation_id'))
+                _cleanup_agy_conv_db(payload.get('conversation_id'), home_dir=home_dir)
                 return (payload.get('response') or '').strip(), (payload.get('usage') or {})
         except Exception:
             pass
@@ -485,8 +512,16 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
         return '__SILENT_CHUNK__', 0.0
     if active_s_top > 0 and dur_s > 0 and active_s_top < dur_s * 0.75:
         min_words = max(15, min(min_words, int((active_s_top / 60.0) * 24)))
+    prof_name, prof_home = _resolve_agy_profile_home(part_idx)
+    run_env = os.environ.copy()
+    if prof_home:
+        run_env['HOME'] = prof_home
     cur_model = model or 'gemini-3.8-flash-high'
     audio_fallbacks = [
+        'gemini-3.8-flash-high',
+        'gemini-3.8-flash-medium',
+        'gemini-3.8-flash-low',
+    ] if (prof_name and prof_name != 'default' and '10' not in prof_name) else [
         'gemini-3.8-flash-high',
         'gemini-4-argon-high',
         'gemini-3.8-flash-medium',
@@ -521,10 +556,10 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                     with _global_agy_slot(int(os.environ.get('MIN_CHUNK_AVAIL_MB', '1350'))):
                         t0 = time.time()
                         res = subprocess.run(
-                            cmd, cwd=tmpdir, capture_output=True, text=True, timeout=timeout_s
+                            cmd, cwd=tmpdir, env=run_env, capture_output=True, text=True, timeout=timeout_s
                         )
                         elapsed = round(time.time() - t0, 1)
-                    parsed_resp, usage = extract_agy_json_response(res.stdout)
+                    parsed_resp, usage = extract_agy_json_response(res.stdout, home_dir=prof_home)
                     raw_out = parsed_resp if parsed_resp is not None else (res.stdout or '').strip()
                     cleaned, _ = strip_preamble_and_header(raw_out)
                     ar_chars = len(AR_RE.findall(cleaned))
@@ -702,7 +737,11 @@ def main():
                     help='أدنى معدل كلمات/دقيقة لاعتبار التفريغ مكتملًا')
     ap.add_argument('--force', action='store_true', help='إعادة التفريغ حتى لو وُجد ملف .txt سليم')
     ap.add_argument('--check-usage', action='store_true', help='عرض حصة agy قبل البدء')
+    ap.add_argument('--agy-profile', default='', help='اسم بروفايل agy في ~/.agy-profiles (أو قائمة مفصولة بفاصلة مثل medmrf10,medmrf19)')
     args = ap.parse_args()
+
+    if args.agy_profile:
+        os.environ['AGY_PROFILES'] = args.agy_profile
 
     if args.check_usage:
         check_agy_usage()

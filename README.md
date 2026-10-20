@@ -2,7 +2,7 @@
 
 مستودع المهارات القياسية لمنظومة التراث والمعرفة (خط الإنتاج الشامل من «اسم الشخصية» إلى قواعد البيانات العلائقية والتضمين الشعاعي المزدوج):
 
-## ١. المهارات التسع المعتمدة (`9 Verified Production Skills`)
+## ١. المهارات العشر المعتمدة (`10 Verified Production Skills`)
 
 1. **[`person-to-knowledge-orchestrator`](./person-to-knowledge-orchestrator/SKILL.md) (`v1.0`)**:
    - **المايسترو الشامل (`End-to-End Orchestrator`):** يستلم «اسم الشخصية» فقط ويدير المراحل الست (`G0..G5`) بالتتابع المحكوم ببوابات الجودة الحتمية ونقاط الحفظ القابلة للاستئناف (`pipeline_state.json`) حتى إخراج المستودع المعرفي الكامل للشخصية (`SQLite + FTS5 + Dual EmbeddingGemma 2`).
@@ -39,6 +39,9 @@
 9. **[`continuous-skill-improver`](./continuous-skill-improver/SKILL.md) (`v1.0`)**:
    - **حلقة التحسين المستمر للمهارات عبر الوكلاء الفرعيين وحارس الإنتاج الفعلي المضاد للخداع (`Subagent-Driven Continuous Skill Improvement & Anti-Deception Production Watchdog`):** تدير التدوير الدوري (`Round-Robin`) للمهارات التسع كل 20 دقيقة داخل وكلاء فرعيين معزولين (`Zero Main-Context Bloat`) عبر [`scripts/manage_improvement_loop.py`](./continuous-skill-improver/scripts/manage_improvement_loop.py)، وتكشف التقدم الوهمي (`completed_series_this_run` مقابل `new_txts_last_30m` وأخطاء `$HOME is not defined` في `systemd`)، وتراقب دقة محاذاة الماك (`< 95.0%` وقاعدة `ALIGN-ONSET-BREATH-JUMP`).
    - بوابة الفحص: [`scripts/test_improver_gates.py`](./continuous-skill-improver/scripts/test_improver_gates.py) (`PASS (0 errors)`).
+
+10. **[`agy-multi-account`](./agy-multi-account/SKILL.md) (`v1.0`)**:
+    - **إدارة وتشغيل الحسابات المتعددة لـ `agy` (`Multi-Account Isolation, Quota Inspection & Transcription Pool`):** تفصل حسابات `agy` (`medmrf10` Ultra، `medmrf19` Pro، وأي حساب ثالث/رابع) عبر `HOME=~/.agy-profiles/<name>` مع معالجة فخ `macOS Keychain`، وتفحص كوتة كل حساب مجاناً (`0` توكن) عبر [`scripts/agy_multi_pool.py`](./agy-multi-account/scripts/agy_multi_pool.py)، وتدعم تفريغ الصوت بحساب محدد (`--agy-profile medmrf19`) أو بالتناوب عبر عدة حسابات (`AGY_PROFILES=medmrf10,medmrf19`).
 
 ---
 
