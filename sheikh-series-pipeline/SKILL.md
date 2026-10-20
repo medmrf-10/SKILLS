@@ -88,6 +88,10 @@ python3 "$SKILL_DIR/scripts/agy_transcribe.py" <series_dir> \
     [--max-single-minutes 15] [--chunk-minutes 12] [--workers 4] [--force] [--check-usage]
 ```
 
+- **سياسة الحسابات الثلاثة الافتراضية للتفريغ (`medmrf19` & `brain` Pro Default Pool):**
+  - **`medmrf10` (`medmrf.10@gmail.com` — Ultra):** هو **الحساب الرئيسي (`Main Account`)** المخصّص للجلسات الحوارية وإنشاء الخطب والدروس؛ **لا يُستعمل افتراضياً في التفريغ الصوتي**.
+  - **`medmrf19` (`medmrf.19@gmail.com` — Pro) و `brain` (`brainthomas555@gmail.com` — Pro):** هما **الحسابان الافتراضيان للتفريغ الصوتي دون تفرقة بينهما**.
+  - عند تشغيل `agy_transcribe.py` دون تحديد `--agy-profile` (أو مع `--agy-profile auto`)، يفحص السكربت تلقائياً الكوتة الأسبوعية (`gemini-weekly`) لكلا حسابَي الـ Pro (`medmrf19` و `brain`) عبر `/usage` (بصفر توكن) و**يختار صاحب الكوتة الأسبوعية الأعلى** لاستغلال حصتيهما معاً بالتوازن قبل تاريخ التجديد الأسبوعي (راجع مهارة `agy-multi-account`).
 - **دعم التنزيل المزدوج (YouTube + `Archive.org` `direct_url`):** تفحص `download_lesson_audio()` حقل `direct_url`؛ فإذا كان رابطاً مباشراً من `archive.org/` أو ملفاً صوتياً مباشراً، تنزّله عبر `curl -fL` وتتحقق من سلامة مدته عبر `is_valid_audio_file()`، وإلا تنزّله عبر `mirath-audio` أو `yt-dlp`.
 - **حارس الكوتة الحي (`_is_quota_safe_for_background`):** يقرأ `/root/workspace/ytb-build/live_quota.json` (المزامَن من الماك كل دقيقتين) ويوقف عمال الخلفية مؤقتاً إذا هبطت كوتة الـ5 ساعات دون **`15%`** (حمايةً لـ`10%` للوكيل الرئيسي) أو إذا هبطت الكوتة الأسبوعية إلى **`<= 25%`** وكان المتبقي على التجديد أكثر من **`12` ساعة**.
 - **عزل بيئة `agy` وحصر القراءة في `view_file` (منع السقوط الصامت إلى Whisper):** يعمل كل نداء `agy` داخل مجلد مؤقت معزول (مع حل المسار الحقيقي `realpath` على macOS)، مع تعليمة تقرأ `@lesson_audio.mp3` عبر `view_file` فقط وتمنع `run_command` و`whisper` والمقدمات اللاتينية، ثم يطهّر المخرج بـ`strip_preamble_and_header()` وينظّف قاعدة بيانات جلسة `agy` المؤقتة (`_cleanup_agy_conv_db`) قبل الحفظ.

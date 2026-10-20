@@ -272,17 +272,87 @@ def build_prompt(audio_filename, sheikh='', series='', title='', part_idx=None, 
 
 
 _PROFILE_RR_COUNTER = 0
+_AUTO_PRO_CACHE = {'profile': None, 'ts': 0.0}
+DEFAULT_PRO_POOL = ('medmrf19', 'brain')
+
+
+def _find_profile_home_dir(prof_name):
+    roots = ['/root/.agy-profiles', os.path.expanduser('~/.agy-profiles'), '/Users/macm1pro/.agy-profiles']
+    for r in roots:
+        cand = os.path.join(r, prof_name)
+        tok = os.path.join(cand, '.gemini', 'antigravity-cli', 'antigravity-oauth-token')
+        if os.path.isdir(cand) and os.path.exists(tok):
+            return cand
+    return None
+
+
+def _pick_highest_weekly_pro_profile():
+    """يفحص حسابَي الـ Pro (medmrf19 و brain) دون تفرقة ويختار صاحب الكوتة الأسبوعية الأعلى (مع كاش 180ث)."""
+    now = time.time()
+    if _AUTO_PRO_CACHE['profile'] and (now - _AUTO_PRO_CACHE['ts'] < 180.0):
+        p = _AUTO_PRO_CACHE['profile']
+        h = _find_profile_home_dir(p)
+        if h:
+            return p, h
+
+    best_prof = None
+    best_home = None
+    best_score = (-1, -1.0, -1.0)
+    for prof in DEFAULT_PRO_POOL:
+        h = _find_profile_home_dir(prof)
+        if not h:
+            continue
+        g5, gw = 100.0, 100.0
+        try:
+            env = os.environ.copy()
+            env['HOME'] = h
+            r = subprocess.run(
+                [AGY_BIN, '-p', '/usage', '--output-format', 'json'],
+                env=env, capture_output=True, text=True, timeout=20
+            )
+            if r.stdout.strip().startswith('{'):
+                d = json.loads(r.stdout)
+                for g in d.get('command', {}).get('data', {}).get('groups', []):
+                    if 'Gemini' in g.get('name', ''):
+                        for b in g.get('buckets', []):
+                            pct = round(float(b.get('remaining_fraction') or 0.0) * 100.0, 3)
+                            if b.get('id') == 'gemini-5h':
+                                g5 = pct
+                            elif b.get('id') == 'gemini-weekly':
+                                gw = pct
+        except Exception:
+            pass
+        eligible = 1 if (g5 >= 8.0 and gw >= 2.0) else 0
+        score = (eligible, gw, g5)
+        if score > best_score:
+            best_score = score
+            best_prof = prof
+            best_home = h
+
+    if best_prof and best_home:
+        _AUTO_PRO_CACHE['profile'] = best_prof
+        _AUTO_PRO_CACHE['ts'] = now
+        print(
+            '[اختيار حساب Pro للتفريغ] ★ %s (الكوتة الأسبوعية=%.2f%% · 5h=%.2f%%)'
+            % (best_prof, best_score[1], best_score[2]),
+            flush=True
+        )
+        return best_prof, best_home
+    return 'default', None
 
 
 def _resolve_agy_profile_home(part_idx=None):
-    """تحديد مجلد HOME للبروفايل المطلوب (يدعم AGY_PROFILE المفرد أو AGY_PROFILES المتعدد بالتناوب)."""
+    """تحديد مجلد HOME للبروفايل المطلوب:
+    - الافتراضي (دون تحديد أو auto/pro): يختار تلقائياً حساب الـ Pro (بين medmrf19 و brain) ذا الكوتة الأسبوعية الأعلى.
+    - لا يُستخدم الحساب الرئيسي medmrf10 أبداً إلا إذا طُلب صراحة عبر --agy-profile medmrf10.
+    """
     global _PROFILE_RR_COUNTER
     raw = (os.environ.get('AGY_PROFILES') or os.environ.get('AGY_PROFILE') or '').strip()
-    if not raw:
-        return 'default', None
+    if not raw or raw.lower() in ('auto', 'pro', 'default_pro'):
+        return _pick_highest_weekly_pro_profile()
     profs = [p.strip() for p in raw.split(',') if p.strip()]
     if not profs:
-        return 'default', None
+        return _pick_highest_weekly_pro_profile()
     if len(profs) == 1:
         chosen = profs[0]
     elif part_idx is not None:
@@ -290,12 +360,8 @@ def _resolve_agy_profile_home(part_idx=None):
     else:
         chosen = profs[_PROFILE_RR_COUNTER % len(profs)]
         _PROFILE_RR_COUNTER += 1
-    roots = ['/root/.agy-profiles', os.path.expanduser('~/.agy-profiles'), '/Users/macm1pro/.agy-profiles']
-    for r in roots:
-        cand = os.path.join(r, chosen)
-        if os.path.isdir(cand):
-            return chosen, cand
-    return chosen, None
+    h = _find_profile_home_dir(chosen)
+    return chosen, h
 
 
 def _cleanup_agy_conv_db(conv_id, home_dir=None):
