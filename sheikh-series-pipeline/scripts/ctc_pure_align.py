@@ -335,17 +335,17 @@ def interpolate(times, words, min_score, silent_set=None):
                 j_c += 1
             has_prev = idx_c > 0 and any(flags[p] == 'a' for p in range(max(0, idx_c - 3), idx_c))
             has_next = j_c < n and any(flags[q] == 'a' for q in range(j_c, min(n, j_c + 3)))
-            if has_prev and has_next and 1 <= len(spoken_run) <= 3:
+            if has_prev and has_next and 1 <= len(spoken_run) <= 5:
                 prev_a = max(p for p in range(max(0, idx_c - 3), idx_c) if flags[p] == 'a')
                 next_a = min(q for q in range(j_c, min(n, j_c + 3)) if flags[q] == 'a')
                 anchor_gap = times[next_a][0] - times[prev_a][1]
-                if anchor_gap <= 1.25 * len(spoken_run) + 0.85:
+                if anchor_gap <= 1.25 * len(spoken_run) + 1.0:
                     for k in spoken_run:
                         if k in times and times[k][2] is not None:
                             s_k, e_k, sc_k = times[k]
                             dur_k = e_k - s_k
                             max_k = max(0.85, 0.22 * max(1, _norm_len(words[k])))
-                            if 0.035 <= dur_k <= max_k and sc_k >= -6.5:
+                            if 0.02 <= dur_k <= max_k and sc_k >= -6.8:
                                 flags[k] = 'a'
             idx_c = j_c
     known = [i for i in range(n) if flags[i] == 'a']
