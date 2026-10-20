@@ -36,6 +36,7 @@ PROMPT_ECHO_RE = re.compile(
     r'(?:أخرج|إخراج)\s+النص(?:\s+العربي)?\s+فقط\s+بلا\s+أي\s+تعليق(?:\s+أو\s+مقدمة\s+أو\s+خاتمة\.?)?|'
     r'لا\s+تلخ[\u064B-\u065F]*ص،?\s*ولا\s+تعيد\s+أي\s+جملة\s+مرتين(?:\s*،?\s*ولا\s+تكتب\s+حوار[اً]*\s+وهمي[اً]*\.?)?|'
     r'هذا هو المقطع\s*\(\d+\s*من\s*\d+\)\s*من المحاضرة[^\n.!]*[.!]*|'
+    r'اكتب\s+التفريغ\s+النصي(?:\s+الكامل)?[^\n]*|'
     r'النص جاهز ومكتمل[^.\n]*\.|فلنتأكد من دقة\s*:|نستمع بدقة لكلمات الشيخ\s*:|'
     r'لتسمع النص بدقة|دعنا نستمع بدقة|دعنا نتأكد من الكلمات|'
     r'دعنا نتأكد من النص بدقة متناهية[^.\n]*\.?|'
@@ -52,7 +53,7 @@ RESIDUAL_PROMPT_LINE_RE = re.compile(
     r'(?:'
     r'^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:أخرج|إخراج|النص\s+العربي\s+فقط|الآن\s+سأقوم\s+بإخراج\s+النص\s+فقط)[^\n]{0,80}أو\s+مقدمة\s+أو\s+خاتمة[."\')]*\s*'
     r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:ولا\s+يوجد\s+تعليق|النص\s+دقيق\s+جد[اً]+\s+وجاهز\s+للإخراج|كل\s+كلمة\s+مطابقة\s+تمام[اً]+\s+للملف\s+الصوتي)[^\n]{0,90}أو\s+مقدمة\s+أو\s+خاتمة(?:،\s*النص\s+العربي\s+فقط)?[."\')]*\s*'
-    r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:دعنا\s+نتأكد\s+من\s+النص\s+بدقة\s+متناهية|دعنا\s+نراجع\s+التفريغ\s+بدقة|فلنقم\s+بكتابة\s+التفريغ\s+بدقة|كما\s+سمعت\s+التسجيل\s+بدقة\s+متناهية|دعنا\s+نراجع\s+بداية\s+النص\s+ونهايته|البداية\s*:)[^\n]*$'
+    r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*(?:دعنا\s+نتأكد\s+من\s+النص\s+بدقة\s+متناهية|دعنا\s+نراجع\s+التفريغ\s+بدقة|فلنقم\s+بكتابة\s+التفريغ\s+بدقة|كما\s+سمعت\s+التسجيل\s+بدقة\s+متناهية|دعنا\s+نراجع\s+بداية\s+النص\s+ونهايته|البداية\s*:|اكتب\s+التفريغ\s+النصي(?:\s+الكامل)?)[^\n]*$'
     r'|(?:\bأو\s+مقدمة\s+أو\s+خاتمة[."\')]*\s*)?(?:[-*•]|\d+\.)?\s*["\']?\s*لا\s+تلخ[\u064B-\u065F]*ص،?\s*ولا\s+تعيد\s+أي\s+جملة\s+مرتين(?:،?\s*ولا\s+تكتب\s+حوار[اً]*\s+وهمي[اً]*)?[."\')]*\s*(?:->\s*لا\s+نكتب\s+أي\s+كلمة\s+سوى\s+التفريغ\s+النصي\s+العربي\s+للملف\.?)?\s*'
     r'|(?:تنبيه صارم:\s*ينتهي هذا المقطع\s*)?في منتصف الكلام[؛;،,]\s*توق[\u064B-\u065F]*ف فور انتهاء الصوت[^\n]*\s*'
     r'|^\s*(?:[-*•]|\d+\.)?\s*["\']?\s*أو\s+مقدمة\s+أو\s+خاتمة[."\')]+\s*'
@@ -83,10 +84,17 @@ SBV_SRT_LINE_RE = re.compile(
     r'(?m)^(?:\s*\d+\s*\n)?\s*\d+[;:]\d{2}:\d{2}(?:[:.,]\d+)?\s*(?:,|-->)\s*\d+[;:]\d{2}:\d{2}(?:[:.,]\d+)?\s*$'
 )
 SINGLE_TS_LINE_RE = re.compile(
-    r'^\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*$'
+    r'^\s*\[?\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\]?\s*$'
+)
+INLINE_BRACKET_TS_RE = re.compile(
+    r'\[\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\]\s*'
 )
 STAGE_DIR_LINE_RE = re.compile(
-    r'^\s*(?:قارئ\s+يقرأ|القارئ\s+يقرأ|ثم\s+يتكلم\s+الشيخ[^\n:：]*|يتكلم\s+الشيخ[^\n:：]*)\s*[:：]\s*$'
+    r'^\s*(?:قارئ\s+يقرأ|القارئ\s+يقرأ|ثم\s+يتكلم\s+الشيخ[^\n:：]*|يتكلم\s+الشيخ[^\n:：]*|'
+    r'المقدم|الدكتور|الشيخ|السائل|السائلة|المحاور|المحاضر|الضيف)\s*[:：]\s*$'
+)
+INLINE_SPEAKER_PREFIX_RE = re.compile(
+    r'^(\s*(?:[-*•]\s*)?)(?:المقدم|الدكتور|السائل|السائلة|المحاور|الضيف)\s*[:：]\s+'
 )
 INLINE_STAGE_DIR_RE = re.compile(
     r'\(\s*(?:الشيخ\s+يصحح|القارئ\s+يقرأ|يتكلم\s+الشيخ)\s*[:：][^\)]*\)'
@@ -453,17 +461,17 @@ def _strip_single_block_thinking(block):
 
 
 def _strip_timestamped_draft_and_stage_dirs(text, reasons):
-    """إزالة المسودات الموقّتة المكررة (أسطر توقيت 0:08:49.760 متبوعة بالفقرة النهائية النظيفة) وتوجيهات المتحدثين."""
+    """إزالة المسودات الموقّتة المكررة (أسطر توقيت 0:08:49.760 أو [00:00] متبوعة بالفقرة النهائية النظيفة) وتوجيهات المتحدثين."""
     lines = text.splitlines()
     n = len(lines)
     ts_indices = [i for i, l in enumerate(lines) if SINGLE_TS_LINE_RE.match(l.strip())]
     if len(ts_indices) >= 4:
-        # تحديد نطاقات المسودة الموقّتة المتصلة (حيث تتناوب أسطر التوقيت مع جمل قصيرة)
+        # تحديد نطاقات المسودة الموقّتة المتصلة (حيث تتناوب أسطر التوقيت مع ترويسات المتحدثين والجمل القصيرة)
         clusters = []
         cur_start = ts_indices[0]
         cur_end = ts_indices[0]
         for idx in ts_indices[1:]:
-            if idx - cur_end <= 4:
+            if idx - cur_end <= 10:
                 cur_end = idx
             else:
                 clusters.append((cur_start, cur_end))
@@ -473,19 +481,37 @@ def _strip_timestamped_draft_and_stage_dirs(text, reasons):
 
         drop_line_ranges = []
         for c_start, c_end in clusters:
-            # ضم السطر النصي الذي يلي آخر طابع زمني في الكتلة
-            end_line = min(n - 1, c_end + 1)
-            while end_line + 1 < n and not lines[end_line].strip():
-                end_line += 1
             draft_text_lines = [
-                lines[k].strip() for k in range(c_start, end_line + 1)
-                if lines[k].strip() and not SINGLE_TS_LINE_RE.match(lines[k].strip())
+                INLINE_SPEAKER_PREFIX_RE.sub(r'\1', lines[k].strip())
+                for k in range(c_start, min(n, c_end + 6))
+                if lines[k].strip()
+                and not SINGLE_TS_LINE_RE.match(lines[k].strip())
+                and not STAGE_DIR_LINE_RE.match(lines[k].strip())
+                and not PROMPT_ECHO_RE.search(lines[k])
             ]
             draft_norm = _norm_anchor(' '.join(draft_text_lines))
-            after_norm = _norm_anchor('\n'.join(lines[end_line + 1:min(n, end_line + 40)]))
             draft_words = draft_norm.split()
+            anchor_head = ' '.join(draft_words[:5]) if len(draft_words) >= 5 else ''
+
+            # ضم الأسطر النصية وترويسات المتحدثين التي تلي آخر طابع زمني في الكتلة قبل بدء النسخة الثانية أو صدى الموجه
+            end_line = c_end
+            non_empty_seen = 0
+            while end_line + 1 < n and non_empty_seen < 6:
+                nxt_s = lines[end_line + 1].strip()
+                if not nxt_s:
+                    end_line += 1
+                    continue
+                if PROMPT_ECHO_RE.search(nxt_s) or RESIDUAL_PROMPT_LINE_RE.search(nxt_s):
+                    break
+                nxt_norm = _norm_anchor(INLINE_SPEAKER_PREFIX_RE.sub(r'\1', nxt_s))
+                if anchor_head and len(anchor_head) >= 10 and anchor_head in nxt_norm:
+                    break
+                end_line += 1
+                if not STAGE_DIR_LINE_RE.match(nxt_s) and not SINGLE_TS_LINE_RE.match(nxt_s):
+                    non_empty_seen += 1
+
+            after_norm = _norm_anchor('\n'.join(lines[end_line + 1:min(n, end_line + 80)]))
             if len(draft_words) >= 6 and after_norm:
-                anchor_head = ' '.join(draft_words[:5])
                 anchor_mid = ' '.join(draft_words[len(draft_words) // 2:len(draft_words) // 2 + 5])
                 if (len(anchor_head) >= 10 and anchor_head in after_norm) or (len(anchor_mid) >= 10 and anchor_mid in after_norm):
                     # إذا كان السطر السابق لـ c_start جزءاً مكرراً من نهاية الفقرة (مثل "السماع." / "على سـالسماع.")
@@ -517,6 +543,16 @@ def _strip_timestamped_draft_and_stage_dirs(text, reasons):
             if 'METADATA_HEADER' not in reasons:
                 reasons.append('METADATA_HEADER')
             continue
+        if INLINE_BRACKET_TS_RE.search(line):
+            line = INLINE_BRACKET_TS_RE.sub('', line)
+            modified_lines = True
+            if 'SUBTITLE_TIMESTAMPS' not in reasons:
+                reasons.append('SUBTITLE_TIMESTAMPS')
+        if INLINE_SPEAKER_PREFIX_RE.search(line):
+            line = INLINE_SPEAKER_PREFIX_RE.sub(r'\1', line)
+            modified_lines = True
+            if 'METADATA_HEADER' not in reasons:
+                reasons.append('METADATA_HEADER')
         if INLINE_STAGE_DIR_RE.search(line):
             line = INLINE_STAGE_DIR_RE.sub('', line)
             line = re.sub(r'  +', ' ', line)

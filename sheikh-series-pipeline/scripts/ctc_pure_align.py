@@ -187,7 +187,9 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
     active_idx = [gi for gi in range(i0, i1) if src[gi]]
     if not active_idx:
         return {}
-    n_sub_frames = max(1, int(f1) - int(f0))
+    n_sub_frames = int(f1) - int(f0)
+    if n_sub_frames < 12:
+        return {}
     while len(active_idx) > 1:
         text = ' '.join(src[gi] for gi in active_idx)
         tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
@@ -207,6 +209,14 @@ def align_slice(em, tok, words, i0, i1, f0, f1, stride_ms, star, nwords=None, st
     else:
         text = ' '.join(src[gi] for gi in active_idx)
         tokens, text_starred = preprocess_text(text, True, 'ara', 'word', star)
+        char_len = sum(1 if t == '<star>' else len(t) for t in tokens)
+        char_repeats = sum(
+            sum(1 for c_i in range(1, len(t)) if t[c_i] == t[c_i - 1])
+            for t in tokens if t != '<star>'
+        )
+        repeats = sum(1 for k in range(1, len(tokens)) if tokens[k] == tokens[k - 1])
+        if (char_len + char_repeats + repeats + 4) >= n_sub_frames:
+            return {}
     sub = torch.from_numpy(np.array(em[f0:f1], dtype=np.float32, copy=True))
     if star_pen and star_col is not None and 0 <= star_col < sub.shape[1]:
         sub[:, star_col] = sub[:, star_col] + float(star_pen)
@@ -552,6 +562,8 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
         tag, T, C, dur, N, rate, a.star, a.star_pen), flush=True)
 
     while wc < N and fc < T:
+        if (T - fc) < int(1.0 * fps):
+            break
         tc = fc / fps
         fi1 = min(T, fc + int(a.slice * fps))
         if B is not None and fi1 < T:                    # ① اقترب من فاصل صمت طبيعي (بلا أي ASR)
@@ -665,10 +677,13 @@ def align_one_file(em_path, tk_path, out_path, tag, a):
             wc = max(wc, first_i + 1)
         print('[%s]   شريحة %.0f–%.0fث ⇒ ثُبّت %d كلمة حتى %.0fث (معدل %.2f كلمة/ث)' % (
             tag, tc, fi1 / fps, len(new), last_end, rate), flush=True)
+        if fi1 >= T and (last_end >= (T / fps) - 0.8 or (T - fc) < int(1.0 * fps)):
+            fc = T
+            break
 
     # الكلمات المتبقية في الذيل (إن وُجدت) بتوسيع الشريحة إلى أقصى ما تبقّى بشرط وجود أحداث صوتية
     rem_tail_ev = max(0, int(cum_ev[-1] - (int(cum_ev[min(T - 1, int(fc) - 1)]) if int(fc) > 0 else 0))) if T > 0 else 0
-    if wc < N and rem_tail_ev > 0:
+    if wc < N and rem_tail_ev > 0 and (T - int(fc)) >= int(1.0 * fps):
         got = {}
         tail_dur = max(1.0, (T - int(fc)) / fps)
         tail_max_w = max(a.min_words, int(round(max(3.8, min(4.2, avg_rate) * 2.5) * tail_dur))) + a.margin

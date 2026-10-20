@@ -94,38 +94,15 @@ def _ssh_control_path(slot='main'):
 def _ssh_mux_opts(slot='main'):
     return [
         '-o', 'ControlMaster=no',
-        '-o', f'ControlPath={_ssh_control_path(slot)}',
-        '-o', 'ServerAliveInterval=20',
+        '-o', 'ControlPath=none',
+        '-o', 'ServerAliveInterval=15',
         '-o', 'ServerAliveCountMax=2',
         '-o', 'ConnectTimeout=15',
     ]
 
 
 def _ensure_ssh_master(slot='main'):
-    cpath = _ssh_control_path(slot)
-    chk = subprocess.run(
-        ['ssh', '-O', 'check', '-o', f'ControlPath={cpath}', VPS_HOST],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        timeout=5, check=False
-    )
-    if chk.returncode == 0:
-        return True
-    _reset_stale_ssh_mux(slot)
-    res = subprocess.run(
-        [
-            'ssh', '-MNf',
-            '-o', 'ControlMaster=yes',
-            '-o', f'ControlPath={cpath}',
-            '-o', 'ControlPersist=600',
-            '-o', 'ServerAliveInterval=20',
-            '-o', 'ServerAliveCountMax=2',
-            '-o', 'ConnectTimeout=15',
-            VPS_HOST,
-        ],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        timeout=20, check=False
-    )
-    return res.returncode == 0
+    return True
 
 
 PREFETCH_QUEUE = queue.Queue(maxsize=MAX_PREFETCH)
@@ -566,7 +543,7 @@ def main():
                     _mod_mtimes[_mf] = _mt
             raw_txt = open(local_txt, encoding='utf-8', errors='replace').read()
             cleaned_txt, stripped_reasons = sanitize_preamble.strip_preamble_and_header(raw_txt)
-            min_keep_ratio = 0.45 if 'CHUNK_BOUNDARY_OVERLAP' in (stripped_reasons or []) else 0.70
+            min_keep_ratio = 0.40 if any(r in (stripped_reasons or []) for r in ('CHUNK_BOUNDARY_OVERLAP', 'TIMESTAMPED_DRAFT_REPEAT', 'LATIN_PREAMBLE')) else 0.70
             if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt and len(cleaned_txt.split()) >= len(raw_txt.split()) * min_keep_ratio:
                 with open(local_txt, 'w', encoding='utf-8') as tf:
                     tf.write(cleaned_txt)
