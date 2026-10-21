@@ -129,6 +129,7 @@ ssh hermes-vps "grep -c 'فشل تنزيل الصوت' /root/workspace/ytb-build
 
 ## 7. ملفات ذات صلة
 
+- `scripts/pipeline_health_check.py` + [`HANDOFF-monitoring.md`](./HANDOFF-monitoring.md): فحص صحة مسار المحاذاة الكامل (الماك + الـ VPS) بقواعد تنبيه مُختبرة (رمز خروج 0/1/2)، وملف تسليم لوكيل المراقبة الدورية.
 - `scripts/chrome_session_audit.py` (هذه المهارة): تدقيق Chrome للقراءة فقط.
 - `sheikh-series-pipeline/scripts/yt_session_check.py` + `vps_align_feeder.py`: بوابة الجلسة والتراجع والقاطع.
 - `sheikh-series-pipeline/scripts/mac_audio_assist.py` + `launchd/…assist.plist.disabled`: مساعد تنزيل الماك (**معطّل بقرار المالك**؛ يُفعَّل فقط بـ`ALIGN_MAC_ASSIST=1` وبإذن صريح).
