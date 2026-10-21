@@ -1,7 +1,7 @@
 ---
 name: agy-multi-account
-description: "إدارة وتشغيل حسابات متعددة من Antigravity CLI (agy) على السيرفر (hermes-vps) والماك، وفحص كوتة كل حساب مجاناً (0 توكن)، واختيار حساب الـ Pro الأعلى كوتة أسبوعية للتفريغ تلقائياً. استعمل هذه المهارة فوراً عند التعامل مع حسابات agy الثلاثة (medmrf10 الرئيسي، وحسابَي الـ Pro للتفريغ: medmrf19 و brain)."
-version: 1.1.0
+description: "إدارة وتشغيل حسابات متعددة من Antigravity CLI (agy) على الماك والسيرفر (hermes-vps): سجل مرجعي واحد للحسابات (profiles.json) بنموذج: medmrf10 الرئيسي (Ultra، حصة مستقلة)، brain (حصة مستقلة)، وعائلة Google (المدير medmrf19 محظور + 5 أعضاء بحصة مشتركة يتصدرها mb10 مع تناوب عند التعثّر)؛ فحص صحة وكوتة كل حساب مجاناً (0 توكن) مع كشف المحظور والحصص المشتركة، واختيار حساب التفريغ تلقائياً، وتشغيل agy بحساب معزول من أي وكيل أو سكربت دون الاعتماد على ~/.zshrc. استعمل هذه المهارة فوراً عند التعامل مع أي حساب agy."
+version: 1.3.0
 author: Mohamed Boumaraf
 platforms: [linux, macos]
 metadata:
@@ -10,82 +10,117 @@ metadata:
     related_skills: [sheikh-series-pipeline, agy-lean-cli, agy-transcription, agy-worker-orchestration]
 ---
 
-# مهارة إدارة الحسابات المتعددة لـ Antigravity (`agy-multi-account`) وسياسة التفريغ الصوتي
+# مهارة إدارة الحسابات المتعددة لـ Antigravity (`agy-multi-account`)
 
-هذه المهارة هي المرجع الهندسي الموحّد لأي وكيل (سواء على الماك أو على السيرفر `hermes-vps`) للتعامل مع حسابات `agy` الثلاثة المعزولة وتطبيق السياسة الصارمة لتوزيع المهام والكوتة بينها.
+المرجع الهندسي الموحّد لأي وكيل (على الماك أو `hermes-vps`) للتعامل مع حسابات `agy` المعزولة وتوزيع المهام والكوتة بينها.
 
----
-
-## 1. سجل الحسابات المعتمدة والسياسة التشغيلية الصارمة
-
-تُخزَّن جميع الحسابات المعزولة في المسار الموحد:
-- **على السيرفر (`hermes-vps`):** `/root/.agy-profiles/<profile_name>/.gemini/antigravity-cli/`
-- **على الماك (`macOS`):** `/Users/macm1pro/.agy-profiles/<profile_name>/.gemini/antigravity-cli/`
-
-### الحسابات الثلاثة المسجّلة:
-
-1. **`medmrf10` (`medmrf.10@gmail.com` — Google AI Ultra) — الحساب الرئيسي (`Main Account`):**
-   - **الدور:** الحساب الرئيسي للمستخدم والوكيل التفاعلي، مخصّص للجلسات الحوارية، التخطيط، البحث العلمي العميق، وإنشاء الخطب والدروس العلمية المركّبة (`Claude Opus 4.6` / `Gemini 3.1 Pro High`).
-   - **قاعدة الحماية الصارمة:** **يُمنع استخدام `medmrf10` افتراضياً في التفريغ الصوتي (`agy_transcribe.py`) أو المهام الخلفية الغزيرة** حفاظاً على حصته للمهام العلمية التفاعلية.
-
-2. **`medmrf19` (`medmrf.19@gmail.com` — Google AI Pro) — حساب التفريغ الافتراضي (أ):**
-   - **الدور:** حساب عمل ثقيل (`Workhorse Pro`) للتفريغ الصوتي (`gemini-3.8-flash-high`) والفهرسة والمهام الآلية.
-   - **الاختصار في الطرفية:** `medmrf19`
-
-3. **`brain` (`brainthomas555@gmail.com` — Google AI Pro) — حساب التفريغ الافتراضي (ب):**
-   - **الدور:** حساب عمل ثقيل (`Workhorse Pro`) للتفريغ الصوتي (`gemini-3.8-flash-high`) والفهرسة والمهام الآلية.
-   - **الاختصار في الطرفية:** `brain`
+> **المصدر الوحيد للحقيقة:** [`profiles.json`](./profiles.json) (الاسم، البريد، الخطة، الدور، الـ aliases). لا تكتب قائمة الحسابات في أي مكان آخر؛ عدّل الملف ثم أعد توليد الـ aliases (القسم 6).
 
 ---
 
-## 2. القاعدة الافتراضية للتفريغ الصوتي (`Default Transcription Policy`)
+## 1. الأوامر الأساسية (للوكلاء: ابدأ من هنا)
 
-- **الحسابان الافتراضيان للتفريغ هما حسابا الـ Pro (`medmrf19` و `brain`) دون أي تفرقة أو تفضيل مسبق بينهما.**
-- **معيار الاختيار التلقائي:** قبل كل مهمة أو دفعة تفريغ، يتم فحص الكوتة الحية (`/usage` بصفر توكن) لكلٍّ من `medmrf19` و `brain`، و**يُختار تلقائياً الحساب الذي يملك أعلى كوتة أسبوعية متبقية (`gemini-weekly`)** (بشرط أن تكون نافذة الـ 5 ساعات `gemini-5h >= 8%`).
-- **الهدف الهندسي من هذه القاعدة:** ضمان استغلال الحصة الأسبوعية لكلا حسابَي الـ Pro (`medmrf19` و `brain`) بالتوازن الكامل قبل حلول تاريخ التجديد الأسبوعي لكل منهما، دون ترك أحدهما خاملاً بينما يُستنزف الآخر.
-- **التنفيذ الآلي في الكود:**
-  - داخل `agy_transcribe.py`: عند عدم تمرير `--agy-profile` (أو تمرير `--agy-profile auto` أو `--agy-profile pro`)، يقوم `_pick_highest_weekly_pro_profile()` تلقائياً بفحص `medmrf19` و `brain` واختيار صاحب أعلى `gemini-weekly` (مع تحديث الكاش كل 180 ثانية ليبدّل تلقائياً بينهما أثناء العمل الطويل).
-  - عبر أداة `agy_multi_pool.py`:
-    ```bash
-    python3 /Users/macm1pro/REPOS/SKILLS/agy-multi-account/scripts/agy_multi_pool.py --best-transcribe-profile
-    ```
+كل الأوامر عبر `scripts/agy_multi_pool.py` (يعمل على بايثون 3.9+). المسار على الماك: `/Users/macm1pro/REPOS/SKILLS/agy-multi-account/scripts/agy_multi_pool.py`، وعلى السيرفر: `/root/workspace/SKILLS/agy-multi-account/scripts/agy_multi_pool.py`.
+
+| الهدف | الأمر |
+|---|---|
+| فحص صحة كل البروفايلات بدون أي تعديل (التوكن، الصلاحيات، تطابق البريد مع السجل، Keychain) | `--doctor` |
+| كوتة كل الحسابات الحية (0 توكن، بالتوازي، يكشف الحساب المعطّل 🚨) | `--status` (أو `--status --json`) |
+| أفضل حساب تفريغ الآن | `--best-transcribe-profile` |
+| تشغيل `agy` بحساب معزول من أي وكيل/سكربت | `--run <profile> -- <وسائط agy>` |
+| نسخ احتياطي لكل التوكنات / استعادة بروفايل | `--backup` / `--restore <profile>` |
+| نسب توكن Keychain لصاحبه بحسب البريد | `--reconcile-keychain [--dry-run]` |
+| مزامنة الماك ← السيرفر | `--sync-to-vps` |
+| توليد دوال/aliases الـ zsh | `--print-aliases` |
+
+مثال لوكيل (غير تفاعلي) يستدعي حساباً بعينه: 
+
+```bash
+python3 .../agy_multi_pool.py --run brain -- -p "/usage" --output-format json </dev/null
+```
 
 ---
 
-## 3. كيف يعمل عزل الحسابات (`HOME Isolation`) وحلّ Keychain الماك
+## 2. السجل والأدوار والسياسة
 
-يعتمد `agy` على الملف `$HOME/.gemini/antigravity-cli/antigravity-oauth-token`.
-- **على لينكس (`hermes-vps`):** مجرّد تمرير `HOME=/root/.agy-profiles/<profile>` يعزل الحساب عزلاً مطلقاً بنسبة 100%.
-- **على الماك (`macOS`):** عند تسجيل الدخول عبر `/login`، يكتب `agy` التوكن في `macOS Keychain` المشترك (`service="gemini", account="antigravity"`). لذلك:
-  1. دالة `_agy_profile_run` المدمجة في `~/.zshrc` (للأوامر `medmrf10`، `medmrf19`، `brain`) تسحب التوكن تلقائياً من الـ Keychain إلى ملف البروفايل المعزول وتحذف مدخل الـ Keychain المشترك فور الخروج.
-  2. كما يقوم `agy_multi_pool.py` تلقائياً بتشغيل `security delete-generic-password -s gemini -a antigravity` لضمان عدم طغيان أي حساب على الآخر.
+الأدوار في `profiles.json`: `main` | `transcribe` | `family-manager` | `family-member`، والحالة `status`: `active` | `banned` | `ineligible`، ولأعضاء العائلة `failover_order`.
+
+### خريطة الحسابات (الواقع التشغيلي كما أفاد المالك، 2026-10-21)
+
+| الحساب | الدور | الحالة | الحصة | الاستعمال |
+|---|---|---|---|---|
+| `medmrf10` (`medmrf.10@gmail.com`، Ultra) | `main` | active | **مستقلة** | الجلسات التفاعلية والبحث العميق وإنشاء الدروس. **يُمنع** في التفريغ والمهام الخلفية الغزيرة. |
+| `brain` (`brainthomas555@gmail.com`) | `transcribe` | active | **مستقلة** | خانة تفريغ مستقلة. |
+| `medmrf19` (`medmrf.19@gmail.com`) | `family-manager` (**مدير عائلة Google**) | **banned** | (العائلة) | **لا يُستعمل**: معطّل من جوجل (403 مخالفة الشروط). |
+| `mb10` | `family-member` #1 | active | عائلة (مشتركة) | **الحساب العامل الحالي** (بديل `medmrf19`). |
+| `bm10` | `family-member` #2 | active | عائلة (مشتركة) | احتياطي أول إن تعثّر `mb10`. |
+| `mb19` | `family-member` #3 | active | عائلة (مشتركة) | احتياطي ثانٍ. |
+| `medmrfco` | `family-member` #4 | active | عائلة (مشتركة) | احتياطي ثالث. |
+| `animeco` | `family-member` #5 | **ineligible** | عائلة (مشتركة) | خارج التناوب: «not eligible for Antigravity — Verify your account» حتى يُحل في المتصفح. |
+
+> ترتيب التناوب `mb10 ← bm10 ← mb19 ← medmrfco` هو الترتيب المسجَّل في `profiles.json` (`failover_order`) ويمكن تغييره هناك.
+
+### كيف تُفهم «العائلة»
+
+- **مدير + خمسة أعضاء** في عائلة Google واحدة (`medmrf19` هو المدير).
+- **حصة أعضاء العائلة الخمسة مشتركة** (مرصود بالأرقام الخام: كسور `/usage` متطابقة حتى 15 خانة بين `mb10` و`mb19`، وقريبة جداً لـ`bm10` و`medmrfco`، ولحظة التجديد الأسبوعي واحدة بالثانية: `2026-10-27T12:41:36Z` لـ Gemini و`13:42:40Z` لـ Claude؛ وحسابان خاملان استُهلكت حصتهما بسبب عمل الآخرين). **لذلك الأعضاء الخمسة ليسوا 5 أضعاف السعة بل خزان واحد.**
+- **فائدة وجود عدة أعضاء هي الاستمرارية لا السعة:** جوجل **تعاقب الحساب المخالف نفسه لا العائلة كلها** (إفادة المالك، لم أتحقق منها من جهة جوجل). فإذا تعرّض الحساب العامل لمشكلة (حظر/عدم أهلية) ننتقل للتالي في `failover_order` ونكمل العمل على الخزان ذاته.
+- **القفز للتالي يكون عند تعثّر الحساب فقط** (حظر، عدم أهلية، فشل فحص)، **وليس عند انخفاض الكوتة**؛ لأن الأعضاء كلهم يقرؤون الكوتة نفسها فلن يفيد القفز.
+- **الحصص المستقلة الفعلية ثلاث:** `medmrf10` (Ultra) و`brain` وخزان العائلة.
+- **نوع الاشتراك:** `medmrf10` Ultra مؤكد من قائمة نماذجه (`gemini-4-argon-*`، `claude-opus-5-5-*`). أما `brain` والعائلة فلهما قائمة نماذج متطابقة (مستوى Pro أو ما يعادله) ولا يظهر في `/usage` ما يفرّق Pro المدفوع من غيره؛ يُتحقق من صفحة اشتراك Google One.
+
+### قاعدة الاختيار التلقائي للتفريغ
+
+الخانات المستقلة هي: `brain`، والعائلة (كخانة واحدة بسلسلة `mb10 ← bm10 ← mb19 ← medmrfco`). يُفحص `/usage` (صفر توكن) ويُختار صاحب أعلى `gemini-weekly` بشرط `gemini-5h ≥ 8%` و`weekly ≥ 2%` (العتبات في `profiles.json`). المحظور/غير المؤهل يُتخطّى تلقائياً.
+
+### الحالة التشغيلية المرصودة (أعد القياس بـ `--status`)
+
+- `medmrf19`: `PERMISSION_DENIED 403 — disabled in this account for violation of Terms of Service` (محظور).
+- `animeco`: `not eligible for Antigravity — Verify your account`.
 
 ---
 
-## 4. الأوامر السريعة لفحص الكوتة والمزامنة بين الماك والـ VPS
+## 3. كيف يعمل العزل (`HOME Isolation`) وما الذي تعلّمناه عن Keychain
 
-1. **فحص كوتة جميع الحسابات الثلاثة (`medmrf10`, `medmrf19`, `brain`) ومعرفة المرشح الأعلى للتفريغ (بصفر توكن):**
-   ```bash
-   # على الماك:
-   python3 /Users/macm1pro/REPOS/SKILLS/agy-multi-account/scripts/agy_multi_pool.py --status
+يقرأ `agy` توكنه من `$HOME/.gemini/antigravity-cli/antigravity-oauth-token` (JSON: `token`, `id_token`, `auth_method`).
 
-   # على السيرفر hermes-vps:
-   python3 /root/workspace/SKILLS/agy-multi-account/scripts/agy_multi_pool.py --status
-   ```
+- **الفصل:** تمرير `HOME=~/.agy-profiles/<profile>` يعزل الحساب (على الماك والسيرفر).
+- **Keychain الماك:** الجلسة الافتراضية (بدون alias) تخزّن توكنها في Keychain المشترك (`service=gemini, account=antigravity`) بتنسيق **`go-keyring-base64:<base64(json)>`** (وليس JSON خاماً). أما داخل `HOME` معزول فـ`security` لا يجد الـ keychain (`A default keychain could not be found`) فيعود `agy` تلقائياً لحفظ التوكن في ملف البروفايل (يظهر في سجله: `Failed to save token to keyring, falling back to file`).
+- **الخلل القديم (أُصلح):** الدالة القديمة في `~/.zshrc` كانت بعد كل جلسة تكتب أي إدخال Keychain في ملف *البروفايل الذي شُغّل* ثم تحذفه. فإذا كانت الجلسة الافتراضية (`medmrf.10`) مفتوحة، يُكتب توكنها بتنسيق Keychain الخام فوق توكن البروفايل (فيتلف) ويُحذف إدخال الجلسة الافتراضية. الآن: **النسب بحسب البريد لا بحسب من شُغّل آخراً، ولا حذف تلقائي**، ولا يُستبدل التوكن إلا بتوكن أحدث، مع نسخة `.bak.<وقت>` قبل أي كتابة.
+- **`agy -p` يتجمد مع stdin أنبوبي:** عند الاستدعاء من وكيل/cron يبقى `stdin` أنبوباً مفتوحاً فيعلق `agy -p /usage` بلا مخرجات. كل استدعاءات `/usage` في هذه المهارة وفي `sheikh-series-pipeline` تمرّر الآن `stdin=DEVNULL`. **أي سكربت جديد يستدعي `agy -p` يجب أن يفعل الشيء نفسه** (أو يضيف `</dev/null`).
 
-2. **الحصول على اسم حساب الـ Pro الأعلى كوتة أسبوعية للتفريغ برمجياً:**
-   ```bash
-   python3 /root/workspace/SKILLS/agy-multi-account/scripts/agy_multi_pool.py --best-transcribe-profile
-   ```
+---
 
-3. **مزامنة جميع البروفايلات (`medmrf10`, `medmrf19`, `brain`) من الماك إلى السيرفر `hermes-vps`:**
-   ```bash
-   python3 /Users/macm1pro/REPOS/SKILLS/agy-multi-account/scripts/agy_multi_pool.py --sync-to-vps
-   ```
+## 4. القاعدة الافتراضية للتفريغ الصوتي
 
-4. **تشغيل التفريغ الصوتي (`agy_transcribe.py`) بالوضع الافتراضي الذكي (يختار تلقائياً الأعلى أسبوعياً بين `medmrf19` و `brain`):**
-   ```bash
-   python3 /root/workspace/SKILLS/sheikh-series-pipeline/scripts/agy_transcribe.py \
-     /root/workspace/ytb/<sheikh>/<series> \
-     --model gemini-3.8-flash-high
-   ```
+- بلا `--agy-profile` (أو `auto`/`pro`) يختار `agy_transcribe.py` بين خانتَي `brain` والعائلة صاحبَ أعلى `gemini-weekly` (كاش 180ث). داخل العائلة يُستعمل `mb10` ما دام سليماً، وإن أُصيب بحظر/عدم أهلية يُنتقل تلقائياً إلى `bm10` ثم `mb19` ثم `medmrfco` (يطبع `[تناوب العائلة] ... الانتقال للتالي`).
+- الحساب المعطّل أو غير المؤهل لا يُختار أبداً، ولا يبقى 100/100 افتراضياً.
+- `--best-transcribe-profile` يعيد الاسم المختار؛ وبلا مرشّح مؤهل يطبع تحذيراً على stderr ويعيد الأعلى نسبةً فقط. `--status` يعرض `(قُفز عن: ...)` إن حدث تناوب.
+- ثابت `FAMILY_FAILOVER` في `agy_transcribe.py` ومفتاح `failover_order` في `profiles.json` يجب أن يتطابقا (السكربت لا يقرأ السجل مباشرة لأنه يعمل أيضاً على السيرفر).
+
+---
+
+## 5. الأعطال الشائعة ← الحل
+
+| العرَض | السبب المرجّح | الحل |
+|---|---|---|
+| `agy -p` يعلّق بلا مخرجات | `stdin` أنبوبي | أضف `</dev/null` أو `stdin=DEVNULL` |
+| `--status` يعرض `⚠ فشل فحص الكوتة: disabled` / `🚨` | الحساب معطّل من جوجل (403) | لا تستعمله؛ استئناف يدوي |
+| `--doctor`: `ملف التوكن تالف أو ليس JSON` | كُتب إدخال Keychain الخام فوقه (الدالة القديمة) | `--restore <profile>` من `~/.agy-profiles/.backups/` أو `/login` من جديد |
+| `--doctor`: `التوكن لحساب X بينما السجل يقول Y` | توكن في بروفايل خطأ | `--restore` أو `/login` بالحساب الصحيح |
+| `mb10: command not found` من وكيل | الـ aliases في zsh التفاعلي فقط | استعمل `--run <profile> --` أو `zsh -i -c '...'` |
+| `You are not logged into Antigravity` في أول سطور سجل جلسة | عادي (سباق تهيئة)، تتبعه `Auth succeeded` | تجاهل إن نجحت المصادقة |
+
+---
+
+## 6. الـ aliases في zsh (مولَّدة من السجل)
+
+`~/.zshrc` يحتوي سطراً واحداً يحمّل `~/.agy-aliases.zsh`. عند إضافة/تعديل حساب في `profiles.json`:
+
+```bash
+python3 /Users/macm1pro/REPOS/SKILLS/agy-multi-account/scripts/agy_multi_pool.py --print-aliases > ~/.agy-aliases.zsh
+```
+
+ثم افتح طرفية جديدة (الطرفيات المفتوحة تحتفظ بالتعريف القديم).
+
+الاختبارات: `python3 -m unittest discover -s agy-multi-account/tests -v` (لا تلمس الحسابات الحقيقية ولا Keychain).

@@ -1,0 +1,108 @@
+{
+  "_comment": "المصدر الوحيد للحقيقة لحسابات agy. يقرؤه agy_multi_pool.py ويولّد منه aliases الـ zsh (--print-aliases). لإضافة حساب: أضف مدخلاً هنا فقط. role: main | transcribe | family-member | family-manager. status: active | banned | ineligible. لا تضع توكنات هنا. الحسابات غير المعلنة تُسجَّل ببصمة email_sha256 (SHA-256 للبريد بحروف صغيرة) بدل البريد لأن المستودع عام.",
+  "main": "medmrf10",
+  "transcribe_pool_min_5h_pct": 8.0,
+  "transcribe_pool_min_weekly_pct": 2.0,
+  "groups": {
+    "family": {
+      "_comment": "عائلة Google: المدير medmrf19 (محظور) + 5 أعضاء. حصة الأعضاء مشتركة (مرصودة بالأرقام الخام) فلا تضيف سعة. الغرض من وجودهم الاستمرارية: يُستعمل الأول السليم بحسب failover_order، وإن عُوقب حسابٌ بعينه ننتقل للتالي (جوجل تعاقب الحساب نفسه لا العائلة بحسب إفادة المالك).",
+      "shared_quota": true,
+      "use_for": "transcribe",
+      "failover": "on-ban"
+    }
+  },
+  "profiles": {
+    "medmrf10": {
+      "email": "medmrf.10@gmail.com",
+      "tier": "Ultra",
+      "role": "main",
+      "status": "active",
+      "aliases": [
+        "medmrf10",
+        "lss"
+      ],
+      "note": "الحساب الرئيسي التفاعلي (Ultra). حصة مستقلة. يُمنع في التفريغ والمهام الخلفية الغزيرة."
+    },
+    "brain": {
+      "email": "brainthomas555@gmail.com",
+      "tier": "Pro",
+      "role": "transcribe",
+      "status": "active",
+      "aliases": [
+        "brain"
+      ],
+      "note": "حساب تفريغ مستقل بحصته الخاصة."
+    },
+    "medmrf19": {
+      "email": "medmrf.19@gmail.com",
+      "tier": "Pro",
+      "role": "family-manager",
+      "group": "family",
+      "status": "banned",
+      "aliases": [
+        "medmrf19"
+      ],
+      "note": "مدير عائلة Google. معطّل من جوجل (403 مخالفة الشروط). لا يُستعمل."
+    },
+    "mb10": {
+      "tier": null,
+      "role": "family-member",
+      "group": "family",
+      "failover_order": 1,
+      "status": "active",
+      "aliases": [
+        "mb10"
+      ],
+      "note": "عضو عائلة — الحساب العامل الحالي (بديل medmrf19).",
+      "email_sha256": "a23e058915037620b4517b2c6c1b40e846f187eaaf37a7abc130bd7e2b2e0ac0"
+    },
+    "bm10": {
+      "tier": null,
+      "role": "family-member",
+      "group": "family",
+      "failover_order": 2,
+      "status": "active",
+      "aliases": [
+        "bm10"
+      ],
+      "note": "عضو عائلة — احتياطي أول إن تعثّر mb10.",
+      "email_sha256": "1e96fd0b016d4995ebba84af3ce0889aa81522c197f3b8ad5f4caf5b60ee6fef"
+    },
+    "mb19": {
+      "tier": null,
+      "role": "family-member",
+      "group": "family",
+      "failover_order": 3,
+      "status": "active",
+      "aliases": [
+        "mb19"
+      ],
+      "note": "عضو عائلة — احتياطي ثانٍ.",
+      "email_sha256": "469f7270bd20515c341a8b02e8202bea5626392bf5e1a11f02200ab66c5244f8"
+    },
+    "medmrfco": {
+      "tier": null,
+      "role": "family-member",
+      "group": "family",
+      "failover_order": 4,
+      "status": "active",
+      "aliases": [
+        "medmrfco"
+      ],
+      "note": "عضو عائلة — احتياطي ثالث.",
+      "email_sha256": "c0fe0357df3bc4db87eb6117346ab018a633afc8f393d6e86f8f0393cda104b7"
+    },
+    "animeco": {
+      "tier": null,
+      "role": "family-member",
+      "group": "family",
+      "failover_order": 5,
+      "status": "ineligible",
+      "aliases": [
+        "animeco"
+      ],
+      "note": "عضو عائلة — غير مؤهل لـ Antigravity (Verify your account). خارج التناوب حتى يُحل.",
+      "email_sha256": "cd033f7339888a25d700077522424a982ad549e40d0ceb0aa090851666a86d7e"
+    }
+  }
+}
