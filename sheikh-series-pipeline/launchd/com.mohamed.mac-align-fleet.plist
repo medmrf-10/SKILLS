@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mohamed.mac-align-fleet</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>/Users/macm1pro/venvs/ctc/bin/python</string>
+        <string>-u</string>
+        <string>/Users/macm1pro/workspace/ytb-build/mac_align_fleet.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/macm1pro/workspace/ytb-build</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/macm1pro/.hermes/node/bin</string>
+        <key>HOME</key>
+        <string>/Users/macm1pro</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>MAC_ALIGN_BATCH_SIZE</key>
+        <string>3</string>
+        <key>MAC_ALIGN_COOLDOWN_S</key>
+        <string>3.5</string>
+        <key>MAC_ALIGN_PREFETCH</key>
+        <string>6</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/macm1pro/workspace/ytb-build/mac_align_fleet.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/macm1pro/workspace/ytb-build/mac_align_fleet.log</string>
+</dict>
+</plist>

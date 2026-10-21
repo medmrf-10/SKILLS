@@ -35,6 +35,150 @@ FLAGS = [
 
 LOCK = threading.Lock()
 
+# ── تنزيل عبر الماك + التراجع الزمني + قاطع الدائرة (الدرس: 2026-10-21 كوكيز يوتيوب تالفة وعنوان الـ VPS مشبوه) ──
+# مجلد «طلبات التنزيل»: عندما يفشل تنزيل الـ VPS يُكتب هنا <key>.need.json فيتولاه mac_audio_assist.py على الماك
+# (عنوان منزلي لا يحتاج كوكيز) ويرفع Opus الجاهز إلى BRIDGE_DIR.
+NEED_DIR = os.environ.get('ALIGN_NEED_DIR', '/root/workspace/align-bridge/need_mac')
+# التسليم للماك معطّل افتراضياً (قرار المالك 2026-10-21: لا نخاطر بعنوان الماك عند يوتيوب). فعّله بـ ALIGN_MAC_ASSIST=1.
+MAC_ASSIST_ENABLED = os.environ.get('ALIGN_MAC_ASSIST', '0') == '1'
+YT_BLOCK_AFTER = int(os.environ.get('ALIGN_YT_BLOCK_AFTER', '3'))     # إخفاقات يوتيوب متتالية قبل فتح القاطع
+YT_BLOCK_SECONDS = int(os.environ.get('ALIGN_YT_BLOCK_S', '1800'))    # مدة التوقف عن ضرب يوتيوب من الـ VPS
+KEY_BACKOFF_BASE_S = 300                                              # تراجع كل درس فاشل: 5د ثم 10د ثم 20د ... بحد أقصى 6 ساعات
+KEY_BACKOFF_MAX_S = 21600
+_YT_STATE = {'streak': 0, 'blocked_until': 0.0}
+_KEY_FAILS = {}  # key -> (count, next_try_ts)
+
+
+def need_path(key):
+    return os.path.join(NEED_DIR, key + '.need.json')
+
+
+def key_in_cooldown(key, now=None):
+    now = time.time() if now is None else now
+    with LOCK:
+        rec = _KEY_FAILS.get(key)
+    return bool(rec and rec[1] > now)
+
+
+def note_key_failure(key, now=None):
+    now = time.time() if now is None else now
+    with LOCK:
+        cnt = _KEY_FAILS.get(key, (0, 0.0))[0] + 1
+        delay = min(KEY_BACKOFF_MAX_S, KEY_BACKOFF_BASE_S * (2 ** (cnt - 1)))
+        _KEY_FAILS[key] = (cnt, now + delay)
+    return delay
+
+
+def note_key_success(key):
+    with LOCK:
+        _KEY_FAILS.pop(key, None)
+
+
+# ── بوابة جلسة يوتيوب: لا نضرب يوتيوب إطلاقاً ما دام Chrome الدائم غير مسجَّل الدخول (كوكيزه ميتة) ──
+YT_CHECK_PY = os.environ.get('ALIGN_YT_CHECK_PY', '/root/venvs/asr/bin/python')
+YT_CHECK_SCRIPT = os.environ.get('ALIGN_YT_CHECK_SCRIPT', '/root/workspace/ytb-build/yt_session_check.py')
+YT_CHECK_TTL_S = int(os.environ.get('ALIGN_YT_CHECK_TTL_S', '300'))
+YT_DEFER_S = int(os.environ.get('ALIGN_YT_DEFER_S', '300'))
+YT_WARN_EVERY_S = 600
+_YT_SESSION = {'ok': True, 'checked_at': 0.0, 'warned_at': 0.0}
+
+
+def _run_session_check():
+    """يعيد True (مسجَّل) / False (غير مسجَّل). إن تعذّر الفحص نفسه (CDP أو السكربت) لا نحجب: نعيد True ونترك القاطع يتصرف."""
+    try:
+        r = subprocess.run([YT_CHECK_PY, YT_CHECK_SCRIPT], capture_output=True, text=True, timeout=45,
+                           stdin=subprocess.DEVNULL)
+    except Exception:
+        return True
+    if r.returncode == 10:
+        return False
+    return True
+
+
+def youtube_session_ok(now=None, check=None):
+    """مخزَّن مؤقتاً YT_CHECK_TTL_S ثانية. عند الانتقال إلى «غير مسجَّل» يُسجَّل سطر واضح (كل ١٠ دقائق كحد أقصى)."""
+    now = time.time() if now is None else now
+    with LOCK:
+        if now - _YT_SESSION['checked_at'] < YT_CHECK_TTL_S:
+            return _YT_SESSION['ok']
+    ok = (check or _run_session_check)()
+    with LOCK:
+        was = _YT_SESSION['ok']
+        _YT_SESSION['ok'] = ok
+        _YT_SESSION['checked_at'] = now
+        warn = (not ok) and (now - _YT_SESSION['warned_at'] >= YT_WARN_EVERY_S)
+        if warn:
+            _YT_SESSION['warned_at'] = now
+    if warn:
+        log('⛔ Chrome (CDP:9222) غير مسجَّل الدخول إلى يوتيوب ⇒ كوكيزه ميتة ولن أضرب يوتيوب. '
+            'سجّل الدخول يدوياً عبر noVNC (ssh -L 6080:127.0.0.1:6080 hermes-vps ثم http://localhost:6080) وسيستأنف المغذّي تلقائياً.')
+    if ok and not was:
+        log('✓ عادت جلسة يوتيوب في Chrome — استئناف التنزيل')
+    return ok
+
+
+def defer_key(key, seconds=None, now=None):
+    """يؤجّل درساً دون زيادة عدّاد الإخفاق (لسبب خارجي كالجلسة الميتة)، كي لا يعلق الطابور ولا يتضخم التراجع."""
+    now = time.time() if now is None else now
+    with LOCK:
+        cnt = _KEY_FAILS.get(key, (0, 0.0))[0]
+        _KEY_FAILS[key] = (cnt, now + (YT_DEFER_S if seconds is None else seconds))
+
+
+def note_yt_result(ok, now=None):
+    """يسجّل نتيجة محاولة يوتيوب من الـ VPS؛ بعد YT_BLOCK_AFTER إخفاقات متتالية يُفتح القاطع فيتوقف الـ VPS عن المحاولة."""
+    now = time.time() if now is None else now
+    with LOCK:
+        if ok:
+            _YT_STATE['streak'] = 0
+            _YT_STATE['blocked_until'] = 0.0
+            return
+        _YT_STATE['streak'] += 1
+        if _YT_STATE['streak'] >= YT_BLOCK_AFTER:
+            _YT_STATE['blocked_until'] = now + YT_BLOCK_SECONDS
+            _YT_STATE['streak'] = 0
+
+
+def yt_blocked(now=None):
+    now = time.time() if now is None else now
+    with LOCK:
+        return _YT_STATE['blocked_until'] > now
+
+
+def request_mac_download(item):
+    """يترك طلب تنزيل للماك (لا يكرّر إن كان موجوداً). يعيد True إن أُنشئ الآن."""
+    if not MAC_ASSIST_ENABLED:
+        return False
+    os.makedirs(NEED_DIR, exist_ok=True)
+    path = need_path(item['key'])
+    if os.path.exists(path):
+        return False
+    meta = {k: item.get(k) for k in ('key', 'vid', 'url', 'stem', 'sheikh', 'row', 'txt_path', 'dur_s')}
+    meta['requested_at'] = time.time()
+    with open(path + '.tmp', 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    os.replace(path + '.tmp', path)
+    return True
+
+
+def cleanup_need_files(allowed_vids=None):
+    """يحذف طلبات التنزيل المنتهية: المحاذاة تمت، أو جهز الماك job، أو النص اختفى، أو الدرس خرج من المختارات."""
+    for npath in glob.glob(os.path.join(NEED_DIR, '*.need.json')):
+        try:
+            with open(npath, encoding='utf-8') as nf:
+                job = json.load(nf)
+            key = job.get('key', '')
+            txt_p = job.get('txt_path', '')
+            al_p = txt_p[:-4] + '.align.json' if txt_p.endswith('.txt') else ''
+            done = bool(al_p and os.path.exists(al_p) and os.path.getsize(al_p) > 200)
+            fulfilled = os.path.exists(os.path.join(BRIDGE_DIR, key + '.job.json'))
+            gone = not os.path.exists(txt_p)
+            out = bool(allowed_vids is not None and job.get('vid') and job['vid'] not in allowed_vids)
+            if done or fulfilled or gone or out:
+                os.remove(npath)
+        except Exception:
+            pass
+
 
 def log(msg):
     print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}] [align-feeder] {msg}', flush=True)
@@ -146,7 +290,7 @@ def cleanup_completed_in_bridge(allowed_vids=None):
     now = time.time()
     for p in glob.glob(os.path.join(BRIDGE_DIR, '*.part*')) + glob.glob(os.path.join(BRIDGE_DIR, '*.tmp')):
         try:
-            if now - os.path.getmtime(p) > 120:
+            if now - os.path.getmtime(p) > 900:  # كانت 120ث؛ رفع الماك لملف Opus عبر الشبكة المنزلية قد يستغرق أكثر
                 os.remove(p)
         except OSError:
             pass
@@ -205,6 +349,15 @@ def prepare_one_opus(item):
                     raw_audio = raw_dl
             if not raw_audio:
                 url = direct_url if (direct_url and direct_url.startswith('http')) else f'https://www.youtube.com/watch?v={item["vid"]}'
+                if not youtube_session_ok():
+                    defer_key(key)  # لا طلب إلى يوتيوب ولا ملف need ولا عدّاد إخفاق؛ أجّله وانتقل لغيره (قد لا يحتاج يوتيوب)
+                    return False
+                if yt_blocked():
+                    # القاطع مفتوح: لا نضرب يوتيوب من عنوان الـ VPS؛ نسلّم الدرس للماك إن كان التسليم مفعّلاً
+                    if request_mac_download(item):
+                        log(f'↪ سُلّم للماك (قاطع يوتيوب مفتوح): {key}')
+                    note_key_failure(key)  # يمنع إعادة اختياره فوراً (وإلا يدور الطابور على نفس الدروس)
+                    return False
                 tmpl = os.path.join(tmpd, 'raw.%(ext)s')
                 cmd = [
                     YTDLP, '--no-warnings', '--no-playlist',
@@ -225,8 +378,13 @@ def prepare_one_opus(item):
                         )
                         cands = glob.glob(os.path.join(tmpd, 'raw.*'))
                 if not cands:
-                    log(f'✗ فشل تنزيل الصوت لـ {key}')
+                    note_yt_result(False)
+                    delay = note_key_failure(key)
+                    made = request_mac_download(item)
+                    log(f'✗ فشل تنزيل الصوت لـ {key} (تراجع {int(delay // 60)}د{" · طُلب من الماك" if made else ""})')
                     return False
+                note_yt_result(True)
+                note_key_success(key)
                 raw_audio = cands[0]
 
         tmp_opus = os.path.join(tmpd, 'out.opus')
@@ -280,26 +438,32 @@ def main():
         try:
             pending, aligned_cnt, allowed_vids = build_ordered_lessons()
             cleanup_completed_in_bridge(allowed_vids)
+            cleanup_need_files(allowed_vids)
             ready_jobs = glob.glob(os.path.join(BRIDGE_DIR, '*.job.json'))
+            need_cnt = len(glob.glob(os.path.join(NEED_DIR, '*.need.json')))
             state = {
                 'updated_at': datetime.now().isoformat(),
                 'aligned_in_curated': aligned_cnt,
                 'pending_with_txt': len(pending),
                 'ready_in_bridge': len(ready_jobs),
+                'need_mac_download': need_cnt,
+                'yt_blocked_until': _YT_STATE['blocked_until'],
+                'yt_session_ok': _YT_SESSION['ok'],
             }
             with open(STATE_FILE, 'w', encoding='utf-8') as sf:
                 json.dump(state, sf, ensure_ascii=False, indent=2)
 
-            if len(ready_jobs) >= MAX_BUFFER or not pending:
+            if len(ready_jobs) + need_cnt >= MAX_BUFFER or not pending:
                 time.sleep(10)
                 continue
 
             to_prepare = []
             for item in pending:
                 jpath = os.path.join(BRIDGE_DIR, item['key'] + '.job.json')
-                if not os.path.exists(jpath):
+                # نتخطى: الجاهز، وما ينتظر الماك، وما هو في فترة تراجع (حتى لا يعلق الطابور على أول دروس فاشلة)
+                if not os.path.exists(jpath) and not os.path.exists(need_path(item['key'])) and not key_in_cooldown(item['key']):
                     to_prepare.append(item)
-                if len(ready_jobs) + len(to_prepare) >= MAX_BUFFER:
+                if len(ready_jobs) + need_cnt + len(to_prepare) >= MAX_BUFFER:
                     break
 
             if not to_prepare:
