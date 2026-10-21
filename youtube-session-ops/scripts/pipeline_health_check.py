@@ -17,7 +17,10 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 
-D = os.path.expanduser('~/workspace/ytb-build')
+_default_d = os.path.expanduser('~/workspace/ytb-build')
+if not os.path.isdir(_default_d) and os.path.isdir('/Users/macm1pro/workspace/ytb-build'):
+    _default_d = '/Users/macm1pro/workspace/ytb-build'
+D = os.environ.get('YTB_BUILD_DIR', _default_d)
 WINDOW_MIN = 60
 STALE_MIN = 20          # حالة المغذّي/الماك التي لم تتجدد منذ هذه المدة تُعدّ متجمدة
 
