@@ -239,6 +239,53 @@ def read_keychain_token():
     return decode_keyring_value(r.stdout)
 
 
+def read_profile_keychain_token(pdir):
+    """يقرأ توكن Keychain المعزول للبروفايل (${pdir}/Library/Keychains/login.keychain-db) إن وُجد."""
+    if sys.platform != 'darwin':
+        return None
+    kc_db = os.path.join(pdir, 'Library', 'Keychains', 'login.keychain-db')
+    if not os.path.exists(kc_db):
+        return None
+    r = subprocess.run(
+        ['security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT, '-w', kc_db],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    if r.returncode != 0:
+        return None
+    return decode_keyring_value(r.stdout)
+
+
+def reconcile_isolated_keychains(dry_run=False):
+    """يستخرج التوكنات من سلاسل مفاتيح البروفايلات المعزولة (بعد /login داخل alias) إلى antigravity-oauth-token."""
+    if not os.path.isdir(PROFILES_ROOT):
+        return []
+    reg = load_registry()['profiles']
+    synced = []
+    for name in sorted(os.listdir(PROFILES_ROOT)):
+        if name.startswith('.'):
+            continue
+        pdir = os.path.join(PROFILES_ROOT, name)
+        if not os.path.isdir(pdir):
+            continue
+        kc = read_profile_keychain_token(pdir)
+        if not kc:
+            continue
+        email = email_from_token_dict(kc)
+        meta = reg.get(name, {})
+        if meta_has_email(meta) and email and not meta_email_matches(meta, email):
+            continue
+        cur = read_token_file(pdir)
+        kc_exp, cur_exp = token_expiry(kc), token_expiry(cur or {})
+        need = (cur is None) or (email_from_token_dict(cur) != email) or (
+            kc_exp is not None and (cur_exp is None or kc_exp > cur_exp)
+        )
+        if need:
+            if not dry_run:
+                _write_token_atomic(pdir, kc)
+            synced.append({'profile': name, 'email': email, 'status': 'would-update' if dry_run else 'updated'})
+    return synced
+
+
 def delete_keychain_entry():
     if sys.platform == 'darwin':
         subprocess.run(
@@ -297,14 +344,23 @@ def find_owner_profile(email, profiles):
 
 
 def reconcile_keychain(delete=False, dry_run=False, keychain_tok=None):
-    """ينسب توكن Keychain المشترك إلى البروفايل صاحبه بحسب البريد (لا بحسب من شُغّل آخراً).
+    """ينسب توكن Keychain المشترك (وتوكنات Keychains المعزولة) إلى البروفايل صاحبه بحسب البريد.
 
     - يكتب الملف فقط إذا كان توكن البروفايل مفقوداً/تالفاً أو كان توكن Keychain أحدث (انتهاء أبعد).
     - لا يحذف إدخال Keychain إلا مع delete=True وبعد التأكد أن نسخة البروفايل محدَّثة وبنفس البريد.
     يعيد قاموساً بالنتيجة: status ∈ none|unowned|unchanged|updated|would-update، و profile و email.
     """
+    isolated_synced = reconcile_isolated_keychains(dry_run=dry_run) if keychain_tok is None else []
     kc = keychain_tok if keychain_tok is not None else read_keychain_token()
     if not kc:
+        if isolated_synced:
+            first = isolated_synced[0]
+            return {
+                'status': first['status'],
+                'profile': first['profile'],
+                'email': first['email'],
+                'isolated_synced': isolated_synced,
+            }
         return {'status': 'none'}
     email = email_from_token_dict(kc)
     profiles = list_profiles(register_default=False)

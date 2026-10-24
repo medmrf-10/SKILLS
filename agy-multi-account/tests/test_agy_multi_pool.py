@@ -347,6 +347,31 @@ class ReconcileTests(unittest.TestCase):
             self.assertIs(r.call_args.kwargs['stdin'], subprocess.DEVNULL)
             self.assertEqual(r.call_args.kwargs['env']['HOME'], '/tmp/h')
 
+    def test_isolated_keychain_reconciled_to_profile_token_file(self):
+        pdir = os.path.join(pool.PROFILES_ROOT, 'p20')
+        os.makedirs(pdir, exist_ok=True)
+        kc = make_token('p20@x.com')
+        with mock.patch.object(pool, 'read_profile_keychain_token', side_effect=lambda d: kc if d == pdir else None), \
+             mock.patch.object(pool, 'read_keychain_token', return_value=None):
+            res = pool.reconcile_keychain()
+        self.assertEqual(res['status'], 'updated')
+        self.assertEqual(res['profile'], 'p20')
+        self.assertEqual(pool.read_token_file(pdir), kc)
+
+    def test_sync_to_vps_skips_profiles_with_sync_false(self):
+        with open(self.reg_path, 'w') as f:
+            json.dump({'main': 'm10', 'profiles': {
+                'm10': {'email': 'main@x.com', 'role': 'main'},
+                'ram': {'email': 'ram@x.com', 'role': 'main', 'sync_to_vps': False},
+            }}, f)
+        self.put('m10', make_token('main@x.com'))
+        self.put('ram', make_token('ram@x.com'))
+        with mock.patch.object(pool.subprocess, 'run') as r:
+            pool.cmd_sync_to_vps('hermes-vps')
+            called_cmds = [' '.join(c.args[0]) for c in r.call_args_list]
+            self.assertTrue(any('/root/.agy-profiles/m10/' in c for c in called_cmds))
+            self.assertFalse(any('/root/.agy-profiles/ram/' in c for c in called_cmds))
+
 
 class EmailHashTests(unittest.TestCase):
     def test_hash_is_case_and_space_insensitive(self):
