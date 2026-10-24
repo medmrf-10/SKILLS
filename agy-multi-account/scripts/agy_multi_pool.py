@@ -398,23 +398,8 @@ def parse_usage_response(resp_text):
     return res
 
 
-def ensure_profile_keychain(pdir):
-    """يضمن وجود رابط Library/Keychains في بيئة macOS لمنع ظهور نافذة Keychain Not Found."""
-    if sys.platform == 'darwin':
-        real_kc = '/Users/macm1pro/Library/Keychains'
-        if os.path.isdir(real_kc):
-            kc_link = os.path.join(pdir, 'Library', 'Keychains')
-            if not os.path.exists(kc_link):
-                os.makedirs(os.path.join(pdir, 'Library'), exist_ok=True)
-                try:
-                    os.symlink(real_kc, kc_link)
-                except OSError:
-                    pass
-
-
 def run_agy(pdir, args, timeout=USAGE_TIMEOUT):
     """يشغّل agy ببروفايل معزول وstdin=DEVNULL (وإلا يتجمد مع الأنابيب). يعيد (stdout, stderr, returncode|None عند المهلة)."""
-    ensure_profile_keychain(pdir)
     env = os.environ.copy()
     env['HOME'] = pdir
     try:
@@ -770,9 +755,6 @@ def render_aliases():
         '  local prof="$1"; shift',
         '  local pdir="%s/${prof}"' % PROFILES_ROOT,
         '  mkdir -p "${pdir}/.gemini/antigravity-cli"',
-        '  if [ -d "/Users/macm1pro/Library/Keychains" ] && [ ! -e "${pdir}/Library/Keychains" ]; then',
-        '    mkdir -p "${pdir}/Library" && ln -s /Users/macm1pro/Library/Keychains "${pdir}/Library/Keychains"',
-        '  fi',
         '  HOME="${pdir}" agy "$@"',
         '  local rc=$?',
         '  # مصالحة Keychain بحسب البريد (تنسب التوكن لصاحبه ولا تحذف شيئاً)',
