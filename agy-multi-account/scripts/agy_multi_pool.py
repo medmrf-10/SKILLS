@@ -181,7 +181,10 @@ def email_from_token_dict(tok):
             payload = idt.split('.')[1]
             payload += '=' * (-len(payload) % 4)
             claims = json.loads(base64.urlsafe_b64decode(payload))
-            return claims.get('email') or None
+            if claims.get('email'):
+                return claims['email']
+        if tok.get('id_token_email'):
+            return tok['id_token_email']
     except Exception:
         pass
     return None
