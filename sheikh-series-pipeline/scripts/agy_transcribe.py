@@ -273,7 +273,28 @@ def build_prompt(audio_filename, sheikh='', series='', title='', part_idx=None, 
 
 _PROFILE_RR_COUNTER = 0
 _AUTO_PRO_CACHE = {'profile': None, 'ts': 0.0}
-DEFAULT_PRO_POOL = ('medmrf19', 'brain')
+# خانات التفريغ المستقلة: brain بحصته، وعائلة Google (حصة مشتركة بين أعضائها) كخانة واحدة يتصدرها mb10.
+# عند تعثّر الرأس (حظر/عدم أهلية) ننتقل للتالي بالترتيب؛ جوجل تعاقب الحساب نفسه لا العائلة. المصدر: agy-multi-account/profiles.json
+DEFAULT_PRO_POOL = ('mb10', 'brain')
+FAMILY_FAILOVER = {'mb10': ('bm10', 'mb19', 'medmrfco')}
+_PROFILE_CALL_COUNTS = {}
+
+
+def _is_profile_disabled(prof_name):
+    if not prof_name:
+        return False
+    return os.path.exists(f'/tmp/agy_profile_disabled_{prof_name}.flag')
+
+
+def _trip_profile_circuit_breaker(prof_name, reason):
+    flag = f'/tmp/agy_profile_disabled_{prof_name or "default"}.flag'
+    try:
+        with open(flag, 'w', encoding='utf-8') as f:
+            f.write(f'{time.time()}: {reason}\n')
+    except OSError:
+        pass
+    print(f'\n[🚨 قاطع طوارئ فوري CIRCUIT BREAKER] تم إيقاف الحساب ({prof_name}) فوراً لمنع إعادة المحاولة: {reason}\n', flush=True)
+    os._exit(3)
 
 
 def _find_profile_home_dir(prof_name):
@@ -286,8 +307,37 @@ def _find_profile_home_dir(prof_name):
     return None
 
 
+def _probe_usage(h):
+    """يفحص /usage لبروفايل (0 توكن). يعيد (g5, gw, failed): failed=True فقط عند الحظر/عدم الأهلية من جوجل."""
+    g5, gw = 100.0, 100.0
+    try:
+        env = os.environ.copy()
+        env['HOME'] = h
+        r = subprocess.run(
+            [AGY_BIN, '-p', '/usage', '--output-format', 'json'],
+            env=env, capture_output=True, text=True, timeout=20,
+            stdin=subprocess.DEVNULL  # بدونها يتجمد agy -p مع stdin أنبوبي (استدعاء الوكلاء/الـ cron)
+        )
+        _combined = ((r.stdout or '') + ' ' + (r.stderr or '')).lower()
+        if any(k in _combined for k in ('permission_denied', 'code 403', 'disabled in this account', 'not eligible for antigravity')):
+            return 0.0, 0.0, True  # حساب معطّل/غير مؤهل من جوجل: لا يُختار أبداً
+        if r.stdout.strip().startswith('{'):
+            d = json.loads(r.stdout)
+            for g in d.get('command', {}).get('data', {}).get('groups', []):
+                if 'Gemini' in g.get('name', ''):
+                    for b in g.get('buckets', []):
+                        pct = round(float(b.get('remaining_fraction') or 0.0) * 100.0, 3)
+                        if b.get('id') == 'gemini-5h':
+                            g5 = pct
+                        elif b.get('id') == 'gemini-weekly':
+                            gw = pct
+    except Exception:
+        pass
+    return g5, gw, False
+
+
 def _pick_highest_weekly_pro_profile():
-    """يفحص حسابَي الـ Pro (medmrf19 و brain) دون تفرقة ويختار صاحب الكوتة الأسبوعية الأعلى (مع كاش 180ث)."""
+    """يفحص خانتَي التفريغ المستقلتين (brain وعائلة Google برأس mb10 وتناوب عند التعثّر) ويختار صاحب الكوتة الأسبوعية الأعلى (مع كاش 180ث)."""
     now = time.time()
     if _AUTO_PRO_CACHE['profile'] and (now - _AUTO_PRO_CACHE['ts'] < 180.0):
         p = _AUTO_PRO_CACHE['profile']
@@ -298,30 +348,21 @@ def _pick_highest_weekly_pro_profile():
     best_prof = None
     best_home = None
     best_score = (-1, -1.0, -1.0)
-    for prof in DEFAULT_PRO_POOL:
-        h = _find_profile_home_dir(prof)
-        if not h:
+    for slot_head in DEFAULT_PRO_POOL:
+        chosen = None
+        for prof in (slot_head,) + tuple(FAMILY_FAILOVER.get(slot_head, ())):
+            h = _find_profile_home_dir(prof)
+            if not h:
+                continue
+            g5, gw, failed = _probe_usage(h)
+            if failed:
+                print('[تناوب العائلة] %s معطّل/غير مؤهل — الانتقال للتالي' % prof, flush=True)
+                continue
+            chosen = (prof, h, g5, gw)
+            break
+        if not chosen:
             continue
-        g5, gw = 100.0, 100.0
-        try:
-            env = os.environ.copy()
-            env['HOME'] = h
-            r = subprocess.run(
-                [AGY_BIN, '-p', '/usage', '--output-format', 'json'],
-                env=env, capture_output=True, text=True, timeout=20
-            )
-            if r.stdout.strip().startswith('{'):
-                d = json.loads(r.stdout)
-                for g in d.get('command', {}).get('data', {}).get('groups', []):
-                    if 'Gemini' in g.get('name', ''):
-                        for b in g.get('buckets', []):
-                            pct = round(float(b.get('remaining_fraction') or 0.0) * 100.0, 3)
-                            if b.get('id') == 'gemini-5h':
-                                g5 = pct
-                            elif b.get('id') == 'gemini-weekly':
-                                gw = pct
-        except Exception:
-            pass
+        prof, h, g5, gw = chosen
         eligible = 1 if (g5 >= 8.0 and gw >= 2.0) else 0
         score = (eligible, gw, g5)
         if score > best_score:
@@ -343,7 +384,7 @@ def _pick_highest_weekly_pro_profile():
 
 def _resolve_agy_profile_home(part_idx=None):
     """تحديد مجلد HOME للبروفايل المطلوب:
-    - الافتراضي (دون تحديد أو auto/pro): يختار تلقائياً حساب الـ Pro (بين medmrf19 و brain) ذا الكوتة الأسبوعية الأعلى.
+    - الافتراضي (دون تحديد أو auto/pro): يختار تلقائياً بين brain وعائلة Google (mb10 ثم التالي عند التعثّر) ذا الكوتة الأسبوعية الأعلى.
     - لا يُستخدم الحساب الرئيسي medmrf10 أبداً إلا إذا طُلب صراحة عبر --agy-profile medmrf10.
     """
     global _PROFILE_RR_COUNTER
@@ -471,7 +512,12 @@ def _is_quota_safe_for_background(model_hint='gemini'):
 
 
 @contextmanager
-def _global_agy_slot(min_avail_mb=1350, model_hint='gemini'):
+def _global_agy_slot(min_avail_mb=1350, model_hint='gemini', prof_name='default'):
+    import fcntl
+    import random
+    if _is_profile_disabled(prof_name):
+        _trip_profile_circuit_breaker(prof_name, 'الحساب معطّل مسبقاً في ملف الحماية')
+
     while True:
         ok_q, reason_q = _is_quota_safe_for_background(model_hint)
         if ok_q:
@@ -479,53 +525,79 @@ def _global_agy_slot(min_avail_mb=1350, model_hint='gemini'):
         print(f'[حارس الكوتة] إيقاف مؤقت لعمال الخلفية لمدة 60ث: {reason_q}', flush=True)
         time.sleep(60.0)
 
-    if not sys.platform.startswith('linux'):
-        yield
-        return
-    import fcntl
-    max_slots = int(os.environ.get('MAX_GLOBAL_AGY', '20'))
-    ramp_lock_path = '/tmp/agy_ramp.lock'
+    # حارس التمويه الزمني البشري لكل حساب (يمنع التوازي على نفس الحساب ويفرض فاصلاً عشوائياً 25-50ث واستراحة 3-4 دقائق كل 6 طلبات)
+    min_gap_s = float(os.environ.get('AGY_MIN_GAP_S', '25.0'))
+    max_gap_s = float(os.environ.get('AGY_MAX_GAP_S', '50.0'))
+    prof_key = re.sub(r'[^a-zA-Z0-9_-]', '_', prof_name or 'default')
+    prof_lock_path = f'/tmp/agy_prof_serial_{prof_key}.lock'
+    prof_state_path = f'/tmp/agy_prof_pacing_{prof_key}.json'
+    prof_fd = os.open(prof_lock_path, os.O_CREAT | os.O_RDWR, 0o666)
     slot_fd = None
     try:
-        while slot_fd is None:
-            # 1) فحص الذاكرة المتاحة قبل محاولة حجز خانة
-            avail = 4096
+        fcntl.flock(prof_fd, fcntl.LOCK_EX)
+        last_ts = 0.0
+        call_cnt = 0
+        if os.path.exists(prof_state_path):
             try:
-                with open('/proc/meminfo', encoding='utf-8') as f:
-                    for line in f:
-                        if line.startswith('MemAvailable:'):
-                            avail = int(line.split()[1]) // 1024
-                            break
+                st = json.load(open(prof_state_path, encoding='utf-8'))
+                last_ts = float(st.get('last_ts') or 0.0)
+                call_cnt = int(st.get('call_cnt') or 0)
             except Exception:
                 pass
-            if avail >= min_avail_mb:
-                for idx in range(max_slots):
-                    spath = f'/tmp/agy_slot_{idx:02d}.lock'
-                    fd = os.open(spath, os.O_CREAT | os.O_RDWR, 0o666)
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        slot_fd = fd
-                        break
-                    except OSError:
-                        os.close(fd)
-            if slot_fd is None:
-                time.sleep(2.0)
+        if last_ts > 0:
+            if call_cnt > 0 and (call_cnt % 6 == 0):
+                target_gap = random.uniform(150.0, 240.0)
+                gap_label = 'استراحة بشرية دورية بعد 6 طلبات'
+            else:
+                target_gap = random.uniform(min_gap_s, max_gap_s)
+                gap_label = 'فاصل زمني عشوائي آمن'
+            elapsed_since = time.time() - last_ts
+            if elapsed_since < target_gap:
+                wait_s = round(target_gap - elapsed_since, 1)
+                print(f'  [حارس التمويه الزمني · {prof_name}] {gap_label}: انتظار {wait_s}ث قبل الطلب التالي...', flush=True)
+                time.sleep(wait_s)
 
-        # 2) مباعدة إطلاق العمليات بمقدار 1.0 ثانية حتى تستقر قراءة الذاكرة لكل عملية جديدة
-        try:
-            with open(ramp_lock_path, 'w') as rlf:
-                fcntl.flock(rlf, fcntl.LOCK_EX)
-                time.sleep(1.0)
-        except Exception:
-            pass
+        if sys.platform.startswith('linux'):
+            max_slots = int(os.environ.get('MAX_GLOBAL_AGY', '6'))
+            while slot_fd is None:
+                avail = 4096
+                try:
+                    with open('/proc/meminfo', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('MemAvailable:'):
+                                avail = int(line.split()[1]) // 1024
+                                break
+                except Exception:
+                    pass
+                if avail >= min_avail_mb:
+                    for idx in range(max_slots):
+                        spath = f'/tmp/agy_slot_{idx:02d}.lock'
+                        fd = os.open(spath, os.O_CREAT | os.O_RDWR, 0o666)
+                        try:
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            slot_fd = fd
+                            break
+                        except OSError:
+                            os.close(fd)
+                if slot_fd is None:
+                    time.sleep(2.0)
 
         yield
     finally:
+        try:
+            with open(prof_state_path, 'w', encoding='utf-8') as sf:
+                json.dump({'last_ts': time.time(), 'call_cnt': call_cnt + 1}, sf)
+        except Exception:
+            pass
         if slot_fd is not None:
             try:
                 os.close(slot_fd)
             except OSError:
                 pass
+        try:
+            os.close(prof_fd)
+        except OSError:
+            pass
 
 
 def _measure_chunk_speech(cpath, len_s=0.0, max_vol_floor_db=-48.0):
@@ -619,12 +691,18 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                 if cur_model:
                     cmd += ['--model', cur_model]
                 try:
-                    with _global_agy_slot(int(os.environ.get('MIN_CHUNK_AVAIL_MB', '1350'))):
+                    with _global_agy_slot(int(os.environ.get('MIN_CHUNK_AVAIL_MB', '1350')), model_hint=cur_model, prof_name=prof_name):
                         t0 = time.time()
                         res = subprocess.run(
                             cmd, cwd=tmpdir, env=run_env, capture_output=True, text=True, timeout=timeout_s
                         )
                         elapsed = round(time.time() - t0, 1)
+                    combined_raw = ((res.stdout or '') + ' ' + (res.stderr or '')).lower()
+                    if any(ban_kw in combined_raw for ban_kw in (
+                        'permission_denied', 'code 403', 'disabled in this account',
+                        'submit an appeal', 'violation of terms', 'account has been suspended'
+                    )):
+                        _trip_profile_circuit_breaker(prof_name, (res.stderr or res.stdout or '')[:300].strip())
                     parsed_resp, usage = extract_agy_json_response(res.stdout, home_dir=prof_home)
                     raw_out = parsed_resp if parsed_resp is not None else (res.stdout or '').strip()
                     cleaned, _ = strip_preamble_and_header(raw_out)

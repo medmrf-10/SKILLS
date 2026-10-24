@@ -33,6 +33,17 @@
       ],
       "note": "حساب تفريغ مستقل بحصته الخاصة."
     },
+    "ram": {
+      "tier": "Pro",
+      "role": "main",
+      "sync_to_vps": false,
+      "status": "active",
+      "aliases": [
+        "ram"
+      ],
+      "note": "حساب Pro محلي فقط على الماك (لا يُزامَن مع السيرفر).",
+      "email_sha256": "973e9d628970ceedc3548d363a28e086317eb82190f5edd285b9bfa220b5679a"
+    },
     "medmrf19": {
       "email": "medmrf.19@gmail.com",
       "tier": "Pro",

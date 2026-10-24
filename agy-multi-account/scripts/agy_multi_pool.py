@@ -803,7 +803,10 @@ def cmd_sync_to_vps(vps_host='hermes-vps'):
     if not profiles:
         print('لا توجد بروفايلات في ~/.agy-profiles للمزامنة.')
         return
+    profs_meta = load_registry()['profiles']
     for name, pdir in profiles:
+        if profs_meta.get(name, {}).get('sync_to_vps') is False:
+            continue
         remote_dir = f'/root/.agy-profiles/{name}/.gemini/antigravity-cli'
         subprocess.run(['ssh', vps_host, 'mkdir -p %s && chmod 700 %s' % (shlex.quote(remote_dir), shlex.quote(remote_dir))], check=True)
         files_to_copy = []
