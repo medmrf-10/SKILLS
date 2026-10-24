@@ -401,8 +401,27 @@ def parse_usage_response(resp_text):
     return res
 
 
+def ensure_profile_keychain(pdir):
+    """يضمن وجود Keychain معزول ومستقل تماماً لكل بروفايل لمنع ظهور نافذة Keychain Not Found في macOS دون أي تداخل."""
+    if sys.platform == 'darwin':
+        kc_dir = os.path.join(pdir, 'Library', 'Keychains')
+        kc_path = os.path.join(kc_dir, 'login.keychain-db')
+        if not os.path.exists(kc_path):
+            os.makedirs(kc_dir, exist_ok=True)
+            env = os.environ.copy()
+            env['HOME'] = pdir
+            try:
+                subprocess.run(['security', 'create-keychain', '-p', 'agy', kc_path], env=env, capture_output=True, stdin=subprocess.DEVNULL)
+                subprocess.run(['security', 'set-keychain-settings', kc_path], env=env, capture_output=True, stdin=subprocess.DEVNULL)
+                subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', kc_path], env=env, capture_output=True, stdin=subprocess.DEVNULL)
+                subprocess.run(['security', 'default-keychain', '-s', kc_path], env=env, capture_output=True, stdin=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+
 def run_agy(pdir, args, timeout=USAGE_TIMEOUT):
     """يشغّل agy ببروفايل معزول وstdin=DEVNULL (وإلا يتجمد مع الأنابيب). يعيد (stdout, stderr, returncode|None عند المهلة)."""
+    ensure_profile_keychain(pdir)
     env = os.environ.copy()
     env['HOME'] = pdir
     try:
@@ -737,6 +756,7 @@ def cmd_restore(profile, from_dir=None):
 def cmd_run(profile, args):
     """تشغيل agy ببروفايل معزول (stdin/stdout موروثان للجلسات التفاعلية) ثم مصالحة Keychain بحسب البريد."""
     pdir = os.path.join(PROFILES_ROOT, profile)
+    ensure_profile_keychain(pdir)
     os.makedirs(os.path.join(pdir, '.gemini', 'antigravity-cli'), exist_ok=True)
     env = os.environ.copy()
     env['HOME'] = pdir
@@ -758,6 +778,13 @@ def render_aliases():
         '  local prof="$1"; shift',
         '  local pdir="%s/${prof}"' % PROFILES_ROOT,
         '  mkdir -p "${pdir}/.gemini/antigravity-cli"',
+        '  if [ "$(uname)" = "Darwin" ] && [ ! -f "${pdir}/Library/Keychains/login.keychain-db" ]; then',
+        '    mkdir -p "${pdir}/Library/Keychains"',
+        '    HOME="${pdir}" security create-keychain -p "agy" "${pdir}/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true',
+        '    HOME="${pdir}" security set-keychain-settings "${pdir}/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true',
+        '    HOME="${pdir}" security list-keychains -d user -s "${pdir}/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true',
+        '    HOME="${pdir}" security default-keychain -s "${pdir}/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true',
+        '  fi',
         '  HOME="${pdir}" agy "$@"',
         '  local rc=$?',
         '  # مصالحة Keychain بحسب البريد (تنسب التوكن لصاحبه ولا تحذف شيئاً)',
