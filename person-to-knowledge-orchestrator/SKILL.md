@@ -3,6 +3,17 @@ name: person-to-knowledge-orchestrator
 description: Master End-to-End Orchestrator (المايسترو الشامل من اسم الشخصية إلى قاعدة المعرفة الموحّدة). Takes a person's name or raw sources (YouTube channels/playlists, Archive.org collections, PDF books/indexes) and executes the 6-stage deterministic pipeline with strict hard verification gates (G0..G5) between every stage, resumable state checkpointing (pipeline_state.json), 0% character loss enforcement across both books and audio transcripts, and dual-vector 768-dim Gemma-2 hybrid semantic + FTS5 + entity-filtered search verification. Use whenever asked to run a full or partial person-to-knowledge pipeline, orchestrate discovery to curated series to USDB v5.7 SQLite + embeddings, or audit end-to-end pipeline gates.
 ---
 
+## القواعد الحاكمة الإلزامية (التدرج الأسي اليدوي وشلال الحسابات)
+
+1. **قاعدة التدرج الأسي والفحص اليدوي الذاتي (`1 -> 10 -> 100 -> 1000`)**:
+   - يُمنع منعاً باتاً معالجة عشرات أو مئات العناصر دفعة واحدة قبل نضج التجربة، ويُمنع الاكتفاء بسكريبتات الفحص الآلي وحدها.
+   - يجب على الوكيل في العناصر العشرة الأولى (`1, 2, 3... 10`) أن ينفذ **عملاً واحداً فقط في كل مرة**، ثم **يتفحص المخرج يدوياً بعينه وبعقله** (وليس بالسكريبتات فحسب)، ويحل المشاكل الجذرية ويحسّن من نفسه ومن كود المهارة وتوجيهاتها بعد كل عمل فردي حتى يصل إلى `10`.
+   - بعد إتقان أول `10` عناصر فردية، يتدرج الوكيل بالدفعات العشرية (`10, 20, 30... 100`) ثم المئوية (`100, 200... 1000`) مع المراجعة اليدوية للعينات وتحسين المهارة في كل محطة.
+2. **شلال الحسابات الصارم (`Strict Priority Waterfall: العائلة -> brain -> ram`) وحظر الـ `API Keys`**:
+   - يُحظر تماماً استخدام حساب `medmrf10` (`Ultra`) في أي مهام تفريغ أو معالجة خلفية (مخصص حصراً لتطبيق `Antigravity` الرئيسي).
+   - يُحظر منعاً باتاً استخدام أي مفاتيح `API` خارجية (`Gemini API Keys` أو غيرها) دون إذن صريح من محمد؛ التفريغ يتم حصراً عبر الحسابات المدفوعة، والتضمين يتم محلياً بالكامل.
+   - ترتيب استهلاك الحسابات المدفوعة إلزامي بالتتابع: تُستهلك حصة **العائلة (`mb19, mb10, bm10, medmrfco`)** أولاً بالكامل حتى تفرغ (`429`)، ولا يُلمس حساب **`brain`** إطلاقاً إلا إذا كانت العائلة في حالة تبريد، ولا يُلمس حساب **`ram`** إطلاقاً إلا إذا كانت العائلة و`brain` معاً في حالة تبريد.
+
 # Master Orchestrator: Person to Unified Knowledge Database (`person-to-knowledge-orchestrator`)
 
 ## 1. Mission & Core Architecture
