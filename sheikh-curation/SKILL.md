@@ -4,6 +4,15 @@ version: 2.4
 description: "Use when building, auditing, correcting, or automatically curating series and lessons for any scholar / person from raw discovery metadata (<person_id>_raw.json from person-discovery-intake) to curated JSON (<person_id>.json), SQLite database (curated.db), and per-series pipeline directories (<person_id>/sXXX/_meta.json for sheikh-series-pipeline v5) under the zero-error standard (0 Errors). Includes the 9-stage deterministic auto-curator (scripts/auto_curate_person.py) and 6-layer quality gates (scripts/test_curation_v2_gates.py)."
 ---
 
+## القواعد الكلية لمنع التكرار عند فرز أرشيف أي متحدث أو مؤلف (`Universal Archive Deduplication Rules`)
+
+1. **التكميل العابر للقنوات وطرد المرايا المكررة (`Cross-Channel Range Stitching & Mirror Elimination`)**:
+   - عندما تكون السلسلة العلمية الواحدة ناقصة في مصدرها الرئيسي وتكملتها المفقودة منشورة في قناة أو مصدر أرشيفي آخر، يُدمج النطاقان المتكاملان حسب أرقام الدروس المتسلسلة (`1..N` مع `N+1..M`) في سلسلة موحدة مكتملة، مع استبعاد القنوات الموازية التي تعيد نشر نفس الدروس المكررة (`Mirror Channels`).
+2. **ترجيح النسخة الأحدث والأكمل عند تعدد الشروح (`Latest & Most Complete Iteration Preference`)**:
+   - إذا شرح العالم أو المحاضر نفس المتن أو الكتاب في أكثر من سلسلة عبر السنين، تُعتمد السلسلة الأحدث والأتم تغطيةً في مسار المعالجة الأساسي، وتُعزل النسخ القديمة الناقصة أو الأولية في الأرشيف الجانبي منعاً لازدواجية الفهرسة لنفس المتن.
+3. **طرد القوائم التجميعية المصطنعة والمدبلجات (`Synthetic Compilations & Dubbing Exclusion`)**:
+   - تُستبعد قوائم التشغيل الموضوعية المصطنعة التي تعيد تجميع دروس أو مقاطع مقتطعة من سلاسل أصلية قائمة، كما تُستبعد النسخ المترجمة صوتياً أو المدبلجة إلى لغات أخرى لئلا تتكرر المادة العلمية الواحدة في قاعدة البيانات.
+
 # مهارة `sheikh-curation` (v2.4): الهندسة والتحقيق الدلالي الآلي لسلاسل ودروس المشايخ والأعلام (معيار 0 خطأ)
 
 توثق هذه المهارة القواعد الصارمة، والعلل الجذرية التسع المكتشفة، والخوارزميات المعتمدة لبناء وتدقيق سلاسل المشايخ والأعلام العلمية والدعوية والفكرية من بيانات الاكتشاف الخام (`<person_id>_raw.json` الناتجة عن مهارة `person-discovery-intake` أو `data/curated_sheikhs/<sheikh>_raw.json`) إلى الملفات المنقحة (`data/curated_sheikhs/<person_id>.json`) وهياكل السلاسل الجاهزة للتفريغ (`<output_series_dir>/<person_id>/sXXX/_meta.json` المتوافقة مع `sheikh-series-pipeline v5`) وقاعدة البيانات (`data/curated.db`) وملفات الواجهة (`data/catalog_curated.json` و`data/series_curated/*.json`).
