@@ -40,6 +40,9 @@ description: "Use when discovering, harvesting, and unifying all digital heritag
      * مفاتيح الجرد الشامل الحديثة (`person_id`, `sheikh_name`, `discovered_at`, `channels`, `playlists`, `videos`, `archive_items`, `pdf_extracted_links`, `books`, `stats`).
      * والمفاتيح القياسية التي تستهلكها سكربتات `sheikh-curation` مباشرة (`sheikh`, `raw_playlists_count`, `unique_videos_count`, `raw_series`, `unique_videos`) دون الحاجة لأي تحويل وسيط.
 
+7. **بروتوكول الجلب الآمن ضد الحظر (`Anti-Ban Ingestion Protocol`)**:
+   - عند سحب القوائم أو البيانات الوصفية من المنصات الخارجية، يُلتزم بتأخير عشوائي بتوزيع غاوسي (`1.2` إلى `4.5` ثانية)، وتقسيم السحب إلى دفعات صغيرة (`10–15` خطوة) تفصلها فترات راحة (`2–5` دقائق)، والجلب الكسول عند الطلب (`Lazy Fetching`)، ومحاكاة ترويسات المتصفح الكاملة.
+
 ---
 
 ## 2. معمارية خط أنابيب الاكتشاف (Discovery Pipeline Architecture)
