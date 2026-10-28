@@ -809,11 +809,28 @@ def cmd_restore(profile, from_dir=None):
     print(f'[✓ استعادة] {profile} من {src} (بريد: {email_from_token_dict(tok)})')
 
 
+def ensure_profile_shared_config(pdir):
+    """يربط البروفايل المعزول بالجذر الموحد ~/.gemini/config وملف القواعد الدائم."""
+    gdir = os.path.join(pdir, '.gemini')
+    cli_dir = os.path.join(gdir, 'antigravity-cli')
+    os.makedirs(cli_dir, exist_ok=True)
+    shared_cfg = '/Users/macm1pro/.gemini/config'
+    shared_core = '/Users/macm1pro/.gemini/config/rules/core-execution.md'
+    cfg_link = os.path.join(gdir, 'config')
+    if os.path.isdir(cfg_link) and not os.path.islink(cfg_link):
+        shutil.rmtree(cfg_link, ignore_errors=True)
+    if not os.path.exists(cfg_link):
+        os.symlink(shared_cfg, cfg_link)
+    gem_link = os.path.join(gdir, 'GEMINI.md')
+    if not os.path.exists(gem_link) and not os.path.islink(gem_link):
+        os.symlink(shared_core, gem_link)
+
+
 def cmd_run(profile, args):
     """تشغيل agy ببروفايل معزول (stdin/stdout موروثان للجلسات التفاعلية) ثم مصالحة Keychain بحسب البريد."""
     pdir = os.path.join(PROFILES_ROOT, profile)
     ensure_profile_keychain(pdir)
-    os.makedirs(os.path.join(pdir, '.gemini', 'antigravity-cli'), exist_ok=True)
+    ensure_profile_shared_config(pdir)
     env = os.environ.copy()
     env['HOME'] = pdir
     rc = subprocess.call([AGY_BIN] + list(args), env=env)
@@ -832,8 +849,11 @@ def render_aliases():
         '# أعد توليده بـ: python3 %s --print-aliases > ~/.agy-aliases.zsh' % shlex.quote(script),
         '_agy_profile_run() {',
         '  local prof="$1"; shift',
+        '  [ "$1" = "mb19" ] && [ "$2" = "--dangerously-skip-permissions" ] && shift',
         '  local pdir="%s/${prof}"' % PROFILES_ROOT,
         '  mkdir -p "${pdir}/.gemini/antigravity-cli"',
+        '  [ -L "${pdir}/.gemini/config" ] || { rm -rf "${pdir}/.gemini/config" && ln -s "/Users/macm1pro/.gemini/config" "${pdir}/.gemini/config"; }',
+        '  [ -L "${pdir}/.gemini/GEMINI.md" ] || ln -sf "/Users/macm1pro/.gemini/config/rules/core-execution.md" "${pdir}/.gemini/GEMINI.md"',
         '  if [ "$(uname)" = "Darwin" ] && [ ! -f "${pdir}/Library/Keychains/login.keychain-db" ]; then',
         '    mkdir -p "${pdir}/Library/Keychains"',
         '    HOME="${pdir}" security create-keychain -p "agy" "${pdir}/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true',
