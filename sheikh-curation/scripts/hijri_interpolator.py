@@ -2,40 +2,26 @@
 """
 Hijri Date Parser & Playlist-Position Linear Interpolator.
 
-Solves YouTube's 100-character title truncation problem where older lessons (1433-1445 AH)
-lose their trailing Hijri date and get dumped at the end of chronologically sorted series
-after 1447/1448 AH lessons.
+Pure mathematical engine solving YouTube's 100-character title truncation problem
+where older lessons lose their trailing Hijri date and get dumped at the end of
+chronologically sorted series.
 
 Features:
-1. Full Hijri date extraction supporting `14[234]\\d` (1420-1449 AH), numeric `DD/MM/YYYY` or `DD-MM-YYYY`,
-   named Hijri months, and annual Dawrah / Multaqa ordinal-to-Hijri year mapping.
-2. Linear interpolation across all official raw playlists (`raw_series`) in `<sheikh>_raw.json`,
-   choosing the playlist with the tightest dated bounding span (`|d2 - d1| + (i2 - i1)`).
+1. Hijri date extraction supporting `14[234]\\d` (1420-1449 AH), numeric `DD/MM/YYYY` or `DD-MM-YYYY`,
+   named Hijri months, and dynamic `season_hijri_map` loaded from the scholar's JSON metadata.
+2. Linear interpolation across raw playlists (`raw_series`) between confirmed dated anchors
+   (`(i1, d1)` and `(i2, d2)`), choosing the playlist with the tightest bounding span (`|d2 - d1| + (i2 - i1)`).
 
 Usage:
-    python3 hijri_interpolator.py <sheikh_id> [series_number ...]
+    python3 hijri_interpolator.py --input <curated.json> [--raw-input <raw.json>] [--output <out.json>] [--series N ...]
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
 import re
 import sys
-
-ROOT = (
-    Path(os.environ["CURATED_ROOT"])
-    if "CURATED_ROOT" in os.environ
-    else (
-        Path.cwd()
-        if (Path.cwd() / "data/curated_sheikhs").exists()
-        else Path(__file__).resolve().parents[4]
-    )
-)
-CURATED_DIR = (
-    Path(os.environ["CURATED_DIR"])
-    if "CURATED_DIR" in os.environ
-    else ROOT / "data/curated_sheikhs"
-)
 
 AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
@@ -69,42 +55,22 @@ MONTHS = {
     "ذي الحجة": 12,
 }
 
-# Dar Al-Mustafa Summer Dawrah ordinal -> Hijri year (held in Dhu al-Qi'dah = month 11)
-DAWRAH_WORDS = {
-    "الثامنة عشرة": 1433,
-    "التاسعة عشرة": 1434,
-    "العشرين": 1435,
-    "الحادية والعشرين": 1436,
-    "الثانية والعشرين": 1437,
-    "الثالثة والعشرين": 1438,
-    "الرابعة والعشرين": 1439,
-    "الخامسة والعشرين": 1440,
-    "السادسة والعشرين": 1441,
-    "السابعة والعشرين": 1442,
-    "الثامنة والعشرين": 1443,
-    "التاسعة والعشرين": 1444,
-    "الثلاثين": 1445,
-    "الحادية والثلاثين": 1447,
-    "الثانية والثلاثين": 1448,
-}
 
-# Annual Du'at Multaqa in Ramadan -> Hijri year (month 9, day 21)
-MULTAQA_WORDS = {
-    "الخامس عشر": 1443,
-    "السادس عشر": 1444,
-    "السابع عشر": 1445,
-    "الثامن عشر": 1446,
-    "التاسع عشر": 1447,
-    "العشرين": 1448,
-    "العشرون": 1448,
-}
+def get_default_data_dir() -> Path:
+    env_dir = os.environ.get("CURATION_DATA_DIR") or os.environ.get("CURATED_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    env_root = os.environ.get("CURATED_ROOT")
+    if env_root:
+        return (Path(env_root).expanduser() / "data" / "curated_sheikhs").resolve()
+    return (Path.cwd() / "data" / "curated_sheikhs").resolve()
 
 
 def norm(s: str) -> str:
     return str(s).translate(AR_DIGITS)
 
 
-def parse_hijri(title: str, season_hijri_map: dict = None):
+def parse_hijri(title: str, season_hijri_map: dict | None = None):
     """Extract (year, month, day) in Hijri calendar from a video or playlist title."""
     t = norm(title)
 
@@ -130,7 +96,7 @@ def parse_hijri(title: str, season_hijri_map: dict = None):
         d = int(dm.group(1)) if dm and 1 <= int(dm.group(1)) <= 30 else 15
         return (y, mo, d)
 
-    # 3. Dynamic season_hijri_map (from sheikh configuration or metadata)
+    # 3. Dynamic season_hijri_map from scholar configuration / metadata
     if season_hijri_map:
         for cat_name, mapping in season_hijri_map.items():
             clean_cat = cat_name.replace("_", " ")
@@ -140,32 +106,14 @@ def parse_hijri(title: str, season_hijri_map: dict = None):
                         mo = 9 if ("ملتقى" in clean_cat or "رمضان" in clean_cat) else 11
                         return (int(y), mo, 15)
 
-    # 4. Fallback Dawrah number or Arabic ordinal
-    for w, y in DAWRAH_WORDS.items():
-        if w in t and ("الدورة" in t or "دورة" in t):
-            return (y, 11, 15)
-    dm_num = re.search(r"(?:الدورة|دورة|#الدورة)\s*(?:الـ?\s*)?\(?(\d{2})\)?", t)
-    if dm_num:
-        dn = int(dm_num.group(1))
-        if 15 <= dn <= 30:
-            return (1415 + dn, 11, 15)
-        if dn in (31, 32):
-            return (1416 + dn, 11, 15)
-
-    # 5. Fallback Multaqa Al-Du'at ordinal in Ramadan
-    if "ملتقى الدعاة" in t:
-        for w, y in MULTAQA_WORDS.items():
-            if w in t:
-                return (y, 9, 21)
-
     return None
 
 
-def to_days(dt):
+def to_days(dt: tuple[int, int, int]) -> int:
     return dt[0] * 372 + dt[1] * 31 + dt[2]
 
 
-def from_days(d):
+def from_days(d: float) -> tuple[int, int, int]:
     y = int(d // 372)
     rem = int(d % 372)
     m = max(1, min(12, rem // 31))
@@ -173,8 +121,8 @@ def from_days(d):
     return (y, m, day)
 
 
-def build_interpolated_dates(raw_data: dict, season_hijri_map: dict = None):
-    """Return (explicit_dates, best_interp) dicts keyed by yt_id."""
+def build_interpolated_dates(raw_data: dict, season_hijri_map: dict | None = None):
+    """Return (explicit_dates, best_interp) dicts keyed by yt_id using linear interpolation."""
     explicit_dates = {}
     for uv in raw_data.get("unique_videos", []):
         dt = parse_hijri(uv["title"], season_hijri_map=season_hijri_map)
@@ -227,35 +175,119 @@ def build_interpolated_dates(raw_data: dict, season_hijri_map: dict = None):
     return explicit_dates, best_interp
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 hijri_interpolator.py <sheikh_id> [series_index ...]")
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Hijri Date Parser & Playlist-Position Linear Interpolator."
+    )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help="Optional scholar ID or curated JSON path",
+    )
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        default=None,
+        help="Path to curated <id>.json file",
+    )
+    parser.add_argument(
+        "--raw-input",
+        "-r",
+        type=Path,
+        default=None,
+        help="Path to raw <id>_raw.json file containing raw_series playlists",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON interpolation results",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Directory containing <id>.json and <id>_raw.json (default: $CURATION_DATA_DIR or ./data/curated_sheikhs)",
+    )
+    parser.add_argument(
+        "--series",
+        "-s",
+        type=int,
+        nargs="*",
+        default=[],
+        help="1-based series indices to inspect",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    data_dir = args.data_dir.expanduser().resolve() if args.data_dir else get_default_data_dir()
+
+    cur_path = args.input
+    raw_path = args.raw_input
+    if not cur_path and args.target:
+        cand = Path(args.target)
+        if cand.suffix == ".json" and cand.exists():
+            cur_path = cand
+        else:
+            stem = args.target[:-5] if args.target.endswith(".json") else args.target
+            cur_path = data_dir / f"{stem}.json"
+            if not raw_path:
+                raw_path = data_dir / f"{stem}_raw.json"
+
+    if not cur_path or not cur_path.is_file():
+        print("Error: valid --input <curated.json> or target ID is required.", file=sys.stderr)
         sys.exit(1)
 
-    sh = sys.argv[1]
-    s_indices = [int(x) for x in sys.argv[2:]]
+    if not raw_path:
+        raw_path = cur_path.parent / f"{cur_path.stem}_raw.json"
 
-    raw = json.load(open(CURATED_DIR / f"{sh}_raw.json", encoding="utf-8"))
-    cur = json.load(open(CURATED_DIR / f"{sh}.json", encoding="utf-8"))
+    with open(cur_path, encoding="utf-8") as f:
+        cur = json.load(f)
+    raw = {}
+    if raw_path and raw_path.is_file():
+        with open(raw_path, encoding="utf-8") as f:
+            raw = json.load(f)
 
     season_map = cur.get("season_hijri_map")
     explicit_dates, best_interp = build_interpolated_dates(
         raw, season_hijri_map=season_map
     )
     print(
-        f"[{sh}] Explicit dates: {len(explicit_dates)} | Interpolated: {len(best_interp)}"
+        f"[{cur_path.stem}] Explicit dates: {len(explicit_dates)} | Interpolated: {len(best_interp)}"
     )
 
+    if args.output:
+        out_payload = {
+            "explicit_dates": {k: list(v) for k, v in explicit_dates.items()},
+            "interpolated_dates": {
+                k: {
+                    "span": v[0],
+                    "days": v[1],
+                    "hijri_ymd": list(v[2]),
+                    "source_playlist": v[3],
+                }
+                for k, v in best_interp.items()
+            },
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(out_payload, f, ensure_ascii=False, indent=2)
+        print(f"Saved interpolation output to {args.output}")
+
     target_series = (
-        [(i, cur["series"][i - 1]) for i in s_indices]
-        if s_indices
-        else list(enumerate(cur["series"], 1))
+        [(i, cur["series"][i - 1]) for i in args.series]
+        if args.series
+        else list(enumerate(cur.get("series", []), 1))
     )
 
     for si, s in target_series:
         undated_in_s = [
             (idx, l)
-            for idx, l in enumerate(s["lessons"], 1)
+            for idx, l in enumerate(s.get("lessons", []), 1)
             if l["yt_id"] not in explicit_dates and not l.get("is_child")
         ]
         if not undated_in_s:
@@ -269,3 +301,7 @@ if __name__ == "__main__":
             print(
                 f"  idx={idx:03d} | dur={l.get('duration')}s | {vid} | {l['title'][:55]} -> {bi[2] if bi else None} (via {bi[3][:28] if bi else None})"
             )
+
+
+if __name__ == "__main__":
+    main()

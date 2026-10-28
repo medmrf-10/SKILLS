@@ -3,7 +3,7 @@
 - **تاريخ التسليم:** `2026-10-16 07:38 +02:00`
 - **أحدث التزام موحّد (Git HEAD على الماك + GitHub `origin/main` + الخادم `hermes-vps`):** `9bf4dcb` (`Merge origin/main (0cb040e..ff67830 integrated into unified v4.2)` فوق `cc3ca3f` و`796ca83`)
 - **المسارات الحية للمستودع:**
-  - على الماك: `/Users/macm1pro/REPOS/SKILLS`
+  - على الماك: `~/REPOS/SKILLS`
   - على الخادم (`hermes-vps`): `/root/workspace/SKILLS`
   - المستودع البعيد: `https://github.com/medmrf-10/SKILLS.git` (`branch: main`)
 
@@ -30,17 +30,17 @@
 
 ### أ) السكربتات التنفيذية (`sheikh-series-pipeline/scripts/`)
 
-1. **[`new_series.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/new_series.py) (جديد — المرحلة ٠: الاستقبال والترتيب):**
+1. **[`new_series.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/new_series.py) (جديد — المرحلة ٠: الاستقبال والترتيب):**
    - يجلب بيانات قائمة يوتيوب عبر `yt-dlp --flat-playlist -J` ويحفظ `dur_s` (مدة كل فيديو بالثواني) و`title_ep` (رقم الدرس الصريح في العنوان) داخل `_meta.json`.
    - يكشف القوائم المرفوعة بترتيب معكوس تلقائيًا (`--order auto`) ويصحح ترقيم ملفات `.txt` و`.meta.json` القائمة بأمان عبر `--fix-existing`.
-2. **[`agy_transcribe.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/agy_transcribe.py) (جديد — المرحلة ١: التفريغ التبادلي المحصَّن):**
+2. **[`agy_transcribe.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/agy_transcribe.py) (جديد — المرحلة ١: التفريغ التبادلي المحصَّن):**
    - يعزل كل استدعاء `agy` داخل مجلد مؤقت (`TemporaryDirectory` مع `os.path.realpath` لحل روابط `/var` → `/private/var` على macOS) **بدون** `--dangerously-skip-permissions`، ويحصر القراءة في أداة `view_file` على `@lesson_audio.mp3` لمنع الوكيل من استدعاء `run_command` أو `whisper` المحلي.
    - **التقطيع الصامت الذكي (`detect_silence_split_points`):** يقسّم المحاضرات التي تزيد عن `--max-single-minutes 15` إلى مقاطع (`--chunk-minutes 12`) عند **منتصف أقرب سكتة طبيعية** (`ffmpeg silencedetect=noise=-32dB:d=0.35` ضمن نافذة `±25ث`) لمنع بتر الكلمات عند حدود القطع.
    - **منع الهلوسة الختامية في المقاطع غير الأخيرة:** يوجّه المقطع غير الأخير (`is_last_chunk=False`) بعدم إضافة أي دعاء ختامي أو «والله أعلم» من عنده إذا انتهى الصوت وسط جملة.
    - **التوازي التكيّفي (`--workers`):** يضبط الافتراضي تلقائيًا على `4` في نظام الماك (`darwin`) وعلى `2` في الخادم (`linux`) مع إزاحة بدء متدرجة (`1.5ث` بين العمال).
-3. **[`sanitize_preamble.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/sanitize_preamble.py) (جديد — تطهير المقدمات والترويسات):**
+3. **[`sanitize_preamble.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/sanitize_preamble.py) (جديد — تطهير المقدمات والترويسات):**
    - يزيل ترويسات البيانات الوصفية غير المنطوقة (`الشيخ: / السلسلة: / الفيديو:`) والمقدمات اللاتينية (`I have launched...`) مع أرشفة النص الأصلي في `_raw_preamble_backup/` وتحديث `chars` و`words` في `.meta.json`.
-4. **[`check_transcripts.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/check_transcripts.py) (جديد — المرحلة ٢: بوابة الجودة الثلاثية الموحّدة):**
+4. **[`check_transcripts.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/check_transcripts.py) (جديد — المرحلة ٢: بوابة الجودة الثلاثية الموحّدة):**
    - **الطبقة ١ (حتمية):**
      - `LOW_WPM_TRUNCATED`: يقارن عدد الكلمات بالمدة الحقيقية (`WPM < 45 ك/د`، أو `< 1200 كلمة` عند غياب المدة).
      - `METADATA_HEADER`: يكشف ترويسات `الشيخ:/السلسلة:/الفيديو:` التي كانت تفسد محاذاة أول ٦٠ ثانية.
@@ -53,20 +53,20 @@
      - `ACOUSTIC_CLUSTER_HALLUCINATION`: يكشف وجود أي كتلة متصلة (`≥ 6` كلمات منطوقة متتالية) فشلت محاذاتها الصوتية (`unaligned_clusters_count > 0`) مما يدل على فقرة مكررة أو هلوسة نصية لا مقابل لها في الصوت.
    - **الطبقة ٣ (التدقيق الدلالي بالذكاء الاصطناعي `--llm` عبر `agy`):**
      - يفحص مقتطفات البداية والوسط والنهاية ومعدل الكلمات وعنوان الدرس بتوازي `--llm-workers` (`4` على الماك، `2` على الخادم) ليكتشف التحريفات الصوتية للمصطلحات العلمية (`LLM_ASR_CORRUPTION`) والبتر الدلالي (`LLM_SEMANTIC_TRUNCATION`) والتلخيص (`LLM_HALLUCINATION_OR_SUMMARY`).
-5. **[`extract_emissions.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/extract_emissions.py) (مُرقّى — المرحلة ٣-أ: الانبعاثات الصوتية v4.2):**
+5. **[`extract_emissions.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/extract_emissions.py) (مُرقّى — المرحلة ٣-أ: الانبعاثات الصوتية v4.2):**
    - **دعم Apple Silicon MPS GPU (`--device mps`):** دالة `emissions_torch()` تنقل كل دفعة نوافذ إلى `mps` وتعيد اللوغاريتمات فورًا إلى `cpu` مع تفريغ دوري لكاش Metal (`torch.mps.empty_cache()` كل ٨ دفعات).
    - **فك الصوت في الذاكرة مباشرة (`read_audio_16k`):** يفك `.mp3`/`.m4a` عبر أنبوب `ffmpeg -f f32le -ar 16000 -ac 1 pipe:1` في الذاكرة في `< 1 ثانية` دون إنشاء أي ملفات `.wav` مؤقتة على القرص.
    - **وضع السلسلة الدفعي (`--series-dir` + `--skip-existing`):** يحمّل نموذج `mms-300m-1130-forced-aligner` مرة واحدة فقط ويعالج جميع دروس السلسلة تباعًا.
    - **خيارات الخادم المدمجة:** `--seg-sec` (`emissions_torch_segmented` مع `malloc_trim`)، `--silence-compact` و`--silence-rel` (طي الصمت بالعتبة المحلية وحفظ `.silence.json`)، `--par-procs` (`fork`/COW)، `--par-halves`، و`--layers`.
-6. **[`ctc_pure_align.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/ctc_pure_align.py) (مُرقّى — المرحلة ٣-ب: محاذاة الشريحة المتحركة v4.2):**
+6. **[`ctc_pure_align.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/ctc_pure_align.py) (مُرقّى — المرحلة ٣-ب: محاذاة الشريحة المتحركة v4.2):**
    - **تخطي الرموز الصامتة الخالصة (`active_idx`):** الكلمات التي تؤول بعد التطبيع إلى`''` (مثل `*`، `ۖ`، `ۚ`) تُتخطى في فيتربي وتُوسم بـ`'s'` عند حد الكلمة المنطوقة السابقة بدل تحويلها إلى حرف `'ا'` يسرق إطارات صوتية.
    - **دمج تحسينات فيتربي:** عقوبة `--star-pen -0.9` لعمود `<star>` + التسليم المحكوم بمرساة صلبة (`--solid-handoff 1`: طول مطبّع `≥ 4` حروف وثقة `≥ -1.0`) + عتبة `--min-score -3.0` + توزيع الكلمات المستوفاة بفترات `(start, end)` متناسبة غير صفرية.
    - **كشف الكتل غير المحاذية (`unaligned_clusters`):** يرصد أي تتابع من `≥ 6` كلمات منطوقة مستوفاة بلا أثر صوتي ويطبع موقعها ونصها.
    - **التحقق المتقاطع المزدوج (`vs_v1` و`vs_v1_clean`):** يستبعد الكلمات التي كدّسها `v1` القديم بفارق اصطناعي `+0.05s` عند فجوات Whisper، مع حماية طباعة التشخيص داخل `try/except`.
    - **وضع السلسلة الدفعي (`--series-out`):** يحاذي جميع ملفات `.em.npy` في المجلد ويصدر `_series_align_report.json`.
-7. **[`run_pure.sh`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/run_pure.sh) و[`run_pure_vps.sh`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/run_pure_vps.sh):**
+7. **[`run_pure.sh`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/run_pure.sh):**
    - المشغّل الموحّد الذي يقبل `--target mac|vps|auto` و`--series <dir>`، ويستعمل مصفوفات Bash (`EM_ARGS`, `AL_ARGS`) وحراس مخرجات المراحل (`[ -s "$PRE.em.npy" ] || exit 3`).
-8. **[`check_format_strings.py`](file:///Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/check_format_strings.py):**
+8. **[`check_format_strings.py`](file:///~/REPOS/SKILLS/sheikh-series-pipeline/scripts/check_format_strings.py):**
    - حارس AST يفحص جميع نصوص تنسيق `%` في السكربتات قبل تشغيل أي سلسلة قياس (`فُحص 16 ملفًا · خلل 0`).
 
 ---
@@ -74,7 +74,7 @@
 ## ٣. المسارات الفعلية للبيانات والمخرجات الجاهزة (على الماك والخادم)
 
 ### أ) على الماك (`macm1pro`)
-- **بيئة بايثون المعتمدة للمحاذاة:** `/Users/macm1pro/venvs/ctc/bin/python` (PyTorch `2.11.0` مع `mps` مفعل + `ctc_forced_aligner` + `soundfile`).
+- **بيئة بايثون المعتمدة للمحاذاة:** `~/venvs/ctc/bin/python` (PyTorch `2.11.0` مع `mps` مفعل + `ctc_forced_aligner` + `soundfile`).
 - **مجلد السلسلة الكاملة المفرَّغة والمفحوصة والمحاذية (`bardouni-husaymi/1005` — ٩ دروس):**
   - النصوص المطهّرة والمفحوصة وملفات الصوت و`_meta.json`:
     `/tmp/bardouni_1005_after/ytb/bardouni-husaymi/1005/`
@@ -98,16 +98,14 @@
 
 ## ٤. الأرقام القياسية النهائية (للاستشهاد المباشر)
 
-| المؤشر | قبل الترقية (`v4.0` / تفريغ قديم) | بعد الترقية (`v4.2` الموحّد) |
-|---|---|---|
-| **كشف العيوب في `bardouni/1005`** | `0/9` (`CLEAN` كاذب رغم بتر 85%–94% وقلب الترقيم) | **`9/9 FAILED` على القديم ← `9/9 CLEAN` بعد الإصلاح** |
-| **إجمالي كلمات `bardouni/1005` (٩ دروس · ١٠٫٦٧ ساعات)** | `9,497` كلمة (`6–18 ك/د`) | **`55,481` كلمة (`55,450` منطوقة · `76–92 ك/د` · `5.84×`)** |
-| **زمن انبعاثات درس ٢٧د (`kahf539_005`)** | `1,850 ثانية` (`30.8د` على VPS CPU) | **`47.4 ثانية` على الماك MPS (`fp32`) / `34 ثانية` (`fp16`)** (**`39×–53×` أسرع**) |
-| **زمن انبعاثات سلسلة ١٠٫٦٧ ساعات (٩ دروس) على الماك** | كان سيستغرق `~12 ساعة` على الخادم | **`1,193 ثانية` (`19.9 دقيقة` · `RTF=0.0311` · تحميل واحد للنموذج)** |
-| **زمن فيتربي (`ctc_pure_align.py`) للسلسلة (٩ دروس)** | — | **`34.1 ثانية` إجمالًا** (`2.2–5.1ث` للدرس) |
-| **المحاذاة الصوتية المباشرة للمنطوق (`bardouni/1005`)** | — | **`99.72%`** (`55,294 a` · `156 i` فقط · `0` كتل مشبوهة) |
-| **امتداد تغطية الصوت (`audio_span_pct`)** | `18.7%–27.0%` في الدروس المبتورة | **`99.93%`** في جميع الدروس التسعة |
-| **المحاذاة المباشرة على `kahf539` (`001` / `005`)** | `93.8%` (`172 i`) / `91.1%` (`276 i`) | **`98.5%` (`56 i`) / `97.9%` (`88 i`)** · وسيط `vs_v1_clean`: **`0.12–0.14ث`** |
+1. **البند **كشف العيوب في `bardouni/1005`****: قبل الترقية (`v4.0` / تفريغ قديم): `0/9` (`CLEAN` كاذب رغم بتر 85%–94% وقلب الترقيم) · بعد الترقية (`v4.2` الموحّد): **`9/9 FAILED` على القديم ← `9/9 CLEAN` بعد الإصلاح**.
+2. **البند **إجمالي كلمات `bardouni/1005` (٩ دروس · ١٠٫٦٧ ساعات)****: قبل الترقية (`v4.0` / تفريغ قديم): `9,497` كلمة (`6–18 ك/د`) · بعد الترقية (`v4.2` الموحّد): **`55,481` كلمة (`55,450` منطوقة · `76–92 ك/د` · `5.84×`)**.
+3. **البند **زمن انبعاثات درس ٢٧د (`kahf539_005`)****: قبل الترقية (`v4.0` / تفريغ قديم): `1,850 ثانية` (`30.8د` على VPS CPU) · بعد الترقية (`v4.2` الموحّد): **`47.4 ثانية` على الماك MPS (`fp32`) / `34 ثانية` (`fp16`)** (**`39×–53×` أسرع**).
+4. **البند **زمن انبعاثات سلسلة ١٠٫٦٧ ساعات (٩ دروس) على الماك****: قبل الترقية (`v4.0` / تفريغ قديم): كان سيستغرق `~12 ساعة` على الخادم · بعد الترقية (`v4.2` الموحّد): **`1,193 ثانية` (`19.9 دقيقة` · `RTF=0.0311` · تحميل واحد للنموذج)**.
+5. **البند **زمن فيتربي (`ctc_pure_align.py`) للسلسلة (٩ دروس)****: بعد الترقية (`v4.2` الموحّد): **`34.1 ثانية` إجمالًا** (`2.2–5.1ث` للدرس).
+6. **البند **المحاذاة الصوتية المباشرة للمنطوق (`bardouni/1005`)****: بعد الترقية (`v4.2` الموحّد): **`99.72%`** (`55,294 a` · `156 i` فقط · `0` كتل مشبوهة).
+7. **البند **امتداد تغطية الصوت (`audio_span_pct`)****: قبل الترقية (`v4.0` / تفريغ قديم): `18.7%–27.0%` في الدروس المبتورة · بعد الترقية (`v4.2` الموحّد): **`99.93%`** في جميع الدروس التسعة.
+8. **البند **المحاذاة المباشرة على `kahf539` (`001` / `005`)****: قبل الترقية (`v4.0` / تفريغ قديم): `93.8%` (`172 i`) / `91.1%` (`276 i`) · بعد الترقية (`v4.2` الموحّد): **`98.5%` (`56 i`) / `97.9%` (`88 i`)** · وسيط `vs_v1_clean`: **`0.12–0.14ث`**.
 
 ---
 
@@ -123,4 +121,4 @@
 
 1. **نشر سلسلة «مقدمات السنوسي» (`bardouni-husaymi/1005`):** نقل ملفات `.txt` و`.meta.json` و`.align.json` الجاهزة والمفحوصة (`9/9 CLEAN`) من `/tmp/bardouni_1005_after/` و`/tmp/bardouni_1005_pure/out/` إلى `/root/workspace/ytb/bardouni-husaymi/1005/` عبر `attach_align.py`.
 2. **تشغيل `sheikh-series-pipeline` v4.2 على سلسلة جديدة** يختارها المالك (مع اختيار `--target mac` أو `--target vps`).
-3. **الانتقال إلى تحديث مهارة أخرى** في المستودع (`/Users/macm1pro/REPOS/SKILLS`).
+3. **الانتقال إلى تحديث مهارة أخرى** في المستودع (`~/REPOS/SKILLS`).

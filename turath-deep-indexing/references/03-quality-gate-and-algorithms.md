@@ -1,6 +1,6 @@
 # 03 — خوارزميات الدمج الحتمي وبوابة الجودة الصارمة (Gate v4/v4.2 Algorithms)
 
-يوثق هذا الملف الخوارزميات الحتمية المنفذة في مستودع الكتب (`$TURATH_BOOKS_REPO/merge_round.py`، افتراضياً `/Users/macm1pro/REPOS/books/merge_round.py`)، والتي تضمن عدم ضياع أي حرف من النص الأصلي، والتحقق الصارم من كل مرساة ودرة واقتباس وسند وتاريخ وحاشية.
+يوثق هذا الملف الخوارزميات الحتمية المنفذة في مستودع الكتب (`$TURATH_BOOKS_REPO/merge_round.py`، افتراضياً `$TURATH_BOOKS_REPO/merge_round.py`)، والتي تضمن عدم ضياع أي حرف من النص الأصلي، والتحقق الصارم من كل مرساة ودرة واقتباس وسند وتاريخ وحاشية.
 
 ---
 
@@ -140,16 +140,14 @@
 
 بسبب اختلاف تسميات المفاتيح التي كتبها بعض الوكلاء عبر الجولات السابقة (1–9)، يدعم كود الدمج الحتمي (`merge_round.py`) وسكربتات العرض المرادفات التالية تلقائياً لمنع ضياع أي حقل عند معالجة البيانات القديمة:
 
-| الكائن | المفتاح المعياري المعتمد | المرادفات المقروءة كـ Fallback للتوافق الرجعي |
-| :--- | :--- | :--- |
-| `deep_toc_passages[i]` | `sub_heading` | `title`, `heading` |
-| `deep_toc_passages[i]` | `topics` | `key_topics`, `key_concepts`, `key_claims`, `key_points` |
-| `science_gems[i]` | `explanation` | `analytical_sharh`, `significance`, `sharh` |
-| `science_gems[i]` | `title` | إذا غاب `title`، يُولّد أو يُستخرج من صدر `explanation` |
-| `stories[i]` | `summary` | `scenario`, `Context`, `context` |
-| `stories[i]` | `lesson` | `governing_rule`, `ruling_and_rank` |
-| `quotes[i]` | `context` | `theme`, `topic` |
-| `quotes[i]` | `speaker` | إذا غاب `speaker`، يُستخرج من `theme`/`context` أو من مطلع النص قبل القول |
+1. **الكائن `deep_toc_passages[i]`**: المفتاح المعياري المعتمد: `sub_heading` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: `title`, `heading`
+2. **الكائن `deep_toc_passages[i]`**: المفتاح المعياري المعتمد: `topics` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: `key_topics`, `key_concepts`, `key_claims`, `key_points`
+3. **الكائن `science_gems[i]`**: المفتاح المعياري المعتمد: `explanation` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: `analytical_sharh`, `significance`, `sharh`
+4. **الكائن `science_gems[i]`**: المفتاح المعياري المعتمد: `title` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: إذا غاب `title`، يُولّد أو يُستخرج من صدر `explanation`
+5. **الكائن `stories[i]`**: المفتاح المعياري المعتمد: `summary` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: `scenario`, `Context`, `context`
+6. **الكائن `stories[i]`**: المفتاح المعياري المعتمد: `lesson` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: `governing_rule`, `ruling_and_rank`
+7. **الكائن `quotes[i]`**: المفتاح المعياري المعتمد: `context` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: `theme`, `topic`
+8. **الكائن `quotes[i]`**: المفتاح المعياري المعتمد: `speaker` — المرادفات المقروءة كـ Fallback للتوافق الرجعي: إذا غاب `speaker`، يُستخرج من `theme`/`context` أو من مطلع النص قبل القول
 
 > **ملاحظة معمارية حاسمة:**
 > هذا التطبيع هو مسؤولية كود الدمج الحتمي حصراً لضمان التوافق مع البيانات المؤرشفة السابقة، ولا يمثل رخصة للوكلاء في الجولات الجديدة. سبب فرض الأسماء المعيارية الصارمة في الاستخراج الجديد سبب واحد: **منع تشتت المفاتيح في الجولات الجديدة**.

@@ -36,6 +36,8 @@ import subprocess
 import sys
 import time
 
+from pathlib import Path
+
 AR_RE = re.compile(r'[\u0600-\u06FF]')
 LAT_RE = re.compile(r'[A-Za-z]{4,}')
 HEADER_RE = re.compile(r'^\s*(?:الشيخ|السلسلة|الفيديو|المصدر|الرابط)\s*:', re.MULTILINE)
@@ -70,8 +72,7 @@ def find_agy_bin() -> str:
     for cand in (
         os.environ.get('AGY_BIN', ''),
         shutil.which('agy') or '',
-        os.path.expanduser('~/.local/bin/agy'),
-        '/Users/macm1pro/.local/bin/agy',
+        str(Path.home() / '.local/bin/agy'),
         '/root/.local/bin/agy',
     ):
         if cand and os.path.exists(cand):

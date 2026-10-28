@@ -19,26 +19,24 @@
 
 ---
 
-## ١) جدول المقارنة المقيسة بين البيئتين (`--target mac` مقابل `--target vps`)
+## 1) المقارنة المقيسة بين البيئتين (`--target mac` مقابل `--target vps`)
 
-| المعيار | الماك (`--target mac` · M1 Pro MPS) | الخادم (`--target vps` · 4 vCPU EPYC) |
-|---|---|---|
-| الجهاز والمحرك (`extract_emissions.py`) | `--device mps --dtype fp32 --batch 4 --window 30` | `--device cpu --engine torch --batch 1 --window 20` |
-| معامل الزمن الحقيقي للانبعاثات (`RTF`) | **٠٫٠٢٩٥** (`fp32`) / **٠٫٠٢١٢** (`fp16`) | **١٫٠٧ – ١٫٢٦** (`fp32`) |
-| زمن درس ٢٧ دقيقة (صوت خام → `align.json`) | **~٥٠ ثانية** (٤٨٫٥ث انبعاثات + ١٫٤ث محاذاة) | **~٣١٫٧ دقيقة** (١٨٥٠ث انبعاثات + ٥٤ث محاذاة) |
-| زمن درس ٤٤ دقيقة (`bardouni/1005/006`) | **~٨٠ ثانية** | **~٥٠ دقيقة** |
-| ذروة الذاكرة الفعلية | **~1.05GB** (انبعاثات) / **375MB** (محاذاة) | **1.35–1.45GB** (ذروة cgroup داخل `2000M`) |
-| تطابق اللوغاريتمات مع مرجع CPU `fp32` | `cos = 1.000000` · `argmax = 100.00%` | مرجع الأساس (`100%`) |
-| بيئة بايثون المعتمدة (`$ALIGN_PY`) | `/Users/macm1pro/venvs/ctc/bin/python` | `/root/venvs/ctc/bin/python` |
+1. **الجهاز والمحرك (`extract_emissions.py`)**: على الماك `--device mps --dtype fp32 --batch 4 --window 30`، وعلى الخادم `--device cpu --engine torch --batch 1 --window 20`.
+2. **معامل الزمن الحقيقي للانبعاثات (`RTF`)**: على الماك `0.0295` (`fp32`) أو `0.0212` (`fp16`)، وعلى الخادم `1.07 – 1.26` (`fp32`).
+3. **زمن درس 27 دقيقة (صوت خام إلى `align.json`)**: على الماك `~50 ثانية` (`48.5ث` انبعاثات + `1.4ث` محاذاة)، وعلى الخادم `~31.7 دقيقة` (`1850ث` انبعاثات + `54ث` محاذاة).
+4. **زمن درس 44 دقيقة (`bardouni/1005/006`)**: على الماك `~80 ثانية`، وعلى الخادم `~50 دقيقة`.
+5. **ذروة الذاكرة الفعلية**: على الماك `~1.05GB` (انبعاثات) و`375MB` (محاذاة)، وعلى الخادم `1.35–1.45GB` (ذروة cgroup داخل `2000M`).
+6. **تطابق اللوغاريتمات مع مرجع CPU `fp32`**: على الماك `cos = 1.000000` و`argmax = 100.00%`، وعلى الخادم مرجع الأساس (`100%`).
+7. **بيئة بايثون المعتمدة (`$ALIGN_PY`)**: على الماك `~/venvs/ctc/bin/python`، وعلى الخادم `/root/venvs/ctc/bin/python`.
 
 ---
 
-## ٢) متغيرات البيئة القياسية للخط
+## 2) متغيرات البيئة القياسية للخط
 
 - `$EXEC_TARGET`: بيئة التنفيذ (`auto` أو `mac` أو `vps`).
-- `$SERIES_WORKSPACE`: جذر مخازن العمل (`/Users/macm1pro/workspace` على الماك، و`/root/workspace` على الخادم).
-- `$SKILL_DIR`: مسار مجلد المهارة (`/Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline` على الماك، و`/root/workspace/SKILLS/sheikh-series-pipeline` على الخادم).
-- `$ALIGN_PY`: مفسر بايثون لبيئة CTC (`/Users/macm1pro/venvs/ctc/bin/python` على الماك، و`/root/venvs/ctc/bin/python` على الخادم).
+- `$SERIES_WORKSPACE`: جذر مخازن العمل (`~/workspace` على الماك، و`/root/workspace` على الخادم).
+- `$SKILL_DIR`: مسار مجلد المهارة (`~/REPOS/SKILLS/sheikh-series-pipeline` على الماك، و`/root/workspace/SKILLS/sheikh-series-pipeline` على الخادم).
+- `$ALIGN_PY`: مفسر بايثون لبيئة CTC (`~/venvs/ctc/bin/python` على الماك، و`/root/venvs/ctc/bin/python` على الخادم).
 - `$EM_DEVICE`: جهاز توليد الانبعاثات (`auto` يختار `mps` على الماك و`cuda` إن وُجد و`cpu` على الخادم).
 - `$EM_DTYPE`: الدقة العددية (`fp32` افتراضيًا، أو `fp16` على `mps`/`cuda` لتسريع إضافي).
 - `$EM_BATCH`: حجم الدفعة (`0` = تلقائي: `4` على `mps`/`cuda` و`1` على `cpu`).

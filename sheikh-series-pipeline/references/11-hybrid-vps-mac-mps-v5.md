@@ -129,7 +129,7 @@ flowchart TD
 2. **التشخيص الجذري الآلي (`diagnose_low_coverage`):**
    - إذا بقيت التغطية `< 95.0%` بعد إعادة المحاولة على الموجة الكاملة، يحلّل `diagnose_low_coverage(rep, dur)` السبب الجذري ويسجّله في `mac_align_fleet.log` و`<stem>.meta.json`:
      - **`TEXT_HALLUCINATION_OR_CHUNK_REPEAT`:** وجود كتل كلمات متصلة بلا أثر صوتي (`unaligned_clusters` بطول `>= 40` كلمة أو استيفاء كثيف نتيجة هلوسة مقطع صامت أو تكرار حدود المقاطع).
-     - **`DEAD_SILENCE_TAIL_OR_TRUNCATION`:** انتهاء الكلام الفعلي في الصوت مبكراً (`audio_span_pct < 80%`) بسبب ذيل صمت رقمي في الفيديو الأصلي (حيث يتوقف `ctc_pure_align.py` تلقائياً فور نفاد الأحداث الصوتية `ev_after == 0`، ويتخطى `agy_transcribe.py` المقاطع الصامتة عبر `_is_dead_silent_chunk` عند `max_volume <= -48 dB`).
+     - **`DEAD_SILENCE_TAIL_OR_TRUNCATION`:** انتهاء الكلام الفعلي في الصوت مبكراً (`audio_span_pct < 80%`) بسبب ذيل صمت رقمي في الفيديو الأصلي (حيث يتوقف `ctc_pure_align.py` تلقائياً فور نفاد الأحداث الصوتية `ev_after == 0`، ويتخطى `agy_transcribe.py` المقاطع الصامتة عبر `_measure_chunk_speech` عند `max_volume <= -48 dB`).
      - **`ACOUSTIC_MISMATCH_OR_DUBBED_TRACK`:** عدم تطابق صوتي واسع أو مسار مدبلج إنجليزياً؛ ولمنعه من الجذور يفرض `vps_align_feeder.py` و`agy_transcribe.py` اختيار المسار العربي الأصلي في `yt-dlp` عبر `[language^=ar]` و`[format_note*=original]`.
 
 ### و) تخفيف الحمل الحراري وإدارة ذاكرة الماك (`Thermal & Memory Throttling`)
@@ -141,22 +141,6 @@ flowchart TD
 
 ### ز) خيط مزامنة الكوتة الحية (`quota_sync_worker`)
 - يعمل كخيط خلفي دائم (`daemon=True`) داخل `mac_align_fleet.py`.
-- يستدعي كل **120 ثانية** أداة `/Users/macm1pro/.hermes/node/bin/antigravity-usage quota --json --all-models` محلياً على الماك، ويكتب النتيجة ذرياً في `/tmp/agy_quota_snapshot.json`، ثم ينسخها عبر اتصال SSH المدمج إلى السيرفر في `/root/workspace/ytb-build/live_quota.json`.
+- يستدعي كل **120 ثانية** أداة `~/.hermes/node/bin/antigravity-usage quota --json --all-models` محلياً على الماك، ويكتب النتيجة ذرياً في `/tmp/agy_quota_snapshot.json`، ثم ينسخها عبر اتصال SSH المدمج إلى السيرفر في `/root/workspace/ytb-build/live_quota.json`.
 - يضمن هذا الخيط أن حارس الكوتة على السيرفر (`_is_quota_safe_for_background` في `agy_transcribe.py`) يقرأ دائماً الاستهلاك الفعلي الحيّ لحساب Antigravity ويتوقف فوراً عند اقتراب الكوتة من حدود الأمان.
 
----
-
-## ٥) بوابة الفحص الحتمية للإصدار الخامس (`scripts/test_pipeline_v5_gates.py`)
-
-للتحقق الفوري والحتمي من سلامة جميع مكونات المعمارية الهجينة `v5.0` قبل أو أثناء التشغيل، نفّذ:
-
-```bash
-python3 /Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts/test_pipeline_v5_gates.py
-```
-
-تختبر البوابة خمس مراحل صارمة:
-1. **`Gate 1 (Syntax & Component Integrity)`:** فحص شجرة `AST` ووجود الدوال والثوابت المحورية في `agy_transcribe.py` (`download_lesson_audio` مع `direct_url`, `_is_quota_safe_for_background`, `_is_dead_silent_chunk`, `deduplicate_chunk_boundary_overlap`), `sanitize_preamble.py` (`strip_preamble_and_header`, `deduplicate_chunk_boundary_overlap`), `vps_align_feeder.py` (`[language^=ar]`), `mac_align_fleet.py` (`plan_silence`, `compact_wave`, `unpad_emissions`, `quota_sync_worker`, `MIN_ACCEPTABLE_ALIGN_PCT`, `diagnose_low_coverage`), `ctc_pure_align.py` (`tighten_word_onsets_against_breath_and_blank`, `align_slice`, `interpolate`), `transcribe_selected_smallest_first.py`, ووجود هذا المرجع `references/11-hybrid-vps-mac-mps-v5.md`.
-2. **`Gate 2 (Silence Compaction & Unpadding Math + Preamble Sanitizer)`:** اختبار رياضي فعلي لدوال `plan_silence` (بما فيها طيّ الصمت الرقمي الطويل عبر `abs_db=-55.0`) و`compact_wave` و`unpad_emissions` على موجة صوتية اصطناعية تحوي فجوات صمت طويلة والتأكد من استرجاع الطول الأصلي `T_orig` بدقة الملي ثانية، مع فحص `strip_preamble_and_header` على نصوص ملوثة بمقدمات لاتينية وترويسات وصفية.
-3. **`Gate 3 (Quota Guard, <95% Diagnosis Guard & Real .align.json Schema Validation)`:** اختبار `_is_quota_safe_for_background` على حالات الكوتة الحرجة (`5h < 15%`، والأسبوعية `<= 25%` مع `> 12h` مقابل `<= 12h`)، واختبار `diagnose_low_coverage` للحالات الأقل من `95.0%`، والتحقق من مخطط `.align.json` ودوال المحاذاة النقية (`shadow_words_1to1`, `interpolate`).
-4. **`Gate 4 (Pre-Speech Breath Onset Tightening Gate — ALIGN-ONSET-BREATH-JUMP)`:** محاكاة التقاط أول حرف من الكلمة التالية على صوت الشهيق في أول السكتة متبوعاً بـ`3.1s` من إطارات `<blank>`، والتأكد من أن `tighten_word_onsets_against_breath_and_blank` يشدّ بداية الكلمة للأمام (`>= 4.05s`) وبمدة طبيعية (`<= 0.85s`) مع منع `interpolate()` من ابتلاع سكتات النفس (`gap > 0.8s`).
-5. **`Gate 5 (Chunk-Boundary Overlap Deduplication & Post-Breath Onset Duration Gate)`:** اختبار `deduplicate_chunk_boundary_overlap` على حدود المقاطع المتتالية (`12` دقيقة) للتأكد من إزالة الجمل المكررة عند نقاط القطع مع الحفاظ الكامل `100%` على التكرارات التعبدية المشروعة (`«آمين آمين»`، `«صلى الله عليه وسلم»`)، وفحص سقف مدة الكلمات الطويلة بعد سكتة النفس (`max(0.85, 0.22 * n_chars)`).

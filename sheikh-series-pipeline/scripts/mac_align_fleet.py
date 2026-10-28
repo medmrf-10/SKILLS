@@ -20,9 +20,10 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 # استخدام النسخة المخزنة محلياً من النموذج فوراً إذا كانت مكتملة على القرص
-_hf_snap = '/Users/macm1pro/.cache/huggingface/hub/models--MahmoudAshraf--mms-300m-1130-forced-aligner/snapshots/49402e9577b1158620820667c218cd494cc44486'
+_hf_snap = str(Path.home() / '.cache/huggingface/hub/models--MahmoudAshraf--mms-300m-1130-forced-aligner/snapshots/49402e9577b1158620820667c218cd494cc44486')
 if os.path.exists(os.path.join(_hf_snap, 'pytorch_model.bin')) or os.path.exists(os.path.join(_hf_snap, 'model.safetensors')):
     os.environ.setdefault('HF_HUB_OFFLINE', '1')
     os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
@@ -30,7 +31,7 @@ if os.path.exists(os.path.join(_hf_snap, 'pytorch_model.bin')) or os.path.exists
 import numpy as np
 import torch
 
-SKILL_SCRIPTS = '/Users/macm1pro/REPOS/SKILLS/sheikh-series-pipeline/scripts'
+SKILL_SCRIPTS = str(Path(__file__).resolve().parent)
 sys.path.insert(0, SKILL_SCRIPTS)
 
 from ctc_forced_aligner import load_alignment_model  # noqa: E402
@@ -43,7 +44,7 @@ import ctc_pure_align  # noqa: E402
 VPS_HOST = os.environ.get('VPS_HOST', 'hermes-vps')
 REMOTE_BRIDGE = '/root/workspace/align-bridge/ready'
 LOCAL_SPOOL = '/tmp/mac_align_spool'
-STATE_FILE = '/Users/macm1pro/workspace/ytb-build/mac_align_state.json'
+STATE_FILE = str(Path.home() / 'workspace/ytb-build/mac_align_state.json')
 MAX_PREFETCH = int(os.environ.get('MAC_ALIGN_PREFETCH', '6'))
 PREFETCH_THREADS = int(os.environ.get('MAC_ALIGN_PREFETCH_THREADS', '2'))
 BATCH_SIZE = int(os.environ.get('MAC_ALIGN_BATCH_SIZE', '3'))
@@ -52,7 +53,7 @@ MIN_ACCEPTABLE_ALIGN_PCT = float(os.environ.get('MAC_ALIGN_MIN_PCT', '95.0'))
 MIN_BATTERY_PCT = int(os.environ.get('MAC_ALIGN_MIN_BATTERY_PCT', '20'))
 LOCAL_QUOTA_JSON = '/tmp/agy_quota_snapshot.json'
 REMOTE_QUOTA_JSON = '/root/workspace/ytb-build/live_quota.json'
-AGY_USAGE_BIN = '/Users/macm1pro/.hermes/node/bin/antigravity-usage'
+AGY_USAGE_BIN = str(Path.home() / '.hermes/node/bin/antigravity-usage')
 
 
 def _get_mac_battery_status(pmset_text=None):
@@ -99,10 +100,6 @@ def _ssh_mux_opts(slot='main'):
         '-o', 'ServerAliveCountMax=2',
         '-o', 'ConnectTimeout=15',
     ]
-
-
-def _ensure_ssh_master(slot='main'):
-    return True
 
 
 PREFETCH_QUEUE = queue.Queue(maxsize=MAX_PREFETCH)
@@ -195,7 +192,6 @@ def quota_sync_worker():
                     with open(tmp_q, 'w', encoding='utf-8') as qf:
                         qf.write(res.stdout.strip())
                     os.replace(tmp_q, LOCAL_QUOTA_JSON)
-                    _ensure_ssh_master('quota')
                     sq = subprocess.run(
                         ['scp', '-q', *mux_opts, LOCAL_QUOTA_JSON, f'{VPS_HOST}:{REMOTE_QUOTA_JSON}'],
                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -212,7 +208,6 @@ def quota_sync_worker():
 def list_remote_jobs(slot='list'):
     import base64
     with LIST_LOCK:
-        _ensure_ssh_master(slot)
         mux_opts = _ssh_mux_opts(slot)
         remote_script = (
             'import glob, json, os\n'
@@ -299,7 +294,6 @@ def prefetch_worker(worker_id=0):
                 remote_txt = job['txt_path']
 
                 t0 = time.time()
-                _ensure_ssh_master(slot)
                 r1 = subprocess.run(
                     ['scp', '-q', *mux_opts, f'{VPS_HOST}:{remote_opus}', local_opus],
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -451,7 +445,6 @@ def upload_and_finalize(job, local_align_path, rep):
         with UPLOAD_LOCK:
             for attempt in range(1, 5):
                 try:
-                    _ensure_ssh_master(slot)
                     subprocess.run(
                         ['ssh', *mux_opts, VPS_HOST, f'python3 -c "import base64; exec(base64.b64decode(\'{b64_up}\'))"'],
                         input=stdin_payload, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -543,7 +536,7 @@ def main():
                     _mod_mtimes[_mf] = _mt
             raw_txt = open(local_txt, encoding='utf-8', errors='replace').read()
             cleaned_txt, stripped_reasons = sanitize_preamble.strip_preamble_and_header(raw_txt)
-            min_keep_ratio = 0.40 if any(r in (stripped_reasons or []) for r in ('CHUNK_BOUNDARY_OVERLAP', 'TIMESTAMPED_DRAFT_REPEAT', 'LATIN_PREAMBLE')) else 0.70
+            min_keep_ratio = 0.70
             if stripped_reasons and cleaned_txt and cleaned_txt != raw_txt and len(cleaned_txt.split()) >= len(raw_txt.split()) * min_keep_ratio:
                 with open(local_txt, 'w', encoding='utf-8') as tf:
                     tf.write(cleaned_txt)

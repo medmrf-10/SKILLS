@@ -6,12 +6,10 @@
 
 ## 1. محولات الإدخال الأربعة (`The 4 Universal Source Adapters`)
 
-| المحول (`Adapter`) | نوع المصدر | السكربت الحتمي للبوابة | المدخلات الخام | المخرجات المدمجة |
-| :--- | :--- | :--- | :--- | :--- |
-| **`Adapter A`** | الكتب التراثية والمصادر المكتوبة (`Shamela / Turath / Markdown`) | `manifest_v4.py` + `merge_round.py` (`Gate v4.2`) | `raw_round{N}_books.json` | `round{N}_9_books_deep.json` |
-| **`Adapter B`** | تفريغات الدروس والسلاسل المرئية والصوتية (`Spoken Video Lectures + CTC Word Alignment`) | `usdb_v5/merge_lecture.py` (`Gate v5.0`) | `usdb_v5/raw_lectures.json` + `.align.json` | `usdb_v5/lectures_deep_merged.json` |
-| **`Adapter C`** | التثليث بين المتن والشرح والحاشية (`Matn-Sharh-Hashiyah Triangulation`) | `usdb_v5/merge_lecture.py` + `usdb_v5/build_cross_corpus_graph.py` | `base_matn_clauses` + شروح متعددة لنفس المتن | `matn_triangulation_index` في `cross_corpus_graph.json` |
-| **`Adapter D`** | الدورات التقنية والبرمجية والهندسية (`Technical & CS Courses + User Cognitive DNA`) | `usdb_v5/merge_course.py` (`Gate v5.0`) | `usdb_v5/raw_courses.json` | `usdb_v5/courses_deep_merged.json` |
+1. ****`Adapter A`****: نوع المصدر: الكتب التراثية والمصادر المكتوبة (`Shamela / Turath / Markdown`) — السكربت الحتمي للبوابة: `manifest_v4.py` + `merge_round.py` (`Gate v4.2`) — المدخلات الخام: `raw_round{N}_books.json` — المخرجات المدمجة: `round{N}_9_books_deep.json`
+2. ****`Adapter B`****: نوع المصدر: تفريغات الدروس والسلاسل المرئية والصوتية (`Spoken Video Lectures + CTC Word Alignment`) — السكربت الحتمي للبوابة: `usdb_v5/merge_lecture.py` (`Gate v5.0`) — المدخلات الخام: `usdb_v5/raw_lectures.json` + `.align.json` — المخرجات المدمجة: `usdb_v5/lectures_deep_merged.json`
+3. ****`Adapter C`****: نوع المصدر: التثليث بين المتن والشرح والحاشية (`Matn-Sharh-Hashiyah Triangulation`) — السكربت الحتمي للبوابة: `usdb_v5/merge_lecture.py` + `usdb_v5/build_cross_corpus_graph.py` — المدخلات الخام: `base_matn_clauses` + شروح متعددة لنفس المتن — المخرجات المدمجة: `matn_triangulation_index` في `cross_corpus_graph.json`
+4. ****`Adapter D`****: نوع المصدر: الدورات التقنية والبرمجية والهندسية (`Technical & CS Courses + User Cognitive DNA`) — السكربت الحتمي للبوابة: `usdb_v5/merge_course.py` (`Gate v5.0`) — المدخلات الخام: `usdb_v5/raw_courses.json` — المخرجات المدمجة: `usdb_v5/courses_deep_merged.json`
 
 ---
 
@@ -65,7 +63,7 @@
 يربط هذا المحرك جميع المدونات الأربع في رسم بياني معرفي واحد (`usdb_v5/cross_corpus_graph.json` + `web_data/usdb_v5_bundle.js`) يُستعرض عبر المنصة التفاعلية الشاملة `usdb_explorer.html` (`USDB v5.5 Workstation`):
 
 1. **جسر الآيات القرآنية العابر للمدونات (`Cross-Corpus Ayah Bridge — 473 Unique Verses`):**
-   - يوحد جميع الشواهد القرآنية المستخرجة من الكتب التراثية الـ 81 ومن الدروس المرئية الـ 8 بصيغة معيارية `surah:ayah` (مثل `16:44` لسورة النحل الآية 44، و`2:117` و`36:82` لآيات `كن فيكون`)، ويربطها مباشرة بملفات الموسوعة التفسيرية (40 تفسيراً في `/Users/macm1pro/REPOS/firdaws/docs/tafsir/data/<id>/<surah>.json.gz`).
+   - يوحد جميع الشواهد القرآنية المستخرجة من الكتب التراثية الـ 81 ومن الدروس المرئية الـ 8 بصيغة معيارية `surah:ayah` (مثل `16:44` لسورة النحل الآية 44، و`2:117` و`36:82` لآيات `كن فيكون`)، ويربطها مباشرة بملفات الموسوعة التفسيرية (40 تفسيراً في `$FIRDAWS_TAFSIR_DIR/<id>/<surah>.json.gz`).
 2. **جسر تثليث المتون المتعدد (`Multi-Matn Triangulation Bridge — matn_systems_bridge`):**
    - يدعم المحرك في الإصدار `v5.5` ربط منظومات متون متعددة في آنٍ واحد (`29` ربطاً ثلاثياً موثقاً):
      - **المنظومة الأولى (`umm-al-barahin` — العقيدة):** *متن أم البراهين* للإمام السنوسي بتغطية كاملة **100% لجميع الفقرات الست (`UB:1..UB:6`)** عبر 4 دروس مرئية للشيخ علي محمود العمري (`02`, `07`, `12`) والشيخ محمد البردوني (`11`) مع الموازيات المكتوبة في كتب العقيدة.

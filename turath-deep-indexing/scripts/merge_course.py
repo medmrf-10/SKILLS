@@ -22,7 +22,7 @@ if not hasattr(mr, "verify_quote_verbatim"):
         return (mode != "failed"), mode
     mr.verify_quote_verbatim = _verify_quote_verbatim
 
-USDB_DIR = Path(os.environ.get("USDB_WORK_DIR", "/Users/macm1pro/REPOS/books/usdb_v5"))
+USDB_DIR = Path(os.environ.get("USDB_WORK_DIR", Path(__file__).resolve().parent))
 
 BANNED_FLUFF_OR_ANALOGY_RE = re.compile(
     r"(?:تخيل\s+شجرة|تخيل\s+دفتر|تخيل\s+عامل|تخيل\s+صندوق|يا\s+صديقي|سؤال\s+ممتاز|أهلاً\s+بك|مرحباً\s+بك|هل\s+ننتقل|هل\s+نبدأ)"

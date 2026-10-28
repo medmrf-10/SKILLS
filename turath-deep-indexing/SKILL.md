@@ -1,8 +1,8 @@
 ---
 name: turath-deep-indexing
 description: >-
-  Use when indexing, extracting, auditing, merging, or repairing Islamic heritage books across 22 sciences, spoken video lectures with CTC forced alignment and Matn-Sharh triangulation (`ytb_to_usdb_intake.py`), technical/educational courses with User Cognitive DNA, developing the Quality Gate (Gate v4.3 / USDB v5.7), building cross-corpus knowledge graphs and relational SQLite+FTS5 entity databases (`build_objects_sqlite.py`), preparing dual-layer embeddings (EmbeddingGemma 2), or running regression tests across multi-genre corpora.
-version: 5.7
+  Use when indexing, extracting, auditing, merging, or repairing Islamic heritage books across 22 sciences, spoken video lectures with CTC forced alignment and Matn-Sharh triangulation, technical/educational courses with User Cognitive DNA, developing the Quality Gate (Gate v4.3 / USDB v5.6), building cross-corpus knowledge graphs and relational SQLite+FTS5 entity schemas, preparing dual-layer embeddings (EmbeddingGemma 2), or running regression tests across multi-genre corpora.
+version: 5.6
 ---
 
 ## القواعد الحاكمة الإلزامية (التدرج الأسي اليدوي وشلال الحسابات)
@@ -80,30 +80,25 @@ version: 5.7
 
 تضم المهارة داخل مجلدها `scripts/` جميع محركات التجهيز والدمج وبوابات الجودة الصارمة ومجموعة الاختبارات الآلية:
 
-| السكربت في `$SKILL_DIR/scripts/` | الوظيفة الدقيقة |
-| :--- | :--- |
-| [`scripts/manifest_v4.py`](./scripts/manifest_v4.py) | التجهيز المسبق الحتمي للكتب (`Pre-Flight v4.2`): يطبع مخططات المصادر المختلفة (`hdth`, `tfsr`, `shamela`)، يعزل مقدمات المحققين، يسقط الأجزاء المتداخلة (`b=a`)، يدمج العناوين القصيرة (`< 4` كلمات) مع تمييز الخواتيم (`colophon` مقابل `section_heading`)، ويستدعي `fn_linker_v4.py`. |
-| [`scripts/fn_linker_v4.py`](./scripts/fn_linker_v4.py) | محرك ربط الحواشي السداسي اللهجات بـ `Monotone LCS`: يطابق رموز الحواشي، يدعم سياق الآيات بـ `﴿...﴾` و`{...}`، ويصنف رموز `(¬N)` في المصادر منزوعة الهوامش (`hdth`) كـ `source_stripped_neg_marker`. |
-| [`scripts/merge_round.py`](./scripts/merge_round.py) | بوابة الجودة الصارمة والدمج الحتمي للكتب (`Gate v4.3 — v4.3_universal_strict_grounded`): يدعم 22 علماً قياسياً + أي علم جديد ديناميكياً، يفك محارف الترضية المدمجة (`\ufd40..\ufd4f`)، يدعم تحويل الإسناد `[ح]`، العقود الهجرية التقريبية (`نيف / بضع`)، الآيات المعقوفة `{...}`، وفواصل الشعر `**`، ويدعم `--work-dir <dir>`. |
-| [`scripts/check_round_p0.py`](./scripts/check_round_p0.py) | فاحص تشخيصي سريع لأخطاء `P0` عبر جولة واحدة أو جميع الجولات أو علم محدد (يدعم `--work-dir <dir>`). |
-| [`scripts/merge_lecture.py`](./scripts/merge_lecture.py) | بوابة الجودة والدمج الحتمي للدروس المرئية وتثليث المتون (`Gate v5.1`): يحاذي المقاطع 100%، يسقط التوقيت الصوتي بالكلمة من `.align.json` بنافذة محلية وحدود كلمات صارمة تمنع قفز المؤشر، يتحقق من الأعلام القصيرة (`1–3` كلمات)، ويدعم الدروس القصيرة (`< 6,000` حرف) وخيار `--work-dir <dir>`. |
-| [`scripts/ytb_to_usdb_intake.py`](./scripts/ytb_to_usdb_intake.py) | جسر الإدخال التلقائي لسلاسل `sheikh-series-pipeline` (`_meta.json` + `.txt` + `.align.json`) إلى `merge_lecture.py` (`USDB v5.7`) مع التحقق من التطابق الحرفي 100% وإسقاط التوقيت الصوتي وتوليد نصوص التضمين المزدوج. |
-| [`scripts/merge_course.py`](./scripts/merge_course.py) | بوابة الجودة والدمج الحتمي للدورات التقنية (`Gate v5.1`): يحمي الكتل الذرية الخمس (`code_fence`, `markdown_table`, `display_math`, `callout_blockquote`, `details_block`)، ويفرض البصمة المعرفية للمستخدم وقانون `UAX #9 Rule P2` للمحارف المحايدة في بداية السطر العربي، ويدعم `--work-dir <dir>`. |
-| [`scripts/build_cross_corpus_graph.py`](./scripts/build_cross_corpus_graph.py) | محرك بناء الجسر المعرفي العابر للمدونات: يوحد الشواهد القرآنية (`surah:ayah`) ويربطها بالتفاسير الأربعين (`firdaws`)، ويبني تثليث المتون المتعدد، ويوحد أسماء الأعلام مع حماية الكنى المشتركة (`أبو بكر / ابن عمر / عبد الله`) من التصادم الجزئي. |
-| [`scripts/build_objects_sqlite.py`](./scripts/build_objects_sqlite.py) | محرك قاعدة بيانات الكيانات العلائقية القياسية (`objects.sqlite` — `SQLite + FTS5`): يحول مخرجات الكتب والدروس المرئية والدورات إلى 11 جدولاً علائقياً مترابطاً + `passages_fts` مع فهارس الربط الكاملة وعزل طبقة الإسناد `isnad` عن المتن `matn` للتوافق مع `turath-embedding-gemma2`. |
-| [`scripts/test_skill_gates.py`](./scripts/test_skill_gates.py) | حزمة الاختبارات الانحدارية الآلية (`12` اختباراً حتمياً في `< 0.02` ثانية) تفحص جميع القواعد والحالات الحدية (`#27–#38`). |
-| [`scripts/test_objects_sqlite_gates.py`](./scripts/test_objects_sqlite_gates.py) | بوابة الفحص الثلاثية (`3-Layer Quality Gate`) لفحص `test_skill_gates.py` + `ytb_to_usdb_intake.py` + `build_objects_sqlite.py` (`objects.sqlite` + استعلامات SQL العلائقية وتثليث المتون). |
-| [`scripts/audit_corpus_health.py`](./scripts/audit_corpus_health.py) | فاحص الصحة الشامل للمدونة وبوابات الجودة عبر جميع الجولات والمسارات. |
+1. **السكريبت [`scripts/manifest_v4.py`](./scripts/manifest_v4.py)**: التجهيز المسبق الحتمي للكتب (`Pre-Flight v4.2`): يطبع مخططات المصادر المختلفة (`hdth`, `tfsr`, `shamela`)، يعزل مقدمات المحققين، يسقط الأجزاء المتداخلة (`b=a`)، يدمج العناوين القصيرة (`< 4` كلمات) مع تمييز الخواتيم (`colophon` مقابل `section_heading`)، ويستدعي `fn_linker_v4.py`.
+2. **السكريبت [`scripts/fn_linker_v4.py`](./scripts/fn_linker_v4.py)**: محرك ربط الحواشي السداسي اللهجات بـ `Monotone LCS`: يطابق رموز الحواشي، يدعم سياق الآيات بـ `﴿...﴾` و`{...}`، ويصنف رموز `(¬N)` في المصادر منزوعة الهوامش (`hdth`) كـ `source_stripped_neg_marker`.
+3. **السكريبت [`scripts/merge_round.py`](./scripts/merge_round.py)**: بوابة الجودة الصارمة والدمج الحتمي للكتب (`Gate v4.3 — v4.3_universal_strict_grounded`): يدعم 22 علماً قياسياً + أي علم جديد ديناميكياً، يفك محارف الترضية المدمجة (`\ufd40..\ufd4f`)، يدعم تحويل الإسناد `[ح]`، العقود الهجرية التقريبية (`نيف / بضع`)، الآيات المعقوفة `{...}`، وفواصل الشعر `**`، ويدعم `--work-dir <dir>`.
+4. **السكريبت [`scripts/check_round_p0.py`](./scripts/check_round_p0.py)**: فاحص تشخيصي سريع لأخطاء `P0` عبر جولة واحدة أو جميع الجولات أو علم محدد (يدعم `--work-dir <dir>`).
+5. **السكريبت [`scripts/merge_lecture.py`](./scripts/merge_lecture.py)**: بوابة الجودة والدمج الحتمي للدروس المرئية وتثليث المتون (`Gate v5.1`): يحاذي المقاطع 100%، يسقط التوقيت الصوتي بالكلمة من `.align.json` بنافذة محلية وحدود كلمات صارمة تمنع قفز المؤشر، يتحقق من الأعلام القصيرة (`1–3` كلمات)، ويدعم الدروس القصيرة (`< 6,000` حرف) وخيار `--work-dir <dir>`.
+6. **السكريبت [`scripts/merge_course.py`](./scripts/merge_course.py)**: بوابة الجودة والدمج الحتمي للدورات التقنية (`Gate v5.1`): يحمي الكتل الذرية الخمس (`code_fence`, `markdown_table`, `display_math`, `callout_blockquote`, `details_block`)، ويفرض البصمة المعرفية للمستخدم وقانون `UAX #9 Rule P2` للمحارف المحايدة في بداية السطر العربي، ويدعم `--work-dir <dir>`.
+7. **السكريبت [`scripts/build_cross_corpus_graph.py`](./scripts/build_cross_corpus_graph.py)**: محرك بناء الجسر المعرفي العابر للمدونات: يوحد الشواهد القرآنية (`surah:ayah`) ويربطها بالتفاسير الأربعين (`firdaws`)، ويبني تثليث المتون المتعدد، ويوحد أسماء الأعلام مع حماية الكنى المشتركة (`أبو بكر / ابن عمر / عبد الله`) من التصادم الجزئي.
+8. **السكريبت [`scripts/test_skill_gates.py`](./scripts/test_skill_gates.py)**: حزمة الاختبارات الانحدارية الآلية (`12` اختباراً حتمياً في `< 0.02` ثانية) تفحص جميع القواعد والحالات الحدية (`#27–#38`).
+9. **السكريبت [`scripts/audit_corpus_health.py`](./scripts/audit_corpus_health.py)**: فاحص الصحة الشامل للمدونة وبوابات الجودة عبر جميع الجولات والمسارات.
 
 ---
 
-## 3. القواعد الثماني عشرة الحاكمة للوكيل (`Gate v4.3 & USDB v5.7 Golden Rules` — لا تكسرها أبداً)
+## 3. القواعد الثماني عشرة الحاكمة للوكيل (`Gate v4.3 & USDB v5.6 Golden Rules` — لا تكسرها أبداً)
 
 1. **أمر طرفية واحد في كل خطوة (`One Shell Command at a Time`):**
    - يُمنع ربط الأوامر بـ `&&` أو `;`. نفذ كل أمر منفرداً وتحقق من مخرجه.
    - لا تستخدم `\"` داخل تعبيرات `{...}` في `f-string` عند استدعاء `python3 -c '...'`.
 2. **افحص قبل أن تفترض، وشغّل حزمة اختبارات البوابات بعد أي تعديل في السكربتات:**
-   - شغّل `python3 "$SKILLS_DIR/turath-deep-indexing/scripts/test_skill_gates.py"` و`python3 "$SKILLS_DIR/turath-deep-indexing/scripts/test_objects_sqlite_gates.py"` للتأكد من سلامة جميع البوابات الحتمية، و`audit_corpus_health.py` لفحص حالة المدونة.
+   - شغّل `python3 "$SKILLS_DIR/turath-deep-indexing/scripts/test_skill_gates.py"` للتأكد من سلامة جميع البوابات الحتمية، و`audit_corpus_health.py` لفحص حالة المدونة.
 3. **لا تعدل حرفاً واحداً في النص الخام (`raw_text`):**
    - يبقى `raw_text` مطابقاً للمصدر 100%، وعند استخراج جوهرة أو اقتباس يجب أن يبدأ الاقتباس من بداية الجملة الصحيحة دلالياً لا من بعد النقطتين آلياً.
 4. **ممنوع الاقتباس الآلي لما بعد النقطتين (`No Blind Colon-Splitting`):**
@@ -144,6 +139,6 @@ version: 5.7
 4. **[`references/04-all-mistakes-and-postmortems.md`](./references/04-all-mistakes-and-postmortems.md)** — السجل التاريخي الكامل للأخطاء الـ **38** ودراسة أسبابها الجذرية وعلاجاتها الحتمية.
 5. **[`references/05-open-backlog-and-roadmap.md`](./references/05-open-backlog-and-roadmap.md)** — سجل الإنجازات الشامل وخارطة الطريق.
 6. **[`references/06-usdb-v5-universal-adapters.md`](./references/06-usdb-v5-universal-adapters.md)** — المواصفة الهندسية الكاملة للمحولات الأربعة (`USDB v5.6`) وحزمة الاختبارات الانحدارية `scripts/test_skill_gates.py`.
-7. **[`references/07-entity-db-sqlite-schema.md`](./references/07-entity-db-sqlite-schema.md)** — المعمارية العلائقية لقاعدة بيانات الكيانات (`objects.sqlite` — `11` جدولاً + `FTS5`) وجسر الإدخال الصوتي `scripts/ytb_to_usdb_intake.py` وبوابة الفحص الثلاثية `scripts/test_objects_sqlite_gates.py`.
+7. **[`references/07-entity-db-sqlite-schema.md`](./references/07-entity-db-sqlite-schema.md)** — المعمارية العلائقية القياسية لقاعدة بيانات الكيانات (`objects.sqlite` — `11` جدولاً + `FTS5`).
 
 

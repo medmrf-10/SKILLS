@@ -108,8 +108,8 @@ class FamilyFailoverTests(unittest.TestCase):
         self.assertEqual(pool.group_chain('family'), ['f1', 'f2', 'f3'])
 
     def test_slots_are_solo_plus_one_family_slot(self):
-        self.assertEqual(pool.transcribe_slots(), [['solo'], ['f1', 'f2', 'f3']])
-        self.assertEqual(pool.transcribe_pool(), ('solo', 'f1'))
+        self.assertEqual(pool.transcribe_slots(), [['f1', 'f2', 'f3'], ['solo']])
+        self.assertEqual(pool.transcribe_pool(), ('f1', 'solo'))
 
     def test_role_labels(self):
         self.assertEqual(pool.role_label('f2'), 'Family Member #2')
@@ -150,6 +150,66 @@ class FamilyFailoverTests(unittest.TestCase):
         self.assertEqual(fam['profile'], 'f3')
         self.assertFalse(fam['eligible'])
         self.assertEqual(fam['failover_from'], ['f1', 'f2'])
+
+    def test_strict_priority_waterfall_family_then_brain_then_ram(self):
+        """يختبر شلال الأولويات التتابعي الصارم (العائلة -> brain -> ram) بغض النظر عن تفوق كوتة الطبقة الأدنى."""
+        fam = lambda n, order: {'email': n + '@x.com', 'role': 'family-member', 'group': 'family',
+                                'failover_order': order, 'status': 'active'}
+        with open(self.reg_path, 'w') as f:
+            json.dump({
+                'main': 'medmrf10',
+                'groups': {'family': {'shared_quota': True, 'use_for': 'transcribe', 'priority_tier': 1}},
+                'profiles': {
+                    'medmrf10': {'email': 'm10@x.com', 'role': 'main'},
+                    'brain': {'email': 'brain@x.com', 'role': 'transcribe', 'priority_tier': 2, 'status': 'active'},
+                    'ram': {'email': 'ram@x.com', 'role': 'transcribe', 'priority_tier': 3, 'status': 'active'},
+                    'mb10': fam('mb10', 1),
+                    'bm10': fam('bm10', 2),
+                },
+            }, f)
+        for n in ('brain', 'ram', 'mb10', 'bm10'):
+            pdir = os.path.join(pool.PROFILES_ROOT, n)
+            os.makedirs(os.path.dirname(pool.token_path(pdir)), exist_ok=True)
+            with open(pool.token_path(pdir), 'w') as fh:
+                json.dump(make_token(n + '@x.com'), fh)
+
+        self.assertEqual(pool.transcribe_slots(), [['mb10', 'bm10'], ['brain'], ['ram']])
+
+        # 1) العائلة فوق حد الأمان (20% فقط) بينما brain (90%) وram (100%) أعلى -> يختار العائلة (mb10)
+        table_tier1 = {
+            'mb10': ({'gemini_5h_pct': 25.0, 'gemini_weekly_pct': 20.0, 'gemini_weekly_reset': ''}, None),
+            'bm10': ({'gemini_5h_pct': 25.0, 'gemini_weekly_pct': 20.0, 'gemini_weekly_reset': ''}, None),
+            'brain': ({'gemini_5h_pct': 95.0, 'gemini_weekly_pct': 90.0, 'gemini_weekly_reset': ''}, None),
+            'ram': ({'gemini_5h_pct': 100.0, 'gemini_weekly_pct': 100.0, 'gemini_weekly_reset': ''}, None),
+        }
+        with mock.patch.object(pool, 'fetch_usage', side_effect=self._usage(table_tier1)):
+            c1 = pool.pick_best_pro_for_transcription()
+        self.assertEqual([x['profile'] for x in c1], ['mb10', 'brain', 'ram'])
+
+        # 2) العائلة مستنفدة (< حد الأمان) بينما brain (30%) وram (100%) مؤهلان -> ينتقل إلى brain فقط ولا يلمس ram
+        table_tier2 = {
+            'mb10': ({'gemini_5h_pct': 2.0, 'gemini_weekly_pct': 1.0, 'gemini_weekly_reset': ''}, None),
+            'bm10': ({'gemini_5h_pct': 2.0, 'gemini_weekly_pct': 1.0, 'gemini_weekly_reset': ''}, None),
+            'brain': ({'gemini_5h_pct': 40.0, 'gemini_weekly_pct': 30.0, 'gemini_weekly_reset': ''}, None),
+            'ram': ({'gemini_5h_pct': 100.0, 'gemini_weekly_pct': 100.0, 'gemini_weekly_reset': ''}, None),
+        }
+        with mock.patch.object(pool, 'fetch_usage', side_effect=self._usage(table_tier2)):
+            c2 = pool.pick_best_pro_for_transcription()
+        self.assertEqual(c2[0]['profile'], 'brain')
+        self.assertEqual(c2[1]['profile'], 'ram')
+        self.assertFalse(c2[2]['eligible'])
+
+        # 3) العائلة وbrain مستنفدان معاً -> ينتقل إلى الطبقة الثالثة ram
+        table_tier3 = {
+            'mb10': ({}, 'disabled'),
+            'bm10': ({'gemini_5h_pct': 0.0, 'gemini_weekly_pct': 0.0, 'gemini_weekly_reset': ''}, None),
+            'brain': ({'gemini_5h_pct': 1.0, 'gemini_weekly_pct': 1.0, 'gemini_weekly_reset': ''}, None),
+            'ram': ({'gemini_5h_pct': 60.0, 'gemini_weekly_pct': 50.0, 'gemini_weekly_reset': ''}, None),
+        }
+        with mock.patch.object(pool, 'fetch_usage', side_effect=self._usage(table_tier3)):
+            c3 = pool.pick_best_pro_for_transcription()
+        self.assertEqual(c3[0]['profile'], 'ram')
+        self.assertTrue(c3[0]['eligible'])
 
 
 class TokenHelpersTests(unittest.TestCase):

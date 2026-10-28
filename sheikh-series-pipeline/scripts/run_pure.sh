@@ -68,18 +68,18 @@ if [ "$TARGET" = "vps" ] && [ "$OS_NAME" = "Darwin" ] && [ "${LOCAL_ONLY:-0}" !=
   VPS_HOST="${VPS_HOST:-hermes-vps}"
   if [ -n "$SERIES_DIR" ]; then
     echo "[سلسلة] توجيه التنفيذ إلى الخادم البعيد ($VPS_HOST)..."
-    exec ssh "$VPS_HOST" "SERIES_WORKSPACE=${SERIES_WORKSPACE:-/root/workspace} PURE_WORKDIR=${PURE_WORKDIR:-} PURE_OUT=${PURE_OUT:-} /root/workspace/SKILLS/sheikh-series-pipeline/scripts/run_pure_vps.sh --series $SERIES_DIR ${ONLY_FILTER:+--only $ONLY_FILTER}"
+    exec ssh "$VPS_HOST" "SERIES_WORKSPACE=${SERIES_WORKSPACE:-/root/workspace} PURE_WORKDIR=${PURE_WORKDIR:-} PURE_OUT=${PURE_OUT:-} /root/workspace/SKILLS/sheikh-series-pipeline/scripts/run_pure.sh --target vps --series $SERIES_DIR ${ONLY_FILTER:+--only $ONLY_FILTER}"
   else
     echo "[$TAG] توجيه التنفيذ إلى الخادم البعيد ($VPS_HOST)..."
-    exec ssh "$VPS_HOST" "SERIES_WORKSPACE=${SERIES_WORKSPACE:-/root/workspace} PURE_WORKDIR=${PURE_WORKDIR:-} AUDIO=${AUDIO:-} TXT=${TXT:-} /root/workspace/SKILLS/sheikh-series-pipeline/scripts/run_pure_vps.sh $TAG"
+    exec ssh "$VPS_HOST" "SERIES_WORKSPACE=${SERIES_WORKSPACE:-/root/workspace} PURE_WORKDIR=${PURE_WORKDIR:-} AUDIO=${AUDIO:-} TXT=${TXT:-} /root/workspace/SKILLS/sheikh-series-pipeline/scripts/run_pure.sh --target vps $TAG"
   fi
 fi
 
 SKILL_DIR="${SKILL_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 if [ "$TARGET" = "mac" ]; then
-  DEFAULT_ROOT="/Users/macm1pro/workspace"
-  DEFAULT_PY="/Users/macm1pro/venvs/ctc/bin/python"
+  DEFAULT_ROOT="$HOME/workspace"
+  DEFAULT_PY="$HOME/venvs/ctc/bin/python"
   DEFAULT_DEVICE="mps"
   DEFAULT_WINDOW="30"
   DEFAULT_BATCH="4"

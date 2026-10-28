@@ -1,33 +1,12 @@
-# 07 — معمارية قاعدة بيانات الكيانات العلائقية وجسر الإدخال الصوتي (`USDB v5.7 Entity DB SQLite + FTS5 & YTB Intake Bridge`)
+# 07 — معمارية قاعدة بيانات الكيانات العلائقية (`Entity DB SQLite + FTS5 Schema`)
 
-يوثق هذا المرجع التوسعة الهندسية للإصدار **`USDB v5.7`** داخل مهارة `turath-deep-indexing`، والتي تضيف طبقتين حتميتين فوق محولات المصادر الأربعة (`Adapters A–D`):
-1. **جسر الإدخال التلقائي لسلاسل الدروس الصوتية والمرئية (`scripts/ytb_to_usdb_intake.py`):** يربط مخرجات خط إنتاج التفريغ والمحاذاة الصوتية (`sheikh-series-pipeline`) مباشرةً ببوابة الدمج الحتمي `merge_lecture.py` (`Gate v5.1`).
-2. **محرك قاعدة بيانات الكيانات العلائقية القياسية (`scripts/build_objects_sqlite.py`):** يحول مخرجات الكتب التراثية (`merge_round.py`) والدروس المرئية (`merge_lecture.py` / `ytb_to_usdb_intake.py`) والدورات التقنية (`merge_course.py`) والجسر المعرفي (`build_cross_corpus_graph.py`) إلى قاعدة بيانات علائقية موحدة **`objects.sqlite` (`SQLite + FTS5`)** جاهزة للربط الفوري مع محرك المتجهات `turath-embedding-gemma2`.
+يوثق هذا المرجع المخطط العلائقي القياسي لقاعدة بيانات الكيانات الموحدة **`objects.sqlite` (`SQLite + FTS5`)** داخل مهارة `turath-deep-indexing`، والتي توحد مخرجات الكتب التراثية (`merge_round.py`) والدروس المرئية (`merge_lecture.py`) والدورات التقنية (`merge_course.py`) والجسر المعرفي (`build_cross_corpus_graph.py`) في `11` جدولاً علائقياً مترابطاً جاهزاً للربط مع محرك المتجهات `turath-embedding-gemma2`.
 
 ---
 
-## 1. جسر الإدخال التلقائي للدروس الصوتية (`scripts/ytb_to_usdb_intake.py`)
+## 1. المخطط العلائقي القياسي لقاعدة بيانات الكيانات (`objects.sqlite` — 11 جدولاً + `FTS5`)
 
-### أ. مدخلات السلسلة القياسية (`sheikh-series-pipeline` Directory Contract):
-يستقبل `ytb_to_usdb_intake.py` مسار مجلد سلسلة يحتوي على:
-- **`_meta.json`:** بيانات السلسلة الكلية (`series_id` / `slug`، `title`، `sheikh` / `speaker`، `science`، `state`، ومعرف المتن المشروح `base_work_id`، `base_work_title`، وفقراته `base_matn_clauses`).
-- **`<NNN>_<vid>.txt`:** النص الخام المفرغ للدرس رقم `<NNN>` المرتبط بمعرف يوتيوب `<vid>`.
-- **`<NNN>_<vid>.align.json`:** ملف المحاذاة الصوتية بالكلمة (`CTC Forced Alignment`) بصيغتيه المعتمدتين (`w` / `x` بالثواني، أو `words` + `start` + `dur` بالسنتي ثانية).
-- **`<NNN>_<vid>.meta.json` (اختياري):** البيانات الوصفية الخاصة بالدرس الفردي (`title`، `video_id`، `duration_sec_total`).
-
-### ب. الوظائف الحتمية لجسر الإدخال:
-1. **تجهيز ملفات الإدخال المعيارية (`raw_lectures.json` + `deep_lecture_<lid>.json`):**
-   - يدعم تمرير ملف استخراج وكيلي خارجي (`--extractions extractions.json`) أو التوليد الهيكلي الحتمي المباشر من النص الخام والمتن المشروح.
-2. **الدمج والتحقق الصارم عبر `merge_lecture.py` (`Gate v5.1`):**
-   - يتحقق من التطابق الحرفي التام **`100% Lossless Verbatim Partitioning`** (`concat(passage.raw_text) == raw_lesson_text`، صفر حروف مفقودة).
-   - يسقط التوقيت الصوتي بالثانية (`start_sec`, `end_sec`, `youtube_clip_url`, `youtube_timestamp_url`) من `.align.json` ويتأكد من كون `time_basis == "ctc_forced_alignment"`.
-   - يولد حقلَي التضمين المزدوج `embed_matn_text` و`embed_concept_text` لكل مقطع، ويحقق عقد الدرة المزدوجة (`verbatim_rule` + `polished_rule` المصفى من اللوازم الشفهية) وتثليث المتون (`matn_triangulation`).
-
----
-
-## 2. المخطط العلائقي القياسي لقاعدة بيانات الكيانات (`objects.sqlite` — 11 جدولاً + `FTS5`)
-
-يبني `scripts/build_objects_sqlite.py` قاعدة بيانات `SQLite` علائقية قياسية بالأسماء والأعمدة الدقيقة التالية لضمان التوافق التام مع `turath-embedding-gemma2`:
+تُبنى قاعدة بيانات `SQLite` العلائقية القياسية بالأسماء والأعمدة الدقيقة التالية لضمان التوافق التام مع `turath-embedding-gemma2`:
 
 ### 1. جدول المصادر الكلية (`sources`)
 ```sql
@@ -228,23 +207,10 @@ CREATE TABLE matn_triangulation (
 ```
 
 ### 12. الفهارس العلائقية الإلزامية (`Indexes`)
-ينشئ `build_objects_sqlite.py` فهارس تسريع البحث والربط على جميع المفاتيح الأساسية:
-- `passage_id` في جميع الجداول الفرعية (`passage_persons`, `passage_places`, `events_chronology`, `stories_cases`, `science_gems`, `evidences`, `matn_triangulation`)
-- `person_id` و`source_layer` في `passage_persons`
-- `place_id` في `passage_places`
-- `year_hijri` في `events_chronology`
-- `surah_ayah_key` في `evidences`
-- `explained_matn_clause_id` و`explained_matn_book_id` في `matn_triangulation`
-
----
-
-## 3. بوابة الفحص الثلاثية (`scripts/test_objects_sqlite_gates.py`)
-
-يفحص سكربت `scripts/test_objects_sqlite_gates.py` المنظومة عبر ثلاث بوابات متتابعة:
-- **`Gate 1` (Intake & Regression Gate):** يشغل جميع اختبارات `test_skill_gates.py` الانحدارية بالإضافة إلى اختبار `ytb_to_usdb_intake.py` على سلسلة دروس صوتية محاذاة (`.txt` + `.align.json` + `_meta.json`) وتمريرها عبر `merge_lecture.py`.
-- **`Gate 2` (Schema & Lossless Integrity Gate):** يبني `objects.sqlite` من مصدرين متكاملين (كتاب تراثي مسند ومحقّق بالحواشي + سلسلة دروس صوتية تشرح نفس المتن)، ويتحقق من امتلاء جميع الجداول الـ 11 + `passages_fts` ومن شرط **`0 chars lost`** (`SUM(LENGTH(passages.raw_text)) == SUM(lessons_or_parts.raw_char_count)`).
-- **`Gate 3` (Relational Query & Triangulation Gate):** يختبر استعلامات SQL العلائقية الدقيقة:
-  1. عزل رواة الإسناد (`source_layer='isnad'`) عن أعلام المتن (`source_layer='matn'`) وعدم تصادم الكنى المشتركة.
-  2. البحث النصي الفوري عبر `passages_fts`.
-  3. استرجاع روابط التوقيت الصوتي بالثانية (`youtube_timestamp_url`, `start_sec`, `end_sec`) في المقاطع والدرر.
-  4. تثليث المتون (`matn_triangulation`) العابر للوسائط بين فقرات الكتاب التراثي ومقاطع الشرح الصوتي بالثانية.
+تُنشأ فهارس تسريع البحث والربط على جميع المفاتيح الأساسية:
+1. الفهرس `passage_id` في جميع الجداول الفرعية (`passage_persons`, `passage_places`, `events_chronology`, `stories_cases`, `science_gems`, `evidences`, `matn_triangulation`).
+2. الفهرس `person_id` و`source_layer` في `passage_persons`.
+3. الفهرس `place_id` في `passage_places`.
+4. الفهرس `year_hijri` في `events_chronology`.
+5. الفهرس `surah_ayah_key` في `evidences`.
+6. الفهرس `explained_matn_clause_id` و`explained_matn_book_id` في `matn_triangulation`.

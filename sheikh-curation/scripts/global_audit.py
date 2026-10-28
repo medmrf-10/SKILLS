@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Global Structural & Database Audit for All 16 Curated Sheikhs.
+Global Structural & Database Audit for Curated Scholar Archives.
 
 Verifies:
 1. Every child lesson (`is_child: true`) is preceded by a valid parent lesson and `parent_yt_id == last_parent_yt`.
 2. In every series, main lesson `display_no` values are strictly monotonic (`n > prev_num`) with zero resets.
 3. Non-numeric main `display_no` values are restricted to `{"مقدمة", "برومو", "فهرس", "ختام"}`.
-4. In `long-form` series (median duration >= 900s, non-clip series), zero main lessons have `0 < duration < 120s`, and zero parent lessons `< 300s` have child lessons `>= 300s`.
-5. `data/curated.db` series and lesson counts match `data/curated_sheikhs/<sheikh>.json` 100%.
+4. In `long-form` series (median duration >= 900s, non-clip series), zero parent lessons `< min_duration` have child lessons `>= min_duration`.
+5. Optional SQLite `curated.db` series and lesson counts match `<id>.json` 100% when the database is present.
+
 Usage:
-    python3 global_audit.py [--min-duration 300] [--min-series-median 900] [--min-duration-contemplative 120] [sheikh_id ...]
+    python3 global_audit.py [--data-dir DIR] [--db-path FILE] [--min-duration 300] [--min-series-median 900] [--min-duration-contemplative 120] [target ...]
 """
 
 import argparse
@@ -20,55 +21,65 @@ import re
 import sqlite3
 import sys
 
-ROOT = (
-    Path(os.environ["CURATED_ROOT"])
-    if "CURATED_ROOT" in os.environ
-    else (
-        Path.cwd()
-        if (Path.cwd() / "data/curated_sheikhs").exists()
-        else Path(__file__).resolve().parents[4]
-    )
-)
-CURATED_DIR = (
-    Path(os.environ["CURATED_DIR"])
-    if "CURATED_DIR" in os.environ
-    else ROOT / "data/curated_sheikhs"
-)
-DB_PATH = (
-    Path(os.environ["CURATED_DB"])
-    if "CURATED_DB" in os.environ
-    else ROOT / "data/curated.db"
-)
 
-SHEIKHS = [
-    "omari",
-    "asimi",
-    "alihani",
-    "hawwa",
-    "bardoni",
-    "sariri",
-    "sayed",
-    "bouti",
-    "gomaa",
-    "kamali",
-    "jifri",
-    "shaarawy",
-    "samarrai",
-    "hashemi",
-    "dedew",
-    "hafiz",
-    "ayman",
-]
+def get_default_data_dir() -> Path:
+    env_dir = os.environ.get("CURATION_DATA_DIR") or os.environ.get("CURATED_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    env_root = os.environ.get("CURATED_ROOT")
+    if env_root:
+        return (Path(env_root).expanduser() / "data" / "curated_sheikhs").resolve()
+    return (Path.cwd() / "data" / "curated_sheikhs").resolve()
+
+
+def get_default_db_path(data_dir: Path) -> Path:
+    env_db = os.environ.get("CURATED_DB")
+    if env_db:
+        return Path(env_db).expanduser().resolve()
+    return (data_dir.parent / "curated.db").resolve()
+
+
+def resolve_target_paths(targets: list[str], data_dir: Path) -> list[tuple[str, Path]]:
+    resolved: list[tuple[str, Path]] = []
+    if not targets:
+        if not data_dir.is_dir():
+            return resolved
+        for p in sorted(data_dir.glob("*.json")):
+            if p.name.endswith("_raw.json"):
+                continue
+            resolved.append((p.stem, p))
+        return resolved
+
+    for t in targets:
+        cand = Path(t)
+        if cand.suffix == ".json" and cand.exists():
+            resolved.append((cand.stem, cand))
+        else:
+            stem = t[:-5] if t.endswith(".json") else t
+            resolved.append((stem, data_dir / f"{stem}.json"))
+    return resolved
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Global Structural & Database Audit for Curated Sheikhs."
+        description="Global Structural & Database Audit for Curated Scholar Archives."
     )
     parser.add_argument(
         "targets",
         nargs="*",
-        help="Sheikh IDs to audit (default: all 17 curated sheikhs)",
+        help="Scholar IDs or JSON file paths to audit (default: all *.json in --data-dir)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Directory containing curated <id>.json files (default: $CURATION_DATA_DIR or ./data/curated_sheikhs)",
+    )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=None,
+        help="Path to SQLite curated.db (default: $CURATED_DB or <data-dir>/../curated.db)",
     )
     parser.add_argument(
         "--min-duration",
@@ -93,23 +104,32 @@ def parse_args():
 
 def main():
     args = parse_args()
-    targets = args.targets if args.targets else SHEIKHS
+    data_dir = args.data_dir.expanduser().resolve() if args.data_dir else get_default_data_dir()
+    db_path = args.db_path.expanduser().resolve() if args.db_path else get_default_db_path(data_dir)
 
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    targets = resolve_target_paths(args.targets, data_dir)
+    if not targets:
+        print(f"No curated JSON files found in {data_dir}. Pass --data-dir or target files.", file=sys.stderr)
+        sys.exit(1)
+
+    conn = sqlite3.connect(db_path) if db_path.is_file() else None
+    cur = conn.cursor() if conn else None
 
     total_series = 0
     total_lessons = 0
     all_errors = []
 
-    for sh in targets:
-        p = CURATED_DIR / f"{sh}.json"
-        data = json.load(open(p, encoding="utf-8"))
+    for sh, p in targets:
+        if not p.is_file():
+            all_errors.append(f"{sh}: file not found ({p})")
+            continue
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
         series_list = data.get("series", [])
         sh_lessons = 0
         sh_errs = []
 
-        for s_idx, s in enumerate(series_list, 1):
+        for _s_idx, s in enumerate(series_list, 1):
             sid = s.get("id")
             st = s.get("state")
             if st not in ("completed", "stopped", "ongoing"):
@@ -163,30 +183,36 @@ def main():
                             f"{sid} idx={l_idx}: invalid main display_no={disp} ({yt})"
                         )
 
-        cur.execute("SELECT COUNT(*) FROM series WHERE sheikh_id=?", (sh,))
-        db_s_cnt = cur.fetchone()[0]
-        cur.execute(
-            "SELECT COUNT(*) FROM lessons l JOIN series s ON l.series_id=s.id WHERE s.sheikh_id=?",
-            (sh,),
-        )
-        db_l_cnt = cur.fetchone()[0]
+        db_info = ""
+        if cur is not None:
+            cur.execute("SELECT COUNT(*) FROM series WHERE sheikh_id=?", (sh,))
+            db_s_cnt = cur.fetchone()[0]
+            cur.execute(
+                "SELECT COUNT(*) FROM lessons l JOIN series s ON l.series_id=s.id WHERE s.sheikh_id=?",
+                (sh,),
+            )
+            db_l_cnt = cur.fetchone()[0]
 
-        if db_s_cnt != len(series_list):
-            sh_errs.append(f"DB series count {db_s_cnt} != JSON {len(series_list)}")
-        if db_l_cnt != sh_lessons:
-            sh_errs.append(f"DB lesson count {db_l_cnt} != JSON {sh_lessons}")
+            if db_s_cnt != len(series_list):
+                sh_errs.append(f"DB series count {db_s_cnt} != JSON {len(series_list)}")
+            if db_l_cnt != sh_lessons:
+                sh_errs.append(f"DB lesson count {db_l_cnt} != JSON {sh_lessons}")
+            db_info = f" (DB={db_s_cnt:3d}/{db_l_cnt:5d})"
 
         total_series += len(series_list)
         total_lessons += sh_lessons
         print(
-            f"{sh:10s} | series={len(series_list):3d} (DB={db_s_cnt:3d}) | lessons={sh_lessons:5d} (DB={db_l_cnt:5d}) | errors={len(sh_errs)}"
+            f"{sh:12s} | series={len(series_list):3d} | lessons={sh_lessons:5d}{db_info} | errors={len(sh_errs)}"
         )
         for e in sh_errs[:10]:
             print("  ERR:", e)
         all_errors.extend(sh_errs)
 
+    if conn is not None:
+        conn.close()
+
     print(
-        f"\nTOTAL: {len(targets)} Sheikhs | {total_series} series | {total_lessons} lessons | {len(all_errors)} errors"
+        f"\nTOTAL: {len(targets)} files | {total_series} series | {total_lessons} lessons | {len(all_errors)} errors"
     )
     sys.exit(1 if all_errors else 0)
 

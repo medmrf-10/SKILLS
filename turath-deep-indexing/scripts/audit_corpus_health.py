@@ -15,8 +15,8 @@ import os
 import sys
 from pathlib import Path
 
-BOOKS_DIR = Path(os.environ.get("TURATH_BOOKS_REPO", "/Users/macm1pro/REPOS/books"))
-SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", "/Users/macm1pro/REPOS/SKILLS"))
+BOOKS_DIR = Path(os.environ.get("TURATH_BOOKS_REPO", Path(__file__).resolve().parent))
+SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", Path(__file__).resolve().parent.parent.parent))
 
 
 def main():

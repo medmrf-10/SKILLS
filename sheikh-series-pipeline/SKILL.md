@@ -37,17 +37,35 @@ metadata:
 
 1. **اسأل أو تحقّق قبل البدء:** إذا استدعى المالك المهارة ولم يحدّد صراحةً أين يريد التنفيذ (`الماك` أم `الخادم VPS` أم `الخط الهجين v5`)، **اسأله أولاً سؤالاً مباشراً من سطر واحد:**
    *«هل تريد تنفيذ السلسلة على الماك (سرعة MPS القصوى)، أم على الخادم VPS (تشغيل خلفي معزول)، أم عبر الخط الهجين v5 (تفريغ VPS + محاذاة Mac MPS)؟»*
-2. **إيّاك أن تعامل الماك كالـVPS أو تعامل الـVPS كالماك:** بمجرد اختيار البيئة، يتغيّر سلوكك وإعدادات الموارد في **كل المراحل** جذرياً وفق الجدول الملزم أدناه:
-
-| البُعد التشغيلي | بروفايل الماك (`--target mac` · Apple Silicon M1 Pro · 16GB) | بروفايل الخادم (`--target vps` · Linux 4 vCPU · 7.8GB بلا Swap) | البروفايل الهجين (`v5.0 Hybrid` · VPS + Opus Bridge + Mac MPS) |
-|---|---|---|---|
-| **فلسفة الموارد** | **استغلال كامل للسرعة والتوازي** (GPU موحّد + ذاكرة مريحة؛ بلا تقييد `cgroup` ولا تقليم طبقات) | **حماية صارمة للبوابة من OOM** (عزل إلزامي بسقف `MemoryMax=2800M` ووحدة محاذاة واحدة في اللحظة) | **تخصّص مزدوج ٢٤/٧:** التفريغ على VPS مع حارس الكوتة والذاكرة + المحاذاة على Mac MPS بدقة `fp16` وطيّ الصمت وتخفيف الحمل الحراري |
-| **غلاف التشغيل الطويل** | `caffeinate -i <cmd>` (لمنع نوم الماك؛ **ممنوع** استدعاء `systemd-run` لأنه غير موجود على macOS) | `systemd-run --scope -p MemoryMax=2800M --unit=... --collect <cmd>` (**إلزامي** لكل مهمة ثقيلة) | VPS: `transcribe_selected_smallest_first.py` + `vps_align_feeder.py` · Mac: `LaunchAgent` (`com.mohamed.mac-align-fleet.plist` مع `caffeinate -i`) |
-| **التفريغ (`agy_transcribe.py`)** | توازي كامل: `--workers 4 --chunk-minutes 12` | توازي محافظ: `--workers 2 --chunk-minutes 12` | على VPS: `SERIES_WORKERS=4 × CHUNK_WORKERS=4` (من الأصغر للأكبر) + دعم `Archive.org` (`direct_url`) + حارس الكوتة الحي (`>=15%` 5h و`>=25%` أسبوعي) |
-| **بوابة الجودة (`check_transcripts.py --llm`)** | تدقيق متوازٍ سريع: `--llm --llm-workers 4` | تدقيق محافظ: `--llm --llm-workers 2` | تطهير فوري بـ`strip_preamble_and_header` أثناء التفريغ وقبل المحاذاة + بوابة الجودة الثلاثية |
-| **الانبعاثات الصوتية (`extract_emissions.py`)** | `--device mps --dtype fp32 --batch 4 --window 30 --layers 0` (**٢٤ طبقة كاملة** + وضع `--series-dir` بتحميل النموذج مرة واحدة) | `--device cpu --engine torch --batch 1 --window 20 --layers 0` (أو `--seg-sec 300 --silence-compact 1` داخل سقف `2800M`) | جسر `Opus 12kbps VoIP (~3MB/h)` ← الماك `mps · fp16 · batch=3 · cooldown=3.5s` مع طيّ الصمت (`plan_silence` + `compact_wave` + `unpad_emissions`) |
-| **السرعة الفعلية المقيسة** | درس ٢٧د في **~٥٠ث** · سلسلة ١٠٫٧ ساعات (٩ دروس) في **~٢٠ دقيقة** (`RTF = 0.031`) | درس ٢٧د في **٢٠٫٨–٣١٫٧ دقيقة** (`RTF = 0.78–1.30`) | نقل الشبكة **~٠٫٥ث/درس** · المحاذاة الكاملة على الماك بسرعة **٣٨×–٤٩× من الوقت الحقيقي** (`RTF ≈ 0.020–0.026`) |
-| **مفسر بايثون وجذر العمل** | `/Users/macm1pro/venvs/ctc/bin/python` · `/Users/macm1pro/workspace` | `/root/venvs/ctc/bin/python` · `/root/workspace` | VPS: `/root/workspace/ytb` + `/root/workspace/align-bridge/ready` · Mac: `/tmp/mac_align_spool` |
+2. **إيّاك أن تعامل الماك كالـVPS أو تعامل الـVPS كالماك:** بمجرد اختيار البيئة، يتغيّر سلوكك وإعدادات الموارد في **كل المراحل** جذرياً وفق الضوابط الملزمة أدناه:
+   1. **فلسفة الموارد**:
+      - بروفايل الماك (`--target mac` · Apple Silicon M1 Pro · 16GB): استغلال كامل للسرعة والتوازي (GPU موحّد + ذاكرة مريحة؛ بلا تقييد `cgroup` ولا تقليم طبقات).
+      - بروفايل الخادم (`--target vps` · Linux 4 vCPU · 7.8GB بلا Swap): حماية صارمة للبوابة من OOM (عزل إلزامي بسقف `MemoryMax=2800M` ووحدة محاذاة واحدة في اللحظة).
+      - البروفايل الهجين (`v5.0 Hybrid` · VPS + Opus Bridge + Mac MPS): تخصّص مزدوج 24/7؛ التفريغ على VPS مع حارس الكوتة والذاكرة + المحاذاة على Mac MPS بدقة `fp16` وطيّ الصمت وتخفيف الحمل الحراري.
+   2. **غلاف التشغيل الطويل**:
+      - بروفايل الماك: `caffeinate -i <cmd>` (لمنع نوم الماك؛ ممنوع استدعاء `systemd-run` لأنه غير موجود على macOS).
+      - بروفايل الخادم: `systemd-run --scope -p MemoryMax=2800M --unit=... --collect <cmd>` (إلزامي لكل مهمة ثقيلة).
+      - البروفايل الهجين: على VPS يعمل `transcribe_selected_smallest_first.py` + `vps_align_feeder.py`، وعلى الماك يعمل `LaunchAgent` (`com.mohamed.mac-align-fleet.plist` مع `caffeinate -i`).
+   3. **التفريغ (`agy_transcribe.py`)**:
+      - بروفايل الماك: توازي كامل `--workers 4 --chunk-minutes 12`.
+      - بروفايل الخادم: توازي محافظ `--workers 2 --chunk-minutes 12`.
+      - البروفايل الهجين: على VPS يعمل `SERIES_WORKERS=4 × CHUNK_WORKERS=4` (من الأصغر للأكبر) + دعم `Archive.org` (`direct_url`) + حارس الكوتة الحي (`>=15%` 5h و`>=25%` أسبوعي).
+   4. **بوابة الجودة (`check_transcripts.py --llm`)**:
+      - بروفايل الماك: تدقيق متوازٍ سريع `--llm --llm-workers 4`.
+      - بروفايل الخادم: تدقيق محافظ `--llm --llm-workers 2`.
+      - البروفايل الهجين: تطهير فوري بـ`strip_preamble_and_header` أثناء التفريغ وقبل المحاذاة + بوابة الجودة الثلاثية.
+   5. **الانبعاثات الصوتية (`extract_emissions.py`)**:
+      - بروفايل الماك: `--device mps --dtype fp32 --batch 4 --window 30 --layers 0` (24 طبقة كاملة + وضع `--series-dir` بتحميل النموذج مرة واحدة).
+      - بروفايل الخادم: `--device cpu --engine torch --batch 1 --window 20 --layers 0` داخل سقف `2800M`.
+      - البروفايل الهجين: جسر `Opus 12kbps VoIP (~3MB/h)` ← الماك `mps · fp16 · batch=3 · cooldown=3.5s` مع طيّ الصمت (`plan_silence` + `compact_wave` + `unpad_emissions`).
+   6. **السرعة الفعلية المقيسة**:
+      - بروفايل الماك: درس 27د في `~50ث` · سلسلة 10.7 ساعات (9 دروس) في `~20 دقيقة` (`RTF = 0.031`).
+      - بروفايل الخادم: درس 27د في `20.8–31.7 دقيقة` (`RTF = 0.78–1.30`).
+      - البروفايل الهجين: نقل الشبكة `~0.5ث/درس` · المحاذاة الكاملة على الماك بسرعة `38x–49x` من الوقت الحقيقي (`RTF ≈ 0.020–0.026`).
+   7. **مفسر بايثون وجذر العمل**:
+      - بروفايل الماك: `~/venvs/ctc/bin/python` · `~/workspace`.
+      - بروفايل الخادم: `/root/venvs/ctc/bin/python` · `/root/workspace`.
+      - البروفايل الهجين: على VPS المسار `/root/workspace/ytb` + `/root/workspace/align-bridge/ready`، وعلى الماك المسار `/tmp/mac_align_spool`.
 
 ## When to Use
 
@@ -55,21 +73,19 @@ metadata:
 - تشغيل طابور التفريغ الشامل مرتّباً من السلاسل الأصغر إلى الأكبر (`transcribe_selected_smallest_first.py` — `333` سلسلة، `7,383` درساً) مع حماية الكوتة الحية والذاكرة.
 - فحص جودة التفريغات القائمة ببوابة الجودة الثلاثية (`check_transcripts.py --llm --align-dir ...`) لكشف البتر الصامت (انخفاض معدل الكلمات في الدقيقة `WPM`)، أو التحريفات الصوتية للمصطلحات، أو القوائم المعكوسة، أو ترويسات البيانات الوصفية غير المنطوقة.
 - إكمال سلسلة ناقصة أو إعادة تفريغ المحاضرات الطويلة (`> 15 دقيقة`) مع التقطيع التلقائي عند السكتات والدمج عبر `agy_transcribe.py`.
-- محاذاة سلسلة قائمة بالمسار النقي (Pure CTC v4.2 / v5.0): انبعاثات مرة واحدة (`extract_emissions.py` أو `mac_align_fleet.py` مع طيّ الصمت `fp16`) ثم فيتربي بنافذة أفق متحركة (`ctc_pure_align.py`) ⇒ تغطية ١٠٠٪ بلا Whisper ولا كاش كلمات.
+- محاذاة سلسلة قائمة بالمسار النقي (Pure CTC v4.2 / v5.0): انبعاثات مرة واحدة (`extract_emissions.py` أو `mac_align_fleet.py` مع طيّ الصمت `fp16`) ثم فيتربي بنافذة أفق متحركة (`ctc_pure_align.py`) ⇒ تغطية 100% بلا Whisper ولا كاش كلمات.
 
 ## القاعدة الذهبية في سطر
 
 **حدّد البيئة أولاً (`mac` أو `vps` أو `hybrid v5`) ← التفريغ = `agy_transcribe.py` ← الفحص = `check_transcripts.py --sync-meta --llm` ← المحاذاة = `run_pure.sh --target mac|vps --series <dir>` (أو تلقائياً عبر جسر `Opus 12kbps` إلى `mac_align_fleet.py`).**
 
-## الخريطة العامة (٥ مراحل)
+## الخريطة العامة (5 مراحل)
 
-| مرحلة | على الماك (`--target mac`) | على الخادم (`--target vps`) | في المعمارية الهجينة (`v5.0 Hybrid`) | الأداة الجوهرية | المرجع |
-|---|---|---|---|---|---|
-| ٠ الاستقبال والترتيب | محلي سريع | عبر `mirath-audio` / محلي | فهرسة وترتيب تصاعدي من الأصغر للأكبر (`333` سلسلة) | `new_series.py` · `transcribe_selected_smallest_first.py` | `01-intake-and-registry.md` · `11-…` |
-| ١ التفريغ التبادلي | `--workers 4` (متوازٍ) | `--workers 2` (محافظ) | على VPS (`gemini-3.8-flash-high` + `direct_url` + حارس الكوتة الحي + تحويل `.opus` فوري) | `agy_transcribe.py` | `02-transcription-pluggable.md` · `11-…` |
-| ٢ بوابة الجودة الثلاثية | `--llm-workers 4` | `--llm-workers 2` | تطهير مزدوج في `agy_transcribe.py` و`mac_align_fleet.py` + فحص حتمي ودلالي | `check_transcripts.py --sync-meta --llm` · `sanitize_preamble.py` | `02-…` §بوابة الجودة |
-| ٣ المحاذاة الأساسية (v4.2 / v5.0) | `mps · batch=4 · layers=0` (~٢٠د للسلسلة) | `cpu cgroup 2800M · batch=1 · layers=0` | جسر `Opus 12kbps VoIP` ← `mac_align_fleet.py` (`mps fp16` + طي الصمت `38x–49x`) | `run_pure.sh` · `vps_align_feeder.py` · `mac_align_fleet.py` | `03-alignment-pure-ctc.md` · `11-…` |
-| ٤ النشر والطبقات | بأمر المالك | بأمر المالك | رفع تلقائي لـ`.align.json` وتحديث `.meta.json` على VPS؛ والنشر الخارجي بأمر المالك | `attach_align.py` · `copy_layers.py` · `test_pipeline_v5_gates.py` | `04-publish-and-layers.md` · `11-…` |
+1. **المرحلة 0 — الاستقبال والترتيب**: محلي سريع على الماك، أو عبر `mirath-audio` على الخادم، أو فهرسة وترتيب تصاعدي من الأصغر للأكبر (`333` سلسلة) في المعمارية الهجينة عبر `new_series.py` و`transcribe_selected_smallest_first.py` (المرجع: `01-intake-and-registry.md` و`11-hybrid-vps-mac-mps-v5.md`).
+2. **المرحلة 1 — التفريغ التبادلي**: `--workers 4` على الماك، أو `--workers 2` على الخادم، أو على VPS (`gemini-3.8-flash-high` + `direct_url` + حارس الكوتة الحي + تحويل `.opus` فوري) عبر `agy_transcribe.py` (المرجع: `02-transcription-pluggable.md` و`11-hybrid-vps-mac-mps-v5.md`).
+3. **المرحلة 2 — بوابة الجودة الثلاثية**: `--llm-workers 4` على الماك، أو `--llm-workers 2` على الخادم، مع تطهير الديباجة في `agy_transcribe.py` و`mac_align_fleet.py` وفحص حتمي ودلالي عبر `check_transcripts.py --sync-meta --llm` و`sanitize_preamble.py` (المرجع: `02-transcription-pluggable.md`).
+4. **المرحلة 3 — المحاذاة الأساسية (v4.2 / v5.0)**: `mps · batch=4 · layers=0` على الماك، أو `cpu cgroup 2800M · batch=1 · layers=0` على الخادم، أو جسر `Opus 12kbps VoIP` إلى `mac_align_fleet.py` (`mps fp16` + طي الصمت `38x–49x`) عبر `run_pure.sh` و`vps_align_feeder.py` و`mac_align_fleet.py` (المرجع: `03-alignment-pure-ctc.md` و`11-hybrid-vps-mac-mps-v5.md`).
+5. **المرحلة 4 — النشر والطبقات**: رفع تلقائي لـ`.align.json` وتحديث `.meta.json` على VPS في الوضع الهجين، والنشر الخارجي بأمر المالك فقط عبر `attach_align.py` و`copy_layers.py` (المرجع: `04-publish-and-layers.md` و`11-hybrid-vps-mac-mps-v5.md`).
 
 > البنية الكاملة للعتاد وأنماط التشغيل على الماك والخادم والخط الهجين في `05-hardware-and-execution-profiles.md` و `07-ops-and-guards.md` و `11-hybrid-vps-mac-mps-v5.md`.
 
@@ -99,11 +115,9 @@ python3 "$SKILL_DIR/scripts/agy_transcribe.py" <series_dir> \
     [--max-single-minutes 15] [--chunk-minutes 12] [--workers 4] [--force] [--check-usage]
 ```
 
-- **سياسة حسابات التفريغ الافتراضية (`brain` + عائلة Google برأس `mb10`):** (المرجع الكامل: مهارة `agy-multi-account` و`profiles.json`)
-  - **`medmrf10` (`medmrf.10@gmail.com` — Ultra):** هو **الحساب الرئيسي (`Main Account`)** المخصّص للجلسات الحوارية وإنشاء الخطب والدروس؛ **لا يُستعمل افتراضياً في التفريغ الصوتي**.
-  - **خانتان مستقلتان للتفريغ:** **`brain`** (`brainthomas555@gmail.com`) بحصته الخاصة، و**عائلة Google** كخانة واحدة (حصة أعضائها مشتركة): الحساب العامل **`mb10`**، وعند تعثّره (حظر/عدم أهلية) ينتقل السكربت تلقائياً إلى **`bm10` ثم `mb19` ثم `medmrfco`**. جوجل تعاقب الحساب المخالف نفسه لا العائلة، فالقفز للتالي يحفظ الاستمرارية (لا يزيد السعة).
-  - **`medmrf19`** مدير العائلة وهو **محظور من جوجل (403)** فلا يُستعمل، و**`animeco`** غير مؤهل لـ Antigravity حالياً فهو خارج التناوب.
-  - عند تشغيل `agy_transcribe.py` دون تحديد `--agy-profile` (أو مع `--agy-profile auto`)، يفحص السكربت `/usage` (بصفر توكن) لخانتَي `brain` والعائلة و**يختار صاحب الكوتة الأسبوعية الأعلى** (`DEFAULT_PRO_POOL` و`FAMILY_FAILOVER` في السكربت يعكسان `profiles.json`).
+- **شلال الحسابات الصارم للتفريغ (`العائلة [mb10, bm10, mb19, medmrfco] -> brain -> ram`):**
+  - **`medmrf10` (`medmrf.10@gmail.com` — Ultra):** هو **الحساب الرئيسي (`Main Account`)** المخصّص لتطبيق `Antigravity` الرئيسي؛ **يُحظر استعماله في التفريغ الصوتي أو المعالجة الخلفية**.
+  - **التدرج الإلزامي (`PRIORITY_WATERFALL`):** تُستهلك حصة **عائلة Google (`mb10` ثم `bm10` ثم `mb19` ثم `medmrfco`)** أولاً بالكامل، ولا يُنتقل إلى **`brain`** إلا عند نفاد حصة العائلة أو دخولها في التبريد، ولا يُنتقل إلى **`ram`** إلا عند نفاد حصة العائلة و`brain` معاً.
 - **حارس جلسة يوتيوب وتنزيل الـ VPS (`yt_session_check.py` في `vps_align_feeder.py`):** تنزيل الـ VPS يعتمد على كوكيز يصدّرها `mirath-audio` من Chrome الدائم (CDP:9222) المسجَّل في يوتيوب. إن خرج Chrome من الحساب تموت الكوكيز (`Sign in to confirm you're not a bot`). المغذّي يفحص `LOGIN_INFO` (بلا أي طلب ليوتيوب) قبل أي `yt-dlp`: إن كان خارج الحساب لا يضرب يوتيوب ويؤجّل الدرس ويكتب تحذيرًا واضحًا، ويستأنف تلقائيًا بعد تسجيل الدخول يدويًا عبر noVNC (انظر فخ ٦٤ في `references/06-pitfalls-catalogue.md`). مع تراجع زمني لكل درس فاشل وقاطع دائرة. التحقق: `yt_session_ok` و`yt_blocked_until` في `align_feeder_state.json`. **التسليم للماك (`mac_audio_assist.py`) معطّل بقرار المالك** (لا مخاطرة بعنوان الماك عند يوتيوب). اختبارات: `python3 -m unittest discover -s tests`.
 - **دعم التنزيل المزدوج (YouTube + `Archive.org` `direct_url`):** تفحص `download_lesson_audio()` حقل `direct_url`؛ فإذا كان رابطاً مباشراً من `archive.org/` أو ملفاً صوتياً مباشراً، تنزّله عبر `curl -fL` وتتحقق من سلامة مدته عبر `is_valid_audio_file()`، وإلا تنزّله عبر `mirath-audio` أو `yt-dlp`.
 - **حارس الكوتة الحي (`_is_quota_safe_for_background`):** يقرأ `/root/workspace/ytb-build/live_quota.json` (المزامَن من الماك كل دقيقتين) ويوقف عمال الخلفية مؤقتاً إذا هبطت كوتة الـ5 ساعات دون **`15%`** (حمايةً لـ`10%` للوكيل الرئيسي) أو إذا هبطت الكوتة الأسبوعية إلى **`<= 25%`** وكان المتبقي على التجديد أكثر من **`12` ساعة**.
@@ -143,7 +157,7 @@ python3 "$SKILL_DIR/scripts/check_transcripts.py" <series_dir> \
 #    على السيرفر (لتغذية الدروس القديمة غير المحاذاة إلى جانب التحويل الفوري في agy_transcribe.py):
 python3 "$SKILL_DIR/scripts/vps_align_feeder.py"
 #    على الماك (يعمل تلقائياً كـ LaunchAgent تحت com.mohamed.mac-align-fleet.plist مع caffeinate -i):
-/usr/bin/caffeinate -i /Users/macm1pro/venvs/ctc/bin/python "$SKILL_DIR/scripts/mac_align_fleet.py"
+/usr/bin/caffeinate -i "$HOME/venvs/ctc/bin/python" "$SKILL_DIR/scripts/mac_align_fleet.py"
 
 # ب) معالجة سلسلة كاملة محلياً دفعةً واحدة (تحميل النموذج مرة واحدة + فك الصوت في الذاكرة بلا ملفات .wav):
 PURE_OUT=/path/to/out bash "$SKILL_DIR/scripts/run_pure.sh" --target mac --series /path/to/series_dir
@@ -173,11 +187,10 @@ systemd-run --scope -p MemoryMax=${MEMORY_GUARD_MB:-2000M} --unit=pure001 --coll
 
 ---
 
-## المرحلة ٤ — النشر والطبقات وبوابة الفحص الحتمية (بأمر المالك فقط)
+## المرحلة 4 — النشر والطبقات (بأمر المالك فقط)
 
 - `attach_align.py <sheikh/row> [--align-dir DIR]` ينشر `<NNN>_<VID>.align.json` بجانب النص ويحدّث `meta.align` (وفي الوضع الهجين `v5.0` يتولى `upload_and_finalize()` في `mac_align_fleet.py` رفع `.align.json` وتحديث `.meta.json` وتنظيف الجسر تلقائياً على `hermes-vps`).
 - `copy_layers.py` ينسخ طبقات التلخيص والأسئلة والمحاذاة **بالمطابقة القاطعة للهوية فقط** (YouTube ID أو `row-key` + رقم الدرس).
-- `test_pipeline_v5_gates.py` يفحص حتمياً سلامة مكونات `v5.0` عبر خمس بوابات (`Gate 1..5`: شجرة AST، رياضيات طيّ الصمت وإعادة النفخ `T_orig`، تطهير المقدمات اللاتينية، حارس الكوتة الحي، مخطط `.align.json`، بوابة `Gate 4: Pre-Speech Breath Onset Tightening Gate`، وبوابة `Gate 5: Chunk-Boundary Overlap Deduplication & Post-Breath Onset Duration Gate`).
 - **حظر النشر الذاتي:** لا نشر تلقائي ولا دفع إلى مستودعات خارجية بلا أمر صريح من المالك.
 
 ---
@@ -187,13 +200,10 @@ systemd-run --scope -p MemoryMax=${MEMORY_GUARD_MB:-2000M} --unit=pure001 --coll
 - `01-intake-and-registry.md` — المخازن، مخطط `SERIES_CONFIG`، `new_series.py`، وكشف القوائم المعكوسة.
 - `02-transcription-pluggable.md` — طبقة التفريغ التبادلية (`agy_transcribe.py`) وبوابة الجودة المزدوجة (`check_transcripts.py --llm`).
 - `03-alignment-pure-ctc.md` — المسار النقي v4.2 (`extract_emissions.py` + `ctc_pure_align.py`) على الماك (`mps`) والخادم (`cpu`).
-- `03-alignment-primary-v3.md` — المسار التاريخي v3 بالمراسي والمعايرة (للتحقق المتقاطع فقط).
-- `03-alignment-legacy-whisper.md` — المسار التاريخي الأول (Whisper DTW).
 - `04-publish-and-layers.md` — طبقات المعرفة، مخطط `align.json`، وأوراق الروابط.
 - `05-hardware-and-execution-profiles.md` — بروفايلات التشغيل على الماك (`--target mac`) والخادم (`--target vps`).
-- `06-pitfalls-catalogue.md` — كتالوج الأخطاء الميدانية (١ إلى ٥٥: العَرَض ← السبب الجذري ← الإصلاح).
+- `06-pitfalls-catalogue.md` — كتالوج الأخطاء الميدانية (العَرَض ← السبب الجذري ← الإصلاح).
 - `07-ops-and-guards.md` — قواعد المالك الحاكمة ومنظومة الحرّاس.
 - `08-measured-baselines.md` — خطوط الأساس المقيسة ونتائج التجارب قبل/بعد التحسين.
-- `09-v2-upgrade-spec.md` — المواصفة المعمارية التاريخية لترقية المحرك.
 - `10-emissions-engine-onnx.md` — مقاييس محرك الانبعاثات (`MPS GPU` مقابل `CPU FP32` مقابل `ONNX UINT8`).
 - `11-hybrid-vps-mac-mps-v5.md` — المعمارية الهجينة `v5.0` (تفريغ `hermes-vps` + دعم `Archive.org` + حارس الكوتة الحي + جسر `Opus 12kbps VoIP` + محاذاة `Mac Apple Silicon MPS fp16` مع طيّ الصمت وتخفيف الحمل الحراري).

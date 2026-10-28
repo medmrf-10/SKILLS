@@ -8,6 +8,7 @@
       "_comment": "عائلة Google: المدير medmrf19 (محظور) + 5 أعضاء. حصة الأعضاء مشتركة (مرصودة بالأرقام الخام) فلا تضيف سعة. الغرض من وجودهم الاستمرارية: يُستعمل الأول السليم بحسب failover_order، وإن عُوقب حسابٌ بعينه ننتقل للتالي (جوجل تعاقب الحساب نفسه لا العائلة بحسب إفادة المالك).",
       "shared_quota": true,
       "use_for": "transcribe",
+      "priority_tier": 1,
       "failover": "on-ban"
     }
   },
@@ -27,26 +28,28 @@
       "email": "brainthomas555@gmail.com",
       "tier": "Pro",
       "role": "transcribe",
+      "priority_tier": 2,
       "status": "active",
       "aliases": [
         "brain"
       ],
-      "note": "حساب تفريغ مستقل بحصته الخاصة."
+      "note": "حساب تفريغ مستقل بحصته الخاصة (الطبقة الثانية في شلال التفريغ بعد العائلة)."
     },
     "ram": {
       "tier": "Pro",
-      "role": "main",
+      "role": "transcribe",
+      "priority_tier": 3,
       "sync_to_vps": false,
       "status": "active",
       "aliases": [
         "ram"
       ],
-      "note": "حساب Pro محلي فقط على الماك (لا يُزامَن مع السيرفر).",
+      "note": "حساب Pro محلي فقط على الماك (الطبقة الثالثة في شلال التفريغ بعد العائلة وbrain، لا يُزامَن مع السيرفر).",
       "email_sha256": "973e9d628970ceedc3548d363a28e086317eb82190f5edd285b9bfa220b5679a"
     },
     "san": {
       "tier": "Pro",
-      "role": "transcribe",
+      "role": "unassigned",
       "status": "active",
       "aliases": [
         "san",
@@ -56,7 +59,7 @@
     },
     "bm19": {
       "tier": "Pro",
-      "role": "transcribe",
+      "role": "unassigned",
       "status": "active",
       "aliases": [
         "bm19",

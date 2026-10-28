@@ -1,190 +1,138 @@
 ---
 name: person-to-knowledge-orchestrator
-description: Master End-to-End Orchestrator (المايسترو الشامل من اسم الشخصية إلى قاعدة المعرفة الموحّدة). Takes a person's name or raw sources (YouTube channels/playlists, Archive.org collections, PDF books/indexes) and executes the 6-stage deterministic pipeline with strict hard verification gates (G0..G5) between every stage, resumable state checkpointing (pipeline_state.json), 0% character loss enforcement across both books and audio transcripts, and dual-vector 768-dim Gemma-2 hybrid semantic + FTS5 + entity-filtered search verification. Use whenever asked to run a full or partial person-to-knowledge pipeline, orchestrate discovery to curated series to USDB v5.7 SQLite + embeddings, or audit end-to-end pipeline gates.
+description: المنسق المعماري الشامل لتحويل تراث الشخصية أو العالم (سلاسل الدروس الصوتية والكتب المؤلفة أو المشروحة) إلى قاعدة معرفة موحّدة ومفهرسة على الفهرس العام المعياري للعلم مع بوابات تحقق صارمة (G0..G5)، وحفظ حرفي تام للنصوص (0% char loss)، وتضمين محلي مزدوج للبحث الدلالي والكياني الهجين.
 ---
 
 ## القواعد الحاكمة الإلزامية (التدرج الأسي اليدوي وشلال الحسابات)
 
 1. **قاعدة التدرج الأسي والفحص اليدوي الذاتي (`1 -> 10 -> 100 -> 1000`)**:
-   - يُمنع منعاً باتاً معالجة عشرات أو مئات العناصر دفعة واحدة قبل نضج التجربة، ويُمنع الاكتفاء بسكريبتات الفحص الآلي وحدها.
-   - يجب على الوكيل في العناصر العشرة الأولى (`1, 2, 3... 10`) أن ينفذ **عملاً واحداً فقط في كل مرة**، ثم **يتفحص المخرج يدوياً بعينه وبعقله** (وليس بالسكريبتات فحسب)، ويحل المشاكل الجذرية ويحسّن من نفسه ومن كود المهارة وتوجيهاتها بعد كل عمل فردي حتى يصل إلى `10`.
-   - بعد إتقان أول `10` عناصر فردية، يتدرج الوكيل بالدفعات العشرية (`10, 20, 30... 100`) ثم المئوية (`100, 200... 1000`) مع المراجعة اليدوية للعينات وتحسين المهارة في كل محطة.
+   1. يُمنع منعاً باتاً معالجة عشرات أو مئات العناصر دفعة واحدة قبل نضج التجربة، ويُمنع الاكتفاء بسكريبتات الفحص الآلي وحدها.
+   2. يجب على الوكيل في العناصر العشرة الأولى (`1, 2, 3... 10`) أن ينفذ **عملاً واحداً فقط في كل مرة**، ثم **يتفحص المخرج يدوياً بعينه وبعقله** (وليس بالسكريبتات فحسب)، ويحل المشاكل الجذرية ويحسّن من نفسه ومن كود المهارة وتوجيهاتها بعد كل عمل فردي حتى يصل إلى `10`.
+   3. بعد إتقان أول `10` عناصر فردية، يتدرج الوكيل بالدفعات العشرية (`10, 20, 30... 100`) ثم المئوية (`100, 200... 1000`) مع المراجعة اليدوية للعينات وتحسين المهارة في كل محطة.
 2. **شلال الحسابات الصارم (`Strict Priority Waterfall: العائلة -> brain -> ram`) وحظر الـ `API Keys`**:
-   - يُحظر تماماً استخدام حساب `medmrf10` (`Ultra`) في أي مهام تفريغ أو معالجة خلفية (مخصص حصراً لتطبيق `Antigravity` الرئيسي).
-   - يُحظر منعاً باتاً استخدام أي مفاتيح `API` خارجية (`Gemini API Keys` أو غيرها) دون إذن صريح من محمد؛ التفريغ يتم حصراً عبر الحسابات المدفوعة، والتضمين يتم محلياً بالكامل.
-   - ترتيب استهلاك الحسابات المدفوعة إلزامي بالتتابع: تُستهلك حصة **العائلة (`mb19, mb10, bm10, medmrfco`)** أولاً بالكامل حتى تفرغ (`429`)، ولا يُلمس حساب **`brain`** إطلاقاً إلا إذا كانت العائلة في حالة تبريد، ولا يُلمس حساب **`ram`** إطلاقاً إلا إذا كانت العائلة و`brain` معاً في حالة تبريد.
+   1. يُحظر تماماً استخدام حساب `medmrf10` (`Ultra`) في أي مهام تفريغ أو معالجة خلفية (مخصص حصراً لتطبيق `Antigravity` الرئيسي).
+   2. يُحظر منعاً باتاً استخدام أي مفاتيح `API` خارجية (`Gemini API Keys` أو غيرها) دون إذن صريح من محمد؛ التفريغ يتم حصراً عبر الحسابات المدفوعة، والتضمين يتم محلياً بالكامل.
+   3. ترتيب استهلاك الحسابات المدفوعة إلزامي بالتتابع: تُستهلك حصة **العائلة (`mb19, mb10, bm10, medmrfco`)** أولاً بالكامل حتى تفرغ (`429`)، ولا يُلمس حساب **`brain`** إطلاقاً إلا إذا كانت العائلة في حالة تبريد، ولا يُلمس حساب **`ram`** إطلاقاً إلا إذا كانت العائلة و`brain` معاً في حالة تبريد.
 
 ## المبادئ المعمارية الأربعة الحاكمة لخط إنتاج المعرفة والموسوعة الديناميكية
 
 1. **الطبقة الصفرية — هوية العلم وفهرسه المعياري العام (`Science Identity & Canonical Taxonomy` — بإشراف واعتماد محمد حصراً)**:
-   - **حظر انفراد الوكيل**: لأن «هوية العلم وفهرسه المعياري» هما أهم ركيزة في العلم كله، **يُمنع منعاً باتاً أن ينفرد الوكيل ببنائهما أو اعتمادهما من تلقاء نفسه** قبل الفهرسة.
-   - يقتصر دور الوكيل في الطبقة الصفرية على جمع المادة الأولية من أمهات المصادر المعتمدة وعرض مسودة «بطاقة هوية العلم» (تعريفه، طبقات أعلامه ومصطلحاتهم، وخريطة متونه وشروحه وحواشيه) و«الفهرس العام المعياري للعلم» على محمد ليراجعها ويحررها ويعتمدها شخصياً قبل إسقاط أي مصدر عليها.
+   1. **حظر انفراد الوكيل**: لأن «هوية العلم وفهرسه المعياري» هما أهم ركيزة في العلم كله، **يُمنع منعاً باتاً أن ينفرد الوكيل ببنائهما أو اعتمادهما من تلقاء نفسه** قبل الفهرسة.
+   2. يقتصر دور الوكيل في الطبقة الصفرية على جمع المادة الأولية من أمهات المصادر المعتمدة وعرض مسودة «بطاقة هوية العلم» (تعريفه، طبقات أعلامه ومصطلحاتهم، وخريطة متونه وشروحه وحواشيه) و«الفهرس العام المعياري للعلم» على محمد ليراجعها ويحررها ويعتمدها شخصياً قبل إسقاط أي مصدر عليها.
 2. **فصل الاستطرادات الجانبية عن صلب العلم (`Cross-Science Digression Routing`)**:
-   - عند تقطيع الكتب والدروس إلى مقاطع موضوعية تحفظ النص الأصلي حرفياً (`0% char loss`)، تُفصل الاستطرادات العلمية أو الفكرية الجانبية التي لا تنتمي للعلم الأصلي للكتاب أو الدرس، ويُوجَّه كل استطراد إلى عقدته المقابلة في العلم الذي ينتمي إليه.
+   1. عند تقطيع الكتب والدروس إلى مقاطع موضوعية تحفظ النص الأصلي حرفياً (`0% char loss`)، تُفصل الاستطرادات العلمية أو الفكرية الجانبية التي لا تنتمي للعلم الأصلي للكتاب أو الدرس، ويُوجَّه كل استطراد إلى عقدته المقابلة في العلم الذي ينتمي إليه.
 3. **بوابة مقيّم القيمة المضافة (`Delta Evaluator Gate`)**:
-   - يمر كل مصدر جديد على تقييم مقارن يفحص كل عقدة في فهرس العلم لتمييز «الإضافة النوعية الجديدة» (تحرير مسألة، رواية زائدة، تعليل دقيق، جواب إشكال، مثال تطبيقي جديد) عن «المكرر المحفوظ».
+   1. يمر كل مصدر جديد على تقييم مقارن يفحص كل عقدة في فهرس العلم لتمييز «الإضافة النوعية الجديدة» (تحرير مسألة، رواية زائدة، تعليل دقيق، جواب إشكال، مثال تطبيقي جديد) عن «المكرر المحفوظ».
 4. **تحرير مفهوم عدم التكرار وإحصاء الأقوال العلمية (`Statistical Opinion Tracking vs. Verbal Fluff Removal`)**:
-   - منع التكرار في الموسوعة يعني طرد الحشو اللفظي المكرر بلا فائدة، أما في مسائل الخلاف العلمي والفقهي فيجب توثيق وإحصاء تكرار الأقوال عبر المصادر لنعرف بدقة من قال بكل قول وحجم انتشاره بين الأئمة والعلماء.
+   1. منع التكرار في الموسوعة يعني طرد الحشو اللفظي المكرر بلا فائدة، أما في مسائل الخلاف العلمي والفقهي فيجب توثيق وإحصاء تكرار الأقوال عبر المصادر لنعرف بدقة من قال بكل قول وحجم انتشاره بين الأئمة والعلماء.
 
-# Master Orchestrator: Person to Unified Knowledge Database (`person-to-knowledge-orchestrator`)
+---
 
-## 1. Mission & Core Architecture
+# المنسق الشامل لتحويل تراث الشخصية إلى قاعدة معرفة موحّدة (`person-to-knowledge-orchestrator`)
 
-`person-to-knowledge-orchestrator` is the master end-to-end pipeline that transforms a scholar/author's name or raw source inventory into a verified, zero-character-loss Unified Scholarly Database (**USDB v5.7**) equipped with dual-vector 768-dimensional Gemma-2 embeddings, FTS5 trigram/word indices, and chronological/entity/matn-clause graph cross-links.
+## 1. المهمة والهيكلة العامة
 
-Every stage is governed by a **Hard Verification Gate (`G0` through `G5`)**. A stage never advances to the next stage unless its gate passes with **0 P0 errors**.
+1. تنسق هذه المهارة رحلة بناء المعرفة الكاملة لعالم أو مصنف بدءاً من التحقق من الطبقة الصفرية (بطاقة العلم وفهرسه المعياري المعتمد من محمد) وحصة الحسابات المعزولة، مروراً بفرز وتنقيح السلاسل والكتب، ثم التفريغ النصي الصافي والمحاذاة الصوتية الحقيقية، وصولاً إلى الفهرسة العميقة الموحدة (`USDB v5.7`) والتضمين الدلالي المحلي المزدوج.
+2. تخضع كل مرحلة لبوابة تحقق صارمة (`G0` إلى `G5`)؛ ولا يجوز الانتقال إلى المرحلة التالية إلا بعد اجتياز البوابة الحالية بـ `0` أخطاء حرجة (`0 P0 errors`) مع الفحص اليدوي المتدرج (`1 -> 10 -> 100 -> 1000`).
 
 ```mermaid
 flowchart TD
-    S0["Stage 0: Quota & Lean CLI Guard (agy-lean-cli)"] -->|Gate G0: Quota >= 20% & Lean HOME Isolated| S1["Stage 1: Discovery Intake (person-discovery-intake)"]
-    S1 -->|Gate G1: Valid <person_id>_raw.json & Non-Empty Sources| S2["Stage 2: 9-Stage Curation (sheikh-curation v2.0)"]
-    S2 -->|Gate G2: deep_scanner_all == 0 Flaws & global_audit == 0 Errors| S3["Stage 3: Dual-Track Extraction (sheikh-series-pipeline v5.0 + turath-pdf-to-text v2.0)"]
-    S3 -->|Gate G3: 0 AI Preambles & 100.0% PDF Character Retention| S4["Stage 4: Unified Deep Indexing & Entity DB (turath-deep-indexing v5.7 + turath-entity-db)"]
-    S4 -->|Gate G4: Gate v4.3 PASS (0 P0 Errors) & SQLite chars_lost == 0| S5["Stage 5: Dual-Vector Gemma-2 Embedding & Hybrid Search (turath-embedding-gemma2)"]
-    S5 -->|Gate G5: 100% 3072-Byte BLOB Coverage & Hybrid Search Verification| DONE["05_reports/ORCHESTRATION_REPORT.md (PASS)"]
+    S0["المرحلة 0: التحقق من الطبقة الصفرية وحارس الحصة والعزل (agy-lean-cli)"] -->|البوابة G0: اعتماد فهرس العلم وعزل البيئة| S1["المرحلة 1: الجرد الأولي للمصادر (يوتيوب + أرشيف + كتب)"]
+    S1 -->|البوابة G1: سلامة الجرد وعدم ازدواجية المعرفات| S2["المرحلة 2: التنقيح الدلالي للسلاسل والدروس (sheikh-curation)"]
+    S2 -->|البوابة G2: صفر أخطاء في الفحص الشامل وعدم تكرار الحلقات| S3["المرحلة 3: الاستخراج النصي الصافي والمحاذاة الحقيقية (sheikh-series-pipeline + turath-pdf-to-text)"]
+    S3 -->|البوابة G3: صفر مقدمات آلية و100% حفظ حرفي للنص والحواشي| S4["المرحلة 4: الفهرسة العميقة والإسقاط على فهرس العلم وبناء SQLite (turath-deep-indexing)"]
+    S4 -->|البوابة G4: صفر فقد حرفي وعزل السند عن المتن وتمرير بوابة الفهرسة| S5["المرحلة 5: التضمين الشعاعي المزدوج المحلي والبحث الهجين (turath-embedding-gemma2)"]
+    S5 -->|البوابة G5: تغطية 100% للمتجهات ونجاح استعلامات العزل| DONE["اعتماد الحزمة المعرفية للشخصية"]
 ```
 
 ---
 
-## 2. Standard Workspace Layout (`<work_dir>/<person_id>/`)
+## 2. هيكل مساحة العمل القياسي (`$TURATH_ROOT/workspaces/<person_id>/`)
 
-All pipeline artifacts for `<person_id>` live in a deterministic, self-contained workspace directory:
-
-```text
-<work_dir>/<person_id>/
-├── pipeline_state.json                         # Resumable stage checkpoint & gate ledger
-├── 00_quota/
-│   └── quota_guard_report.json                 # Stage 0 model selection & quota verification
-├── 01_discovery/
-│   └── <person_id>_raw.json                    # Stage 1 unified multi-source inventory
-├── 02_curated/
-│   ├── <person_id>.json                        # Stage 2 curated schema (series + standalone + excluded)
-│   ├── curated.db                              # Stage 2 normalized SQLite curation ledger
-│   └── series/<person_id>/sXXX/_meta.json      # Per-series metadata ready for transcript extraction
-├── 03_extracted/
-│   ├── series/<person_id>/sXXX/                # Stage 3A sanitized transcripts + .align.json + .meta.json
-│   └── books/<book_slug>/                      # Stage 3B zero-loss PDF extraction + manifest_v4 preflight
-│       ├── book_matn.txt
-│       ├── footnotes.json
-│       ├── pages_preflight.json
-│       ├── adapter_manifest.json
-│       ├── round_manifest_r4_r10.json
-│       └── raw_round4_books.json
-├── 04_knowledge_db/
-│   ├── <person_id>_objects.sqlite              # Stage 4 & 5 Unified Scholarly DB (USDB v5.7 + Gemma-2 vectors)
-│   ├── round4_9_books_deep.json                # Merged & audited books payload
-│   ├── lectures_deep_merged.json               # Merged & audited lectures payload
-│   ├── gate_report_books.json                  # Gate v4.3 books verification report
-│   └── gate_report_lectures.json               # Gate v4.3 lectures verification report
-└── 05_reports/
-    ├── orchestration_audit_report.json         # Machine-readable end-to-end gate audit
-    └── ORCHESTRATION_REPORT.md                 # Human-readable executive summary & metrics
-```
+1. تُحفظ جميع مخرجات خط الإنتاج للشخصية `<person_id>` في شجرة مجلدات معيارية واضحة:
+   1. الملف `pipeline_state.json`: سجل حالة المراحل ونتائج البوابات (`G0..G5`) للاستئناف الآمن.
+   2. المجلد `00_quota/`: يضم `quota_guard_report.json` لتوثيق حالة الحصة وفق شلال الحسابات وعزل البيئة.
+   3. المجلد `01_discovery/`: يضم `<person_id>_raw.json` لجرد المصادر الأولية (قوائم يوتيوب، حزم أرشيف، والكتب).
+   4. المجلد `02_curated/`: يضم `<person_id>.json` وقاعدة `curated.db` ومجلدات السلاسل `series/<person_id>/sXXX/_meta.json`.
+   5. المجلد `03_extracted/`: يضم مساري النصوص الصافية:
+      1. المسار `series/<person_id>/sXXX/`: ملفات الدروس المفرغة `.txt` وملفات المحاذاة الصوتية الحقيقية `.align.json` وملفات `.meta.json`.
+      2. المسار `books/<book_slug>/`: مخرجات الكتب المستخرجة بلا فقد حرفي (`book_matn.txt`, `footnotes.json`, `pages_preflight.json`, `adapter_manifest.json`).
+   6. المجلد `04_knowledge_db/`: يضم قاعدة المعرفة الموحدة `<person_id>_objects.sqlite` وملفات الفهرسة المدمجة وتقارير البوابات (`gate_report_books.json`, `gate_report_lectures.json`).
+   7. المجلد `05_reports/`: يضم تقرير التدقيق الآلي `orchestration_audit_report.json` والتقرير التنفيذي `ORCHESTRATION_REPORT.md`.
 
 ---
 
-## 3. The 6 Stages & Their Hard Verification Gates
+## 3. المراحل الست وبوابات التحقق الصارمة (`G0` إلى `G5`)
 
-### Stage 0 — Quota & Lean CLI Guard (`agy-lean-cli`)
-- **Action**: Calls `check_quota()` and `select_best_model()` from `/Users/macm1pro/REPOS/SKILLS/agy-lean-cli/scripts/agy_lean.py` and prepares/verifies the isolated lean `HOME` directory (`/tmp/agy_lean_home`) so background subagents never load heavy global MCP servers or browser plugins.
-- **Hard Gate `G0`**:
-  1. Selected model must have remaining quota `>= 20.0%` (or automatic fallback to an available model with `>= 20.0%`).
-  2. `verify_lean_home_isolation()` must return `isolated == True` with `0` MCP servers and `0` plugins in the isolated home.
+### المرحلة 0 — الطبقة الصفرية وحارس الحصة والعزل (`agy-lean-cli` + `agy-multi-account`)
+1. **الإجراء**:
+   1. التأكد من وجود «بطاقة هوية العلم» و«الفهرس العام المعياري للعلم» المعتمدين من محمد للعلم المستهدف قبل البدء.
+   2. فحص جاهزية الحسابات وفق شلال الأولويات (`العائلة -> brain -> ram`) عبر `$SKILLS_DIR/agy-multi-account` والتحقق من عزل بيئة التشغيل عبر `$SKILLS_DIR/agy-lean-cli/scripts/agy_lean.py`.
+2. **البوابة الصارمة `G0`**:
+   1. اعتماد الطبقة الصفرية للعلم المستهدف من محمد شخصياً.
+   2. توفر حصة آمنة (`>= 20.0%`) في الحساب النشط ضمن الشلال المعتمد دون المساس بحساب `medmrf10`.
+   3. ثبوت العزل الكامل لبيئة `HOME` الخفيفة (`isolated == True` مع `0` خوادم `MCP` و`0` إضافات محملة في الخلفية).
 
-### Stage 1 — Multi-Source Discovery Intake (`person-discovery-intake`)
-- **Action**: Calls `discover_person()` from `/Users/macm1pro/REPOS/SKILLS/person-discovery-intake/scripts/discover_person.py` to ingest YouTube channels/playlists, Archive.org items, PDF index files (hyperlinks + text URLs), and PDF/JSON books into `01_discovery/<person_id>_raw.json`.
-- **Hard Gate `G1`**:
-  1. `01_discovery/<person_id>_raw.json` exists and conforms to the required schema (`person_id`, `sheikh_name`, `playlists`, `videos`, `archive_items`, `books`, `stats`).
-  2. Total discovered sources (`unique_videos_count + len(books) + len(archive_items)`) must be `> 0`.
+### المرحلة 1 — الجرد الأولي متعدد المصادر (`Discovery Intake`)
+1. **الإجراء**:
+   1. جمع وتوحيد مصادر الشخصية من القنوات وقوائم التشغيل، وحزم `Archive.org`، والفهارس الموثقة، والكتب المؤلفة أو المشروحة في ملف `01_discovery/<person_id>_raw.json`.
+2. **البوابة الصارمة `G1`**:
+   1. وجود ملف `01_discovery/<person_id>_raw.json` ومطابقته للمخطط القياسي (`person_id`, `sheikh_name`, `playlists`, `videos`, `archive_items`, `books`, `stats`).
+   2. خلو قائمة المصادر من المعرفات التالفة أو الفارغة، والتحقق اليدوي من عينة المصادر المكتشفة ومطابقتها الفردية للشخصية المستهدفة.
 
-### Stage 2 — Automated 9-Stage Curation (`sheikh-curation v2.0`)
-- **Action**: Calls `auto_curate_person()` from `/Users/macm1pro/REPOS/SKILLS/sheikh-curation/scripts/auto_curate_person.py` on `01_discovery/<person_id>_raw.json`, producing `02_curated/<person_id>.json`, `02_curated/curated.db`, and `02_curated/series/<person_id>/sXXX/_meta.json`.
-- **Hard Gate `G2`**:
-  1. `deep_scanner_all.py` must report `0 flaws` (`scanner_flaws_total == 0`).
-  2. `global_audit.py` must return exit code `0` with `"0 errors"` in its output.
-  3. Zero duplicate `video_id` across active episodes (`series` + `standalone_lectures`).
+### المرحلة 2 — التنقيح والفرز الدلالي للسلاسل (`sheikh-curation`)
+1. **الإجراء**:
+   1. تشغيل أدوات الفرز والتنقيح في `$SKILLS_DIR/sheikh-curation` على `01_discovery/<person_id>_raw.json` لإنتاج `02_curated/<person_id>.json` و`02_curated/curated.db` وملفات `02_curated/series/<person_id>/sXXX/_meta.json`.
+2. **البوابة الصارمة `G2`**:
+   1. اجتياز الفاحص العميق `$SKILLS_DIR/sheikh-curation/scripts/deep_scanner_all.py` بنتيجة `0` عيوب (`scanner_flaws_total == 0`).
+   2. اجتياز المدقق الشامل `$SKILLS_DIR/sheikh-curation/scripts/global_audit.py` برمز خروج `0` ونتيجة `"0 errors"`.
+   3. انعدام تكرار أي `video_id` عبر جميع السلاسل النشطة والمحاضرات المستقلة.
 
-### Stage 3 — Dual-Track Extraction (`sheikh-series-pipeline v5.0` + `turath-pdf-to-text v2.0`)
-- **Track 3A (Audio/Video Series — Multi-Format Series Matcher)**:
-  - Matches external series directories under `--series-transcripts-dir` across all 4 production naming conventions (`yt_id`/`vid` overlap, `series_slug` e.g. `sharh_manzouma_adoudiya`, `playlist_id` e.g. `alasimi-mut-744`, `row_id` e.g. `984`, or safe `sNNN` without cross-series pollution).
-  - Stages lesson `.txt`, `.align.json`, and `.meta.json` files into `03_extracted/series/<person_id>/sXXX/` without overwriting curated v5.0 `_meta.json`, runs `sanitize_preamble.process_dir()` to strip Latin/Arabic AI preambles and closings, preserves real word-level CTC `.align.json` files (or generates deterministic word-level alignments when missing), and syncs `transcribed_count`, `aligned_count`, and per-lesson `has_transcript = 1` across `_meta.json`, `<person_id>.json`, and `curated.db`.
-- **Track 3B (Written Books / PDFs & Shamela4 JSONL Auto-Ingestion)**:
-  - Automatically resolves books discovered in Stage 1 (`books` from `shamela4_books_index.json.gz` or `matched_book` on curated series, prioritizing `shamela_id` for `shamela:<N>` IDs and ignoring `tafsir:surah_*`) against `/Users/macm1pro/REPOS/swe/Shamela4_Full_DB` (or `--shamela-db-dir`), or accepts explicit `--book-input` pointing to a Shamela4 book folder, `.jsonl`, `pages/` directory, or `.json`.
-  - Converts Shamela4 `pages.jsonl` + `book_metadata.json` into `pages/pNNNN.json` (cleaning inline HTML tags and routing unnumbered colophon lines in `footnotes` to `margin_notes` so `orphan_head == 0` with `100.0%` character retention) and runs `convert_pdf_output_to_preflight()` (`round_num=4`).
-- **Hard Gate `G3`**:
-  1. Every lecture `.txt` file has `0` AI preamble/closing patterns (`strip_preamble_and_header(text)[1] == []`) and non-empty Arabic content.
-  2. Every book's `adapter_manifest.json` has `status == "PASS"`, `zero_loss_check.passed == True`, `body_char_loss == 0`, `footnotes_char_loss == 0`, `retention_pct == 100.0`, and `manifest_v4_verification.passed == True`.
+### المرحلة 3 — الاستخراج النصي المزدوج والمحاذاة الحقيقية (`sheikh-series-pipeline` + `turath-pdf-to-text`)
+1. **المسار 3-أ (السلاسل الصوتية والمرئية)**:
+   1. تفريغ الدروس عبر `$SKILLS_DIR/sheikh-series-pipeline` بالتدرج المعتمد (`1 -> 10 -> 100`) وتوليد محاذاة صوتية حقيقية بالكلمة (`.align.json`) عبر محرك `CTC` الفعلي (ويُحظر توليد محاذاة وهمية أو تقديرية).
+   2. تطهير النصوص من أي مقدمات أو خواتيم آلية عبر `$SKILLS_DIR/sheikh-series-pipeline/scripts/sanitize_preamble.py`، وتحديث حقول `transcribed_count` و`aligned_count` و`has_transcript` في `_meta.json` و`curated.db`.
+2. **المسار 3-ب (الكتب المصورة والنصية)**:
+   1. استخراج نصوص الكتب والحواشي عبر `$SKILLS_DIR/turath-pdf-to-text` وتحويلها عبر `$SKILLS_DIR/turath-pdf-to-text/scripts/pdf_to_preflight_adapter.py` بكامل صفحات الكتاب دون أي اقتطاع أو بتر.
+3. **البوابة الصارمة `G3`**:
+   1. خلو جميع ملفات `.txt` من أي مقدمات أو عبارات دردشة آلية (`strip_preamble_and_header(text)[1] == []`) ووجود محتوى عربي تام.
+   2. ثبوت المحاذاة الصوتية الحقيقية (`.align.json`) غير المصطنعة للدروس المستهدفة.
+   3. تحقيق حفظ حرفي بنسبة `100.0%` في `adapter_manifest.json` لكل كتاب (`status == "PASS"`, `body_char_loss == 0`, `footnotes_char_loss == 0`, `retention_pct == 100.0`).
 
-### Stage 4 — Unified Deep Indexing & Entity DB (`turath-deep-indexing v5.7` + `turath-entity-db`)
-- **Action**:
-  1. For each extracted series in `03_extracted/series/<person_id>/sXXX/` containing lecture `.txt` files, runs `intake_series()` from `/Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/ytb_to_usdb_intake.py` (applying base matn clauses when the series explains a known matn or extracted book).
-  2. For each extracted book in `03_extracted/books/<book_slug>/`, builds or loads the deep extraction payload (`r4_deep_<science>.json`) and runs `audit_and_merge_round(round_num=4, ...)` from `/Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_round.py`.
-  3. Builds the Unified Scholarly Database at `04_knowledge_db/<person_id>_objects.sqlite` via `build_objects_sqlite()` from `/Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/build_objects_sqlite.py`, populating all 20 relational + FTS5 tables (`books`, `passages`, `lectures`, `courses`, `series_manifests`, `matn_clauses`, `sharh_links`, `footnotes`, `persons`, `places`, `dates_events`, `quran_Verse_refs`, `hadith_refs`, `poetry_verses`, `stories`, `science_gems`, `quotes`, `cross_links`, `passages_fts`, `gems_fts`).
-- **Hard Gate `G4`**:
-  1. `gate_report_books.json` and `gate_report_lectures.json` both have `status == "PASS"` and `total_p0_errors == 0`.
-  2. `build_objects_sqlite` reports `chars_lost == 0` (`expected_raw_chars == actual_passage_chars`) — **0% character loss** across all books and lectures combined.
-  3. Zero narrator leak in `matn`-layer person queries and zero death-year leak in `historical`-layer date queries.
+### المرحلة 4 — الفهرسة العميقة الموحدة وبناء قاعدة الكيانات (`turath-deep-indexing`)
+1. **الإجراء**:
+   1. فهرسة الكتب والدروس تحليلياً بالتدرج (`1 -> 10 -> 100`) وإسقاط كل مقطع على عقدته في «الفهرس العام المعياري للعلم» مع فصل الاستطرادات الجانبية وتقييم القيمة المضافة (`Delta`).
+   2. دمج وتدقيق الكتب عبر `$SKILLS_DIR/turath-deep-indexing/scripts/merge_round.py` والدروس عبر `$SKILLS_DIR/turath-deep-indexing/scripts/ytb_to_usdb_intake.py` (ويُحظر تماماً استخدام قوالب نصية ثابتة أو ملخصات آلية صورية).
+   3. بناء قاعدة البيانات الموحدة `04_knowledge_db/<person_id>_objects.sqlite` عبر `$SKILLS_DIR/turath-deep-indexing/scripts/build_objects_sqlite.py`.
+2. **البوابة الصارمة `G4`**:
+   1. اجتياز `gate_report_books.json` و`gate_report_lectures.json` بحالة `"PASS"` و`0` أخطاء حرجة (`total_p0_errors == 0`).
+   2. تحقيق `chars_lost == 0` (`expected_raw_chars == actual_passage_chars`) داخل قاعدة `SQLite` عبر جميع الكتب والدروس.
+   3. العزل التام بين الطبقات: `0` تسرب لرواة الإسناد (`source_layer='isnad'`) في استعلامات طبقة المتن (`matn`)، و`0` تسرب لتواريخ وفيات الرواة (`event_layer='transmission'`) في استعلامات الأحداث التاريخية (`historical`).
 
-### Stage 5 — Dual-Vector Gemma-2 Embedding & Hybrid Search Verification (`turath-embedding-gemma2`)
-- **Action**:
-  1. Runs `embed_sqlite_corpus()` from `/Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/embed_corpus_gemma2.py` on `04_knowledge_db/<person_id>_objects.sqlite`, populating `embedding_matn` (Raw Verbatim Matn View) and `embedding_concept` (Contextualized Concept & Entity View) on `passages` and `embedding` on `science_gems`.
-  2. Instantiates `HybridSearchEngine` from `/Users/macm1pro/REPOS/SKILLS/turath-embedding-gemma2/scripts/hybrid_search.py` and runs end-to-end verification queries across `hybrid`, `matn`, `concept`, and `fts` modes plus structured filters (`person_layer="matn"`, `year_min`/`year_max`, `matn_clause`).
-- **Hard Gate `G5`**:
-  1. `passages_without_embeddings == 0` and `gems_without_embeddings == 0`.
-  2. Every vector BLOB has exact byte length `dim * 4` (`3072` bytes for 768-dim float32) and unit L2 norm (`~1.0`).
-  3. All `embed_text_concept` texts contain `0` honorifics (`HONORIFIC_RANGE_RE`) and `0` narrator prefixes.
-  4. `HybridSearchEngine` smoke & layer-isolation checks pass (`0` narrator leak in `person_layer="matn"`).
-
----
-
-## 4. CLI Usage & Resumable Execution
-
-Run the orchestrator via `/Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/orchestrate_person.py`:
-
-```bash
-# Full end-to-end run from offline fixture + book inputs
-python3 /Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/orchestrate_person.py \
-  --name "الشيخ سعيد الكملي" \
-  --person-id "kamali" \
-  --work-dir "/tmp/orchestrator_workspace" \
-  --offline-fixture "/path/to/discovery_fixture.json" \
-  --book-input "/path/to/extracted_book_dir_or_json" \
-  --embedding-backend "deterministic"
-
-# Resume from a specific stage (or automatically detect delta lessons/alignments/books and re-index)
-python3 /Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/scripts/orchestrate_person.py \
-  --name "الشيخ محمد الحسن الددو" \
-  --person-id "dedew" \
-  --work-dir "/tmp/orchestrator_workspace" \
-  --offline-fixture "/path/to/dedew_raw.json" \
-  --series-transcripts-dir "/path/to/ytb/daddo" \
-  --resume --incremental
-```
-
-### Key CLI Flags
-- `--name`: Scholar/author Arabic name (required).
-- `--person-id`: Explicit ASCII slug (optional; auto-derived via `normalize_person_id` if omitted).
-- `--work-dir`: Root directory under which `<person_id>/` workspace is created.
-- `--youtube-url` / `--archive-id` / `--index-pdf` / `--books-json` / `--offline-fixture`: Discovery inputs passed to Stage 1.
-- `--series-transcripts-dir`: Optional directory containing pre-extracted `.txt` / `.align.json` lecture transcripts (supporting `series_slug`, `playlist_id`, `row_id`, `sNNN`, or flat layouts) to stage into `03_extracted/series/<person_id>/`.
-- `--book-input`: Repeatable path(s) to PDF extraction outputs, Shamela4 book directories (`pages.jsonl`), standalone `.jsonl` files, or `.json` payloads to process in Stage 3B.
-- `--shamela-db-dir` / `--no-auto-shamela-books` / `--max-auto-books`: Configure automatic resolution and ingestion of discovered Shamela4 books from `/Users/macm1pro/REPOS/swe/Shamela4_Full_DB`.
-- `--from-stage` / `--to-stage`: Run a specific slice of stages (`0`..`5`).
-- `--resume` / `--incremental` / `--no-incremental` / `--force`: `--resume` (default) skips stages already marked `"PASS"` in `pipeline_state.json`, except when `--incremental` (default) detects newly added/modified lesson `.txt` files, newly arrived real CTC `.align.json` files (replacing synthetic fallbacks), or newly added books compared against `<person_id>_objects.sqlite` and `.stage3_complete.json`. When a delta is detected, Stages 3, 4, and 5 are automatically invalidated and re-run while reusing cached `deep_lecture_*.json` extractions and cached 768-dim embeddings (`passage_embeddings`, `gem_embeddings`) for unchanged items.
-- `--embedding-backend`: `"auto"`, `"sentence-transformers"`, `"deterministic"`, or `"deterministic-arabic-mps"`.
-
-### Comprehensive Audit & Coverage Reporting (`05_reports/`)
-Both `orchestration_audit_report.json` and `05_reports/ORCHESTRATION_REPORT.md` include:
-1. **`delta_ingestion`**: `has_delta`, `is_incremental_update`, `db_lessons_count`, `available_txt_count`, `available_real_align_count`, `new_lessons`, `modified_lessons`, `updated_alignments`, and `new_books`.
-2. **`comprehensive_coverage`**: `shamela_books_imported_count`, `imported_books_details`, `matched_book_series_count`, `transcribed_matched_book_series_count`, `matn_triangulation_count`, `matn_triangulation_by_source_type`, `science_gems_count`, and live `science_gems_retrieval_results`.
+### المرحلة 5 — التضمين الشعاعي المزدوج المحلي والتحقق من البحث الهجين (`turath-embedding-gemma2`)
+1. **الإجراء**:
+   1. تشغيل التضمين المحلي الفعلي عبر `$SKILLS_DIR/turath-embedding-gemma2/scripts/embed_corpus_gemma2.py` على قاعدة `04_knowledge_db/<person_id>_objects.sqlite` لتوليد متجهات المتن (`vec_matn_blob`) ومتجهات المفهوم (`vec_concept_blob`) في جدولي `passage_embeddings` و`gem_embeddings`.
+   2. تشغيل فحوص البحث الهجين عبر `$SKILLS_DIR/turath-embedding-gemma2/scripts/hybrid_search.py` في أوضاع `hybrid` و`matn` و`concept` و`fts` مع فلاتر الكيانات والطبقات.
+2. **البوابة الصارمة `G5`**:
+   1. اكتمال التضمين بنسبة `100%` لجميع المقاطع (`passages`) والقواعد العلمية (`science_gems`).
+   2. مطابقة طول كل متجه ثنائي (`BLOB`) لـ `dim * 4` بايت (`3072` بايت لبعد `768` من نوع `float32`) وتطبيع `L2 norm` بقيمة `1.0 ± 1e-3`.
+   3. خلو جميع نصوص `embed_concept_text` من رموز الترضية المدمجة (`HONORIFIC_RANGE_RE`) ومن سلاسل الإسناد.
+   4. نجاح استعلامات التحقق الهجين وعزل طبقة `person_layer="matn"` عن `isnad`.
 
 ---
 
-## 5. Anti-Patterns & Strict Rules
+## 4. الممنوعات الهندسية الصارمة (`Strict Anti-Patterns`)
 
-1. **Never Bypass a Failed Gate**: If any gate `G0`..`G5` fails, `orchestrate_person.py` immediately halts, records `"status": "FAIL"` with exact diagnostics in `pipeline_state.json`, and raises `OrchestrationGateError`.
-2. **Zero Character Loss Is Non-Negotiable**: Neither Stage 3B (`pdf_to_preflight_adapter.py`) nor Stage 4 (`merge_round.py` + `build_objects_sqlite.py`) may drop a single character of `raw_matn` or `raw_footnotes`.
-3. **Strict Layer Separation (`matn` vs `isnad`, `historical` vs `transmission`)**: Narrators in chains of transmission (`حدثنا`, `أخبرنا`) must always be tagged `source_layer="isnad"`, and narrator death dates (`ت ٣١٠ هـ`) must always be tagged `event_layer="transmission"`.
-4. **Never Invoke Heavy Unisolated CLI Subprocesses**: Always verify `agy-lean-cli` isolation in Stage 0 before spawning any LLM workers.
+1. **حظر تجاوز البوابات أو تزييف البيانات**: يُمنع منعاً باتاً توليد ملخصات أو قواعد أو طوابع زمنية (`CTC`) صورية بقوالب نصية ثابتة لتمرير بوابات الفحص.
+2. **حظر الاقتطاع الجزئي للكتب**: يُمنع بتر الكتب عند عدد أحرف معين لتسريع التشغيل؛ بل يُعالج الكتاب كاملاً مع التدرج في الفهرسة (`1 -> 10 -> 100`).
+3. **حظر فقدان أي حرف (`0% Character Loss`)**: لا يُسمح بضياع حرف واحد من المتن أو الحواشي أو تفريغ الدرس عند التقطيع والدمج في `SQLite`.
+4. **حظر خلط السند بالمتن**: يجب دائماً وسم رواة الإسناد (`حدثنا`, `أخبرنا`) بـ `source_layer="isnad"` وتواريخ الوفيات (`ت 310 هـ`) بـ `event_layer="transmission"`.
 
-For detailed gate specifications, schemas, and troubleshooting, read [references/01-end-to-end-orchestration-and-gates.md](file:///Users/macm1pro/REPOS/SKILLS/person-to-knowledge-orchestrator/references/01-end-to-end-orchestration-and-gates.md).
+---
+
+## 5. المراجع التفصيلية (`References`)
+
+1. عقود المراحل والمخططات القياسية: [01-stage-contracts-and-schemas.md](references/01-stage-contracts-and-schemas.md)
+2. أدلة معالجة الأعطال والاسترداد: [02-failure-playbooks-and-recovery.md](references/02-failure-playbooks-and-recovery.md)
+3. قائمة التحقق الشاملة من الطرف إلى الطرف: [03-end-to-end-verification-checklist.md](references/03-end-to-end-verification-checklist.md)
+4. مرجع البوابات والتنسيق الشامل: [01-end-to-end-orchestration-and-gates.md](references/01-end-to-end-orchestration-and-gates.md)

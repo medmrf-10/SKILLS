@@ -23,7 +23,7 @@ if not hasattr(mr, "verify_quote_verbatim"):
 if not hasattr(mr, "GEM_DANGLING_AN_START_RE"):
     mr.GEM_DANGLING_AN_START_RE = re.compile(r"^\s*(?:أن|أنه|أنها|أنهم|بأن|بأنه|لأن|لأنه)\s+")
 
-USDB_DIR = Path(os.environ.get("USDB_WORK_DIR", "/Users/macm1pro/REPOS/books/usdb_v5"))
+USDB_DIR = Path(os.environ.get("USDB_WORK_DIR", Path(__file__).resolve().parent))
 
 SPOKEN_FILLER_RE = re.compile(
     r"(?:^|\s)(?:يعني|طيب|تمام\s*؟|صح\s*؟|ماشي\s*؟|يا\s+إخوة|يا\s+إخواني|يا\s+إخوان|يا\s+جماعة|أليس\s+كذلك\s*؟|واضح\s*؟|خلي\s+بالك|أوكي)(?:\s|$|[،.؟!])"

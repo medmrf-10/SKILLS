@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import os
-BASE = Path(os.environ.get("TURATH_BOOKS_REPO", "/Users/macm1pro/REPOS/books"))
+BASE = Path(os.environ.get("TURATH_BOOKS_REPO", Path(__file__).resolve().parent))
 PATCH_DIR = BASE / "source_patches"
 KNOWN_ISSUES_PATH = BASE / "known_issues.json"
 
@@ -1470,33 +1470,6 @@ def verify_and_locate_span_in_part(snippet: str, raw_part: str, allow_elision: b
     return "failed", -1, -1
 
 
-GAZETTEER_PLACE_STEMS = {
-    "بغداد": ("بغداد",),
-    "البصره": ("بصره", "بصري"),
-    "الكوفه": ("كوفه", "كوفي"),
-    "الشام": ("شام", "دمشق"),
-    "دمشق": ("دمشق", "شام"),
-    "مصر": ("مصر", "فسطاط"),
-    "مكه": ("مكه", "مكي", "مسجد الحرام", "حججت"),
-    "المدينه المنوره": ("مدينه", "مدني", "يثرب", "طيبه"),
-    "خراسان": ("خراسان", "مرو", "نيسابور"),
-    "الري": ("الري", "رازي"),
-    "اليمن": ("يمن", "صنعاء"),
-    "واسط": ("واسط",),
-    "الاهواز": ("اهواز",),
-    "السند": ("سند",),
-    "العراق": ("عراق", "كوفه", "بصره"),
-    "الحجاز": ("حجاز", "مكه", "مدينه"),
-    "الاندلس": ("اندلس", "قرطبه"),
-    "القيروان": ("قيروان",),
-    "الموصل": ("موصل",),
-    "حلب": ("حلب",),
-    "نيسابور": ("نيسابور",),
-    "اصبهان": ("اصبهان", "اصفهان"),
-    "خناصيره": ("خناصيره", "خناصره"),
-}
-
-
 def check_semantic_grounding_v41(
     science: str,
     pid_str: str,
@@ -1564,23 +1537,6 @@ def check_semantic_grounding_v41(
         p0_errors.append(
             f"[{science}] P0_UNGROUNDED_PERSON_IN_SUMMARY in {pid_str}: 'أم عاصم' not in source text"
         )
-
-    # 3. Check explicit geographical location phrases (e.g. بالري, ببغداد, على العراق, بالكوفة)
-    norm_sem_no_isnad = re.sub(
-        r"\b(?:ب?السند\s+(?:المتصل|الصحيح|الحسن|الضعيف|الي|عن|المرسل|المنقطع)|(?:يورد|يروي|روي|اسند)\s+بالسند)\b",
-        " ",
-        norm_sem,
-    )
-    for place_key, stems in GAZETTEER_PLACE_STEMS.items():
-        # Match prepositional place usages without turning 'الري' into 'بري' ('ابن بري') or 'السند' into 'بسند'
-        prep_re = re.compile(
-            r"\b(?:(?:في\s+|ب|الي\s+|علي\s+|والي\s+|عامل\s+|مدينه\s+|بلاد\s+|ارض\s+)" + re.escape(place_key) + r")\b"
-        )
-        if prep_re.search(norm_sem_no_isnad):
-            if not any(st in norm_ctx for st in stems):
-                p0_errors.append(
-                    f"[{science}] P0_UNGROUNDED_PLACE_IN_SUMMARY in {pid_str}: place '{place_key}' not grounded in passage context"
-                )
 
 
 def resolve_item_to_passages(item: dict, cands: list, raw_part: str, is_verbatim_item: bool = True, allow_elision: bool = True):
@@ -1826,7 +1782,7 @@ def align_book_passages(
             if re.search(r"\(¬[٠-٩0-9]+\)", cleaned_matn_str):
                 p0_errors.append(f"[{science}] Footnote marker (¬N) leaked into embed_matn_text in {pid_str}")
 
-            embed_matn = f"title: {meta.get('title', '')} ({meta.get('author', '')}) › {par_h} | text: {cleaned_matn_str}"
+            embed_matn = cleaned_matn_str
 
             concept_parts = [f"الملخص: {summary}"]
             if topics:

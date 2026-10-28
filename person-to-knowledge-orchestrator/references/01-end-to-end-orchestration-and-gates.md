@@ -1,96 +1,108 @@
-# End-to-End Orchestration & Hard Verification Gates (`G0`–`G5`)
+# التنسيق الشامل وبوابات التحقق الصارمة (`G0`–`G5`)
 
-This reference documents the exact contracts, schemas, invariants, and gate assertions enforced by `person-to-knowledge-orchestrator` (`scripts/orchestrate_person.py`).
-
----
-
-## 1. Upstream Skill Integration Matrix
-
-| Stage | Skill | Primary Script & Entry Point | Input Artifact(s) | Output Artifact(s) | Hard Gate |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Stage 0** | `agy-lean-cli` | `agy_lean.py` (`select_best_model`, `prepare_lean_home`, `verify_lean_home_isolation`) | Optional quota override / live check | `00_quota/quota_guard_report.json` | **Gate G0**: Quota `>= 20.0%` & Lean HOME isolated (`mcp_servers == 0`, `plugins == 0`) |
-| **Stage 1** | `person-discovery-intake` | `discover_person.py` (`discover_person`) | YouTube URLs, Archive IDs, PDF indexes, Books JSON, or offline fixture | `01_discovery/<person_id>_raw.json` | **Gate G1**: Valid discovery schema & total discovered sources `> 0` |
-| **Stage 2** | `sheikh-curation v2.0` | `auto_curate_person.py` (`auto_curate_person`) | `01_discovery/<person_id>_raw.json` | `02_curated/<person_id>.json`, `02_curated/curated.db`, `02_curated/series/<person_id>/sXXX/_meta.json` | **Gate G2**: `deep_scanner_all == 0` flaws, `global_audit == 0` errors, `0` duplicate `video_id`s |
-| **Stage 3** | `sheikh-series-pipeline v5.0` + `turath-pdf-to-text v2.0` | `sanitize_preamble.py` (`process_dir`, `strip_preamble_and_header`) + `pdf_to_preflight_adapter.py` (`convert_pdf_output_to_preflight`) | Curated series + transcript files & PDF book outputs (`book_matn.txt` + `footnotes.json` or JSON) | `03_extracted/series/<person_id>/sXXX/*` & `03_extracted/books/<book_slug>/{adapter_manifest.json, raw_round4_books.json, ...}` | **Gate G3**: `0` AI preambles in `.txt` transcripts & `100.0%` PDF character retention (`body_char_loss == 0`, `footnotes_char_loss == 0`) |
-| **Stage 4** | `turath-deep-indexing v5.7` + `turath-entity-db` | `ytb_to_usdb_intake.py` (`intake_series`), `merge_round.py` (`audit_and_merge_round`), `build_objects_sqlite.py` (`build_objects_sqlite`) | `03_extracted/series/...` & `03_extracted/books/...` | `04_knowledge_db/<person_id>_objects.sqlite`, `round4_9_books_deep.json`, `lectures_deep_merged.json`, `gate_report_*.json` | **Gate G4**: Gate v4.3 `PASS` (`0` P0 errors on books & lectures), `chars_lost == 0` in SQLite, `0` narrator/date layer leaks |
-| **Stage 5** | `turath-embedding-gemma2` | `embed_corpus_gemma2.py` (`embed_sqlite_corpus`) + `hybrid_search.py` (`HybridSearchEngine`) | `04_knowledge_db/<person_id>_objects.sqlite` | Updated `<person_id>_objects.sqlite` with dual 768-dim float32 BLOBs + `05_reports/ORCHESTRATION_REPORT.md` | **Gate G5**: `100%` embedding coverage (`3072` bytes/vector), `0` honorifics in concept text, verified hybrid + filtered search |
+يوثق هذا المرجع العقود والمدخلات والمخرجات والشروط الحتمية لبوابات الجودة الست (`G0` إلى `G5`) في مهارة `person-to-knowledge-orchestrator`.
 
 ---
 
-## 2. Detailed Gate Specifications
+## 1. مصفوفة تكامل المهارات عبر المراحل الست
 
-### Gate G0: Quota & Lean CLI Isolation
-- **Checks**:
-  1. `selected_model_info["allowed"] is True` and `selected_model_info["remaining_pct"] >= 20.0`.
-  2. `isolation_info["isolated"] is True`, `isolation_info["mcp_servers_count"] == 0`, and `isolation_info["plugins_count"] == 0`.
-- **Failure Trigger**: If all candidate models are `< 20%` quota or if `/tmp/agy_lean_home` contains leaked MCP server definitions or plugins.
-
-### Gate G1: Multi-Source Discovery Integrity
-- **Checks**:
-  1. `01_discovery/<person_id>_raw.json` exists and parses as a JSON object.
-  2. Required keys exist: `person_id`, `sheikh_name`, `playlists`, `videos`, `archive_items`, `books`, `stats`.
-  3. At least one valid source exists (`len(videos) + len(books) + len(archive_items) > 0`).
-  4. Every entry in `videos` has a non-empty `video_id` and `title`.
-
-### Gate G2: 9-Stage Curation Verification
-- **Checks**:
-  1. `02_curated/<person_id>.json` and `02_curated/curated.db` exist.
-  2. `report["stage9"]["scanner_flaws_total"] == 0` (from `deep_scanner_all.py`).
-  3. `report["stage9"]["audit_returncode"] == 0` and `"0 errors"` appears in `report["stage9"]["audit_output"]` (from `global_audit.py`).
-  4. Active `video_id`s across all `series[].episodes[]` and `standalone_lectures[]` are 100% unique (`0` duplicates).
-  5. Every curated series has a corresponding `02_curated/series/<person_id>/<series_id>/_meta.json`.
-
-### Gate G3: Dual-Track Extraction & Sanitization
-- **Track 3A Checks (Series Transcripts)**:
-  1. Every series directory in `03_extracted/series/<person_id>/sXXX/` has `_meta.json`.
-  2. Every lecture `.txt` transcript in `03_extracted/series/<person_id>/sXXX/` is non-empty (`len(text.strip()) > 0`).
-  3. Running `strip_preamble_and_header(text)` on every `.txt` file returns `reasons == []` (zero remaining AI preambles, decorative markdown headers, or closing pleasantries).
-- **Track 3B Checks (Books / PDFs)**:
-  1. Every book directory in `03_extracted/books/<book_slug>/` contains `adapter_manifest.json`, `round_manifest_r4_r10.json`, and `raw_round4_books.json`.
-  2. `adapter_manifest["status"] == "PASS"`.
-  3. `adapter_manifest["zero_loss_check"]["passed"] is True`, `body_char_loss == 0`, `footnotes_char_loss == 0`, and `retention_pct == 100.0`.
-  4. `adapter_manifest["manifest_v4_verification"]["passed"] is True`.
-
-### Gate G4: Unified Deep Indexing & Zero-Loss SQLite Verification
-- **Checks**:
-  1. If books are present: `gate_report_books["status"] == "PASS"` and `gate_report_books["total_p0_errors"] == 0`.
-  2. If lecture transcripts are present: every series `gate_report_lectures["status"] == "PASS"` and `total_p0_errors == 0`.
-  3. `build_objects_sqlite` summary has `chars_lost == 0` and `expected_raw_chars == actual_passage_chars`.
-  4. Direct SQLite verification on `04_knowledge_db/<person_id>_objects.sqlite`:
-     - All 20 required tables (`books`, `passages`, `lectures`, `courses`, `series_manifests`, `matn_clauses`, `sharh_links`, `footnotes`, `persons`, `places`, `dates_events`, `quran_Verse_refs`, `hadith_refs`, `poetry_verses`, `stories`, `science_gems`, `quotes`, `cross_links`, `passages_fts`, `gems_fts`) exist.
-     - `SELECT SUM(raw_char_len) FROM passages` equals `expected_raw_chars`.
-     - Zero narrator names (`حدثنا`, `أخبرنا` chain narrators) appear in `SELECT full_name FROM persons WHERE source_layer = 'matn'`.
-     - Zero narrator death years (`ت ... هـ`) appear in `SELECT year_hijri FROM dates_events WHERE event_layer = 'historical'`.
-
-### Gate G5: Dual-Vector Gemma-2 Embedding & Hybrid Search Gate
-- **Checks**:
-  1. `SELECT COUNT(*) FROM passages WHERE embedding_matn IS NULL OR embedding_concept IS NULL` == `0`.
-  2. `SELECT COUNT(*) FROM science_gems WHERE embedding IS NULL` == `0`.
-  3. Every `embedding_matn`, `embedding_concept`, and `science_gems.embedding` BLOB has exact byte length `dim * 4` (`3072` bytes for `dim = 768`) and L2 norm within `1.0 ± 1e-3`.
-  4. Every `embed_text_concept` row in `passages` has `0` honorific characters matching `HONORIFIC_RANGE_RE` (`[\uFDFA-\uFDFF\u0610-\u061A]`).
-  5. `HybridSearchEngine` executes test queries in `"hybrid"`, `"matn"`, `"concept"`, and `"fts"` modes and returns valid ranked results with `score > 0`, and `person_layer="matn"` filtering returns `0` isnad-only passages.
+1. **المرحلة 0 (`Stage 0`) — الطبقة الصفرية وحارس الحصة والعزل**:
+   1. المهارات المرتبطة: `$SKILLS_DIR/agy-lean-cli` و`$SKILLS_DIR/agy-multi-account`.
+   2. المدخلات: بطاقة هوية العلم وفهرسه المعياري المعتمد من محمد، وحالة الحسابات في شلال الأولويات (`العائلة -> brain -> ram`).
+   3. المخرجات: `00_quota/quota_guard_report.json`.
+   4. البوابة الصارمة `G0`: اعتماد الفهرس المعياري للعلم، وتوفر حصة `>= 20.0%`، وعزل بيئة `HOME` الخفيفة (`mcp_servers == 0` و`plugins == 0`).
+2. **المرحلة 1 (`Stage 1`) — الجرد الأولي للمصادر**:
+   1. المدخلات: روابط قنوات وقوائم يوتيوب، ومعرفات `Archive.org`، وفهارس الأعمال، وقوائم الكتب المؤلفة أو المشروحة.
+   2. المخرجات: `01_discovery/<person_id>_raw.json`.
+   3. البوابة الصارمة `G1`: مطابقة مخطط الجرد القياسي، ووجود مصادر صالحة غير فارغة (`total_sources > 0`) بعد المراجعة اليدوية للعينة.
+3. **المرحلة 2 (`Stage 2`) — التنقيح الدلالي للسلاسل والدروس**:
+   1. المهارة المرتبطة: `$SKILLS_DIR/sheikh-curation`.
+   2. المدخلات: `01_discovery/<person_id>_raw.json`.
+   3. المخرجات: `02_curated/<person_id>.json`، و`02_curated/curated.db`، وملفات `02_curated/series/<person_id>/sXXX/_meta.json`.
+   4. البوابة الصارمة `G2`: `0` عيوب في `deep_scanner_all.py`، و`0` أخطاء في `global_audit.py`، و`0` تكرار لمعرفات `video_id`.
+4. **المرحلة 3 (`Stage 3`) — الاستخراج النصي المزدوج والمحاذاة الصوتية الحقيقية**:
+   1. المهارات المرتبطة: `$SKILLS_DIR/sheikh-series-pipeline` و`$SKILLS_DIR/turath-pdf-to-text`.
+   2. المدخلات: السلاسل المنقحة وتفريغاتها الصوتية وملفات الكتب (`PDF` أو النصوص المهيكلة).
+   3. المخرجات: `03_extracted/series/<person_id>/sXXX/*` و`03_extracted/books/<book_slug>/{adapter_manifest.json, raw_round4_books.json, ...}`.
+   4. البوابة الصارمة `G3`: `0` مقدمات أو خواتيم آلية في ملفات `.txt`، ومحاذاة `CTC` حقيقية غير مزيفة، وحفظ حرفي بنسبة `100.0%` في الكتب (`body_char_loss == 0` و`footnotes_char_loss == 0`).
+5. **المرحلة 4 (`Stage 4`) — الفهرسة العميقة الموحدة وبناء قاعدة الكيانات**:
+   1. المهارة المرتبطة: `$SKILLS_DIR/turath-deep-indexing`.
+   2. المدخلات: مخرجات `03_extracted/series/...` و`03_extracted/books/...` مع الفهرس العام المعياري للعلم.
+   3. المخرجات: `04_knowledge_db/<person_id>_objects.sqlite`، و`round4_9_books_deep.json`، و`lectures_deep_merged.json`، وتقارير البوابات `gate_report_*.json`.
+   4. البوابة الصارمة `G4`: نجاح بوابات الفهرسة بـ `0` أخطاء حرجة (`total_p0_errors == 0`)، و`chars_lost == 0` في `SQLite`، و`0` تسرب بين طبقات السند والمتن.
+6. **المرحلة 5 (`Stage 5`) — التضمين الشعاعي المزدوج المحلي والبحث الهجين**:
+   1. المهارة المرتبطة: `$SKILLS_DIR/turath-embedding-gemma2`.
+   2. المدخلات: `04_knowledge_db/<person_id>_objects.sqlite`.
+   3. المخرجات: جداول المتجهات `passage_embeddings` و`gem_embeddings` داخل `<person_id>_objects.sqlite`، وتقارير `05_reports/ORCHESTRATION_REPORT.md`.
+   4. البوابة الصارمة `G5`: تغطية التضمين بنسبة `100%` (`3072` بايت لكل متجه `float32` ذي بعد `768`)، و`0` رموز ترضية مدمجة في نص المفهوم، ونجاح اختبارات البحث الهجين المفلتر.
 
 ---
 
-## 3. Resumable State Schema (`pipeline_state.json`)
+## 2. المواصفات التفصيلية للبوابات (`G0`–`G5`)
 
-`orchestrate_person.py` persists `pipeline_state.json` at the root of `<work_dir>/<person_id>/pipeline_state.json` after every stage transition:
+### البوابة `G0`: الطبقة الصفرية وحارس الحصة والعزل
+1. التحقق من اعتماد «بطاقة هوية العلم» و«الفهرس العام المعياري للعلم» من محمد قبل تشغيل أي فهرسة.
+2. التحقق من أن الحساب المختار ضمن شلال (`العائلة -> brain -> ram`) يملك حصة متبقية `>= 20.0%` مع حظر استخدام حساب `medmrf10` أو أي مفاتيح `API` خارجية.
+3. التحقق من أن `isolation_info["isolated"] == True` مع `mcp_servers_count == 0` و`plugins_count == 0`.
+
+### البوابة `G1`: سلامة الجرد الأولي للمصادر
+1. وجود ملف `01_discovery/<person_id>_raw.json` وصلاحية بنيته بصيغة `JSON`.
+2. توفر المفاتيح الأساسية: `person_id`, `sheikh_name`, `playlists`, `videos`, `archive_items`, `books`, `stats`.
+3. وجود مصدر واحد صالح على الأقل (`len(videos) + len(books) + len(archive_items) > 0`) مع اكتمال حقلي `video_id` و`title` لكل درس مرئي أو صوتي.
+
+### البوابة `G2`: التحقق من التنقيح الدلالي (`9-Stage Curation`)
+1. وجود ملفات `02_curated/<person_id>.json` و`02_curated/curated.db`.
+2. إرجاع `deep_scanner_all.py` لعدد `0` عيوب (`scanner_flaws_total == 0`).
+3. إرجاع `global_audit.py` لرمز خروج `0` مع نص `"0 errors"`.
+4. تفرد جميع معرفات `video_id` النشطة عبر السلاسل والمحاضرات المستقلة (`0` مكررات).
+5. وجود ملف `_meta.json` لكل سلسلة منقحة في `02_curated/series/<person_id>/<series_id>/_meta.json`.
+
+### البوابة `G3`: الاستخراج النصي والتطهير والمحاذاة
+1. فحوص المسار `3A` (تفريغ السلاسل الصوتية):
+   1. وجود `_meta.json` في كل مجلد سلسلة داخل `03_extracted/series/<person_id>/sXXX/`.
+   2. عدم فراغ أي ملف `.txt` (`len(text.strip()) > 0`).
+   3. إرجاع دالة `strip_preamble_and_header(text)` لقائمة أسباب فارغة `[]` (انعدام المقدمات والخواتيم الآلية).
+   4. وجود ملف محاذاة `.align.json` حقيقي ناتج عن محرك `CTC` الفعلي وليس مولداً بمعادلات حسابية صورية.
+2. فحوص المسار `3B` (الكتب):
+   1. وجود ملفات `adapter_manifest.json` و`round_manifest_r4_r10.json` و`raw_round4_books.json` لكل كتاب في `03_extracted/books/<book_slug>/`.
+   2. كون `adapter_manifest["status"] == "PASS"` مع `body_char_loss == 0` و`footnotes_char_loss == 0` و`retention_pct == 100.0`.
+   3. نجاح `adapter_manifest["manifest_v4_verification"]["passed"] == True`.
+
+### البوابة `G4`: الفهرسة العميقة وبناء قاعدة `SQLite` بلا فقد حرفي
+1. نجاح تقارير البوابات `gate_report_books.json` و`gate_report_lectures.json` بحالة `"PASS"` و`total_p0_errors == 0`.
+2. تطابق عدد الأحرف الخام مع مجموع أحرف المقاطع في `build_objects_sqlite.py` (`chars_lost == 0`).
+3. التحقق المباشر داخل قاعدة `04_knowledge_db/<person_id>_objects.sqlite`:
+   1. وجود الجداول العلائقية وجداول `FTS5` المعتمدة (`sources`, `series`, `lessons_or_parts`, `passages`, `passages_fts`, `persons`, `passage_persons`, `places`, `passage_places`, `events_chronology`, `stories_cases`, `science_gems`, `evidences`, `matn_triangulation`).
+   2. تطابق `SELECT SUM(LENGTH(raw_text)) FROM passages` مع إجمالي الأحرف الأصلية.
+   3. انعدام ظهور رواة سلاسل الإسناد في طبقة `source_layer = 'matn'`.
+   4. انعدام ظهور سنوات وفيات الرواة في طبقة `event_layer = 'historical'`.
+
+### البوابة `G5`: التضمين الشعاعي المزدوج والبحث الهجين
+1. تغطية جدول `passage_embeddings` لجميع صفوف `passages` وتغطية جدول `gem_embeddings` لجميع صفوف `science_gems` بنسبة `100%`.
+2. مطابقة طول كل متجه ثنائي (`vec_matn_blob`, `vec_concept_blob`) لـ `3072` بايت (`768 * 4`) ومعيار `L2 norm` في نطاق `1.0 ± 1e-3`.
+3. خلو جميع نصوص `embed_concept_text` من محارف الترضية المدمجة (`HONORIFIC_RANGE_RE`).
+4. نجاح استعلامات `HybridSearchEngine` عبر أوضاع `hybrid` و`matn` و`concept` و`fts` مع التحقق من عزل طبقة `person_layer="matn"`.
+
+---
+
+## 3. مخطط حالة خط الإنتاج القابل للاستئناف (`pipeline_state.json`)
+
+1. يُحفظ ملف `pipeline_state.json` في جذر `$TURATH_ROOT/workspaces/<person_id>/pipeline_state.json` لتوثيق حالة كل مرحلة وبوابتها:
 
 ```json
 {
   "person_id": "kamali",
   "person_name": "الشيخ سعيد الكملي",
-  "work_dir": "/tmp/orchestrator_workspace/kamali",
-  "updated_at": "2026-10-18T12:00:00Z",
+  "work_dir": "$TURATH_ROOT/workspaces/kamali",
+  "updated_at": "2026-10-28T10:00:00Z",
   "overall_status": "PASS",
   "stages": {
     "0": {
       "name": "stage0_quota_and_lean_guard",
       "gate": "G0",
       "status": "PASS",
-      "completed_at": "2026-10-18T12:00:01Z",
+      "completed_at": "2026-10-28T10:00:01Z",
       "metrics": {
-        "selected_model": "gemini-3.8-flash-high",
         "remaining_pct": 95.0,
         "isolated": true
       },
@@ -99,5 +111,3 @@ This reference documents the exact contracts, schemas, invariants, and gate asse
   }
 }
 ```
-
-When `--resume` is enabled (default), any stage whose `stages[str(stage_num)]["status"] == "PASS"` and whose primary output artifacts still exist on disk is skipped automatically, allowing rapid recovery after fixing an upstream data issue.

@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 import os
-BASE = Path(os.environ.get("TURATH_BOOKS_REPO", "/Users/macm1pro/REPOS/books"))
+BASE = Path(os.environ.get("TURATH_BOOKS_REPO", Path(__file__).resolve().parent))
 SNAPSHOT_DIR = BASE / "source_snapshots"
 PATCH_DIR = BASE / "source_patches"
 

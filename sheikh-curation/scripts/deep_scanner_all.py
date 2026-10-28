@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Deep 6-Point Quality Scanner for Curated Sheikhs.
+Deep 6-Point Quality Scanner for Curated Scholar Archives.
 
 Detects:
 1. Off-topic / foreign unclassified videos inside structured series (videos not in the raw playlist(s) of the series).
-2. Short clips (< 300s or titled 'مقطع'/'برومو'/'تشويقة'/'إعلان'/'فائدة') mixed into long-form series (median >= 900s).
+2. Short clips (< min_duration or titled 'مقطع'/'برومو'/'تشويقة'/'إعلان'/'فائدة') mixed into long-form series (median >= min_series_median).
 3. Numbering resets, backward jumps, or large gaps in display_no among main lessons.
 4. Title-number vs display_no mismatches (where title has explicit الدرس X / الحلقة X / المجلس X != display_no).
-5. Inverted parent-child duration anomalies (where Parent < 300s and Child >= 300s).
+5. Inverted parent-child duration anomalies (where Parent < min_duration and Child >= min_duration).
 6. Orphan children or invalid parent_yt_id links.
 
 Usage:
-    python3 deep_scanner_all.py [--verbose] [--min-duration 300] [--min-series-median 900] [--min-duration-contemplative 120] [sheikh_id ...]
+    python3 deep_scanner_all.py [--data-dir DIR] [--verbose] [--min-duration 300] [--min-series-median 900] [--min-duration-contemplative 120] [target ...]
 """
 
 import argparse
@@ -22,22 +22,17 @@ import re
 import statistics
 import sys
 
-ROOT = (
-    Path(os.environ["CURATED_ROOT"])
-    if "CURATED_ROOT" in os.environ
-    else (
-        Path.cwd()
-        if (Path.cwd() / "data/curated_sheikhs").exists()
-        else Path(__file__).resolve().parents[4]
-    )
-)
-CURATED_DIR = (
-    Path(os.environ["CURATED_DIR"])
-    if "CURATED_DIR" in os.environ
-    else ROOT / "data/curated_sheikhs"
-)
-
 AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+
+def get_default_data_dir() -> Path:
+    env_dir = os.environ.get("CURATION_DATA_DIR") or os.environ.get("CURATED_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    env_root = os.environ.get("CURATED_ROOT")
+    if env_root:
+        return (Path(env_root).expanduser() / "data" / "curated_sheikhs").resolve()
+    return (Path.cwd() / "data" / "curated_sheikhs").resolve()
 
 
 def norm(s: str) -> str:
@@ -57,17 +52,50 @@ def extract_explicit_num(title: str):
     return None
 
 
+def resolve_target_paths(targets: list[str], data_dir: Path) -> list[tuple[str, Path, Path]]:
+    resolved: list[tuple[str, Path, Path]] = []
+    if not targets:
+        if not data_dir.is_dir():
+            return resolved
+        for p in sorted(data_dir.glob("*.json")):
+            if p.name.endswith("_raw.json"):
+                continue
+            stem = p.stem
+            resolved.append((stem, p, data_dir / f"{stem}_raw.json"))
+        return resolved
+
+    for t in targets:
+        cand = Path(t)
+        if cand.suffix == ".json" and cand.exists():
+            stem = cand.stem[:-4] if cand.stem.endswith("_raw") else cand.stem
+            cur_p = cand if not cand.stem.endswith("_raw") else cand.parent / f"{stem}.json"
+            raw_p = cand.parent / f"{stem}_raw.json"
+            resolved.append((stem, cur_p, raw_p))
+        else:
+            stem = t[:-5] if t.endswith(".json") else t
+            resolved.append((stem, data_dir / f"{stem}.json", data_dir / f"{stem}_raw.json"))
+    return resolved
+
+
 def scan_sheikh(
     sh: str,
+    cur_path: Path,
+    raw_path: Path,
     verbose: bool = False,
     min_duration: int = 300,
     min_series_median: int = 900,
     min_duration_contemplative: int = 120,
-):
-    cur_path = CURATED_DIR / f"{sh}.json"
-    raw_path = CURATED_DIR / f"{sh}_raw.json"
-    cur = json.load(open(cur_path, encoding="utf-8"))
-    raw = json.load(open(raw_path, encoding="utf-8")) if raw_path.exists() else {}
+) -> int:
+    if not cur_path.is_file():
+        print(f"[SKIP] File not found: {cur_path}", file=sys.stderr)
+        return 0
+
+    with open(cur_path, encoding="utf-8") as f:
+        cur = json.load(f)
+    raw = {}
+    if raw_path.is_file():
+        with open(raw_path, encoding="utf-8") as f:
+            raw = json.load(f)
 
     v_apps = {}
     v_durs = {}
@@ -263,15 +291,23 @@ def scan_sheikh(
         if not verbose and len(flaws) > 8:
             print(f"  ... and {len(flaws) - 8} more flags")
 
+    return len(series_reports)
 
-if __name__ == "__main__":
+
+def main():
     parser = argparse.ArgumentParser(
-        description="Deep 6-Point Quality Scanner for Curated Sheikhs."
+        description="Deep 6-Point Quality Scanner for Curated Scholar Archives."
     )
     parser.add_argument(
         "targets",
         nargs="*",
-        help="Sheikh IDs to scan (default: all 17 curated sheikhs)",
+        help="Scholar IDs or JSON file paths to scan (default: all *.json in --data-dir)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Directory containing curated <id>.json files (default: $CURATION_DATA_DIR or ./data/curated_sheikhs)",
     )
     parser.add_argument(
         "--verbose",
@@ -299,32 +335,23 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    targets = args.targets
-    if not targets:
-        targets = [
-            "omari",
-            "asimi",
-            "alihani",
-            "hawwa",
-            "bardoni",
-            "sariri",
-            "sayed",
-            "bouti",
-            "gomaa",
-            "kamali",
-            "jifri",
-            "shaarawy",
-            "samarrai",
-            "hashemi",
-            "dedew",
-            "hafiz",
-            "ayman",
-        ]
-    for sh in targets:
+    data_dir = args.data_dir.expanduser().resolve() if args.data_dir else get_default_data_dir()
+    resolved = resolve_target_paths(args.targets, data_dir)
+    if not resolved:
+        print(f"No curated JSON files found in {data_dir}. Pass --data-dir or target files.", file=sys.stderr)
+        sys.exit(1)
+
+    for sh, cur_path, raw_path in resolved:
         scan_sheikh(
             sh,
+            cur_path=cur_path,
+            raw_path=raw_path,
             verbose=args.verbose,
             min_duration=args.min_duration,
             min_series_median=args.min_series_median,
             min_duration_contemplative=args.min_duration_contemplative,
         )
+
+
+if __name__ == "__main__":
+    main()

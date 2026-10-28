@@ -27,20 +27,12 @@ import sys
 import tempfile
 import time
 
+from pathlib import Path
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sanitize_preamble import (  # noqa: E402
-    deduplicate_chunk_boundary_overlap as _sanitize_dedup_chunk_boundary_overlap,
-    strip_preamble_and_header,
-)
+from sanitize_preamble import strip_preamble_and_header  # noqa: E402
 
 AR_RE = re.compile(r'[\u0600-\u06FF]')
-
-
-def deduplicate_chunk_boundary_overlap(text_or_chunks, min_overlap_words=4, max_window_words=55):
-    """إزالة الجمل المكررة عند حدود تقطيع الصوت (chunk boundaries كل 12 دقيقة) مع الحفاظ الكامل على التكرارات التعبدية المشروعة."""
-    return _sanitize_dedup_chunk_boundary_overlap(
-        text_or_chunks, min_overlap_words=min_overlap_words, max_window_words=max_window_words
-    )
 
 
 def find_bin(name, extra_paths):
@@ -55,8 +47,7 @@ def find_bin(name, extra_paths):
 
 
 AGY_BIN = os.environ.get('AGY_BIN') or find_bin('agy', [
-    os.path.expanduser('~/.local/bin/agy'),
-    '/Users/macm1pro/.local/bin/agy',
+    str(Path.home() / '.local/bin/agy'),
     '/root/.local/bin/agy',
 ])
 
@@ -273,10 +264,9 @@ def build_prompt(audio_filename, sheikh='', series='', title='', part_idx=None, 
 
 _PROFILE_RR_COUNTER = 0
 _AUTO_PRO_CACHE = {'profile': None, 'ts': 0.0}
-# خانات التفريغ المستقلة: brain بحصته، وعائلة Google (حصة مشتركة بين أعضائها) كخانة واحدة يتصدرها mb10.
-# عند تعثّر الرأس (حظر/عدم أهلية) ننتقل للتالي بالترتيب؛ جوجل تعاقب الحساب نفسه لا العائلة. المصدر: agy-multi-account/profiles.json
-DEFAULT_PRO_POOL = ('mb10', 'brain')
-FAMILY_FAILOVER = {'mb10': ('bm10', 'mb19', 'medmrfco')}
+# شلال الأولويات الصارم (Strict Priority Waterfall): العائلة [mb10, bm10, mb19, medmrfco] -> brain -> ram
+FAMILY_POOL = ('mb10', 'bm10', 'mb19', 'medmrfco')
+PRIORITY_WATERFALL = (FAMILY_POOL, ('brain',), ('ram',))
 _PROFILE_CALL_COUNTS = {}
 
 
@@ -298,7 +288,7 @@ def _trip_profile_circuit_breaker(prof_name, reason):
 
 
 def _find_profile_home_dir(prof_name):
-    roots = ['/root/.agy-profiles', os.path.expanduser('~/.agy-profiles'), '/Users/macm1pro/.agy-profiles']
+    roots = ['/root/.agy-profiles', str(Path.home() / '.agy-profiles')]
     for r in roots:
         cand = os.path.join(r, prof_name)
         tok = os.path.join(cand, '.gemini', 'antigravity-cli', 'antigravity-oauth-token')
@@ -336,64 +326,53 @@ def _probe_usage(h):
     return g5, gw, False
 
 
-def _pick_highest_weekly_pro_profile():
-    """يفحص خانتَي التفريغ المستقلتين (brain وعائلة Google برأس mb10 وتناوب عند التعثّر) ويختار صاحب الكوتة الأسبوعية الأعلى (مع كاش 180ث)."""
+def _pick_waterfall_pro_profile():
+    """يتبع شلال الأولويات الصارم بالتتابع: العائلة [mb10, bm10, mb19, medmrfco] أولاً، ثم brain، ثم ram."""
     now = time.time()
     if _AUTO_PRO_CACHE['profile'] and (now - _AUTO_PRO_CACHE['ts'] < 180.0):
         p = _AUTO_PRO_CACHE['profile']
-        h = _find_profile_home_dir(p)
-        if h:
-            return p, h
+        if not _is_profile_disabled(p):
+            h = _find_profile_home_dir(p)
+            if h:
+                return p, h
 
-    best_prof = None
-    best_home = None
-    best_score = (-1, -1.0, -1.0)
-    for slot_head in DEFAULT_PRO_POOL:
-        chosen = None
-        for prof in (slot_head,) + tuple(FAMILY_FAILOVER.get(slot_head, ())):
+    for tier in PRIORITY_WATERFALL:
+        for prof in tier:
+            if _is_profile_disabled(prof):
+                continue
             h = _find_profile_home_dir(prof)
             if not h:
                 continue
             g5, gw, failed = _probe_usage(h)
             if failed:
-                print('[تناوب العائلة] %s معطّل/غير مؤهل — الانتقال للتالي' % prof, flush=True)
+                print('[شلال الحسابات] %s معطّل/غير مؤهل — الانتقال للتالي' % prof, flush=True)
                 continue
-            chosen = (prof, h, g5, gw)
+            if g5 >= 8.0 and gw >= 2.0:
+                _AUTO_PRO_CACHE['profile'] = prof
+                _AUTO_PRO_CACHE['ts'] = now
+                print(
+                    '[شلال الحسابات للتفريغ] ★ %s (الكوتة الأسبوعية=%.2f%% · 5h=%.2f%%)'
+                    % (prof, gw, g5),
+                    flush=True
+                )
+                return prof, h
+            # حصة العائلة مشتركة بين أعضائها: إذا نفدت حصة أحد أعضائها انتقل للمستوى التالي في الشلال
             break
-        if not chosen:
-            continue
-        prof, h, g5, gw = chosen
-        eligible = 1 if (g5 >= 8.0 and gw >= 2.0) else 0
-        score = (eligible, gw, g5)
-        if score > best_score:
-            best_score = score
-            best_prof = prof
-            best_home = h
-
-    if best_prof and best_home:
-        _AUTO_PRO_CACHE['profile'] = best_prof
-        _AUTO_PRO_CACHE['ts'] = now
-        print(
-            '[اختيار حساب Pro للتفريغ] ★ %s (الكوتة الأسبوعية=%.2f%% · 5h=%.2f%%)'
-            % (best_prof, best_score[1], best_score[2]),
-            flush=True
-        )
-        return best_prof, best_home
     return 'default', None
 
 
 def _resolve_agy_profile_home(part_idx=None):
-    """تحديد مجلد HOME للبروفايل المطلوب:
-    - الافتراضي (دون تحديد أو auto/pro): يختار تلقائياً بين brain وعائلة Google (mb10 ثم التالي عند التعثّر) ذا الكوتة الأسبوعية الأعلى.
-    - لا يُستخدم الحساب الرئيسي medmrf10 أبداً إلا إذا طُلب صراحة عبر --agy-profile medmrf10.
+    """تحديد مجلد HOME للبروفايل المطلوب وفق شلال الأولويات الصارم:
+    - الافتراضي: العائلة [mb10, bm10, mb19, medmrfco] -> brain -> ram.
+    - يُحظر استخدام الحساب الرئيسي medmrf10 في مهام التفريغ الخلفية.
     """
     global _PROFILE_RR_COUNTER
     raw = (os.environ.get('AGY_PROFILES') or os.environ.get('AGY_PROFILE') or '').strip()
-    if not raw or raw.lower() in ('auto', 'pro', 'default_pro'):
-        return _pick_highest_weekly_pro_profile()
-    profs = [p.strip() for p in raw.split(',') if p.strip()]
+    if not raw or raw.lower() in ('auto', 'pro', 'default_pro', 'waterfall'):
+        return _pick_waterfall_pro_profile()
+    profs = [p.strip() for p in raw.split(',') if p.strip() and p.strip() != 'medmrf10']
     if not profs:
-        return _pick_highest_weekly_pro_profile()
+        return _pick_waterfall_pro_profile()
     if len(profs) == 1:
         chosen = profs[0]
     elif part_idx is not None:
@@ -632,12 +611,6 @@ def _measure_chunk_speech(cpath, len_s=0.0, max_vol_floor_db=-48.0):
     return False, 0.0, len_s
 
 
-def _is_dead_silent_chunk(cpath, max_vol_floor_db=-48.0):
-    """فحص ما إذا كان المقطع الصوتي صامتاً بالكامل (-inf dB أو <= max_vol_floor_db)."""
-    is_sil, max_v, _ = _measure_chunk_speech(cpath, max_vol_floor_db=max_vol_floor_db)
-    return is_sil, max_v
-
-
 def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=None, total_parts=None, min_words=200, timeout_s=240, retries=3, stagger_s=0.0, sem=None, dur_s=0.0):
     """تشغيل agy داخل مجلد مؤقت معزول مع حجز خانة عالمية محمية بقفل النواة طوال مدة عمل العملية."""
     if stagger_s > 0:
@@ -783,7 +756,7 @@ def transcribe_single_file(audio_path, model, sheikh, series, title, part_idx=No
                     if t2 == '__SILENT_CHUNK__' and t1:
                         return t1.strip(), round(e1 + e2, 1)
                     if t2:
-                        return deduplicate_chunk_boundary_overlap([t1.strip(), t2.strip()]), round(e1 + e2, 1)
+                        return '\n\n'.join([t1.strip(), t2.strip()]), round(e1 + e2, 1)
             except Exception as e:
                 print('  [تحذير إنقاذ] تعذر تقسيم المقطع المتعثر: %s' % e, flush=True)
     return '', 0.0
@@ -1010,7 +983,7 @@ def main():
                                     ), flush=True)
                                 results[idx] = ptxt
                     parts_txt = [results[i] for i in range(1, len(chunks) + 1) if results.get(i)]
-                    full_txt = deduplicate_chunk_boundary_overlap(parts_txt) if (ok and len(results) == len(chunks) and parts_txt) else ''
+                    full_txt = '\n\n'.join(parts_txt) if (ok and len(results) == len(chunks) and parts_txt) else ''
                     if full_txt and os.path.exists(chunk_cache_path):
                         try:
                             os.remove(chunk_cache_path)

@@ -3,9 +3,9 @@
 - **تاريخ التسليم:** `2026-10-16 07:50 +02:00`
 - **أحدث التزام موحّد (`main` / `origin/main`):** يتضمن التزام ترقية المهارة `796ca83` (`feat(turath-deep-indexing): upgrade to USDB v5.6 & Gate v4.3 after multi-repo stress tests (Mistakes #27-#38)`) فوق `39c88af`، مدمجاً مع تحديثات `sheikh-series-pipeline` (`c38178c`).
 - **المسارات الحية:**
-  - مجلد المهارة: `/Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/`
+  - مجلد المهارة: `$SKILLS_DIR/turath-deep-indexing/`
   - المستودع البعيد: `https://github.com/medmrf-10/SKILLS.git` (`branch: main`)
-  - مستودع الكتب المرجعي: `/Users/macm1pro/REPOS/books/`
+  - مستودع الكتب المرجعي: `$TURATH_BOOKS_REPO/`
 
 ---
 
@@ -28,32 +28,30 @@
 
 ### أ) السكربتات الحتمية (`turath-deep-indexing/scripts/`)
 
-| السكربت | الوظيفة | طريقة التشغيل القياسية |
-|---|---|---|
-| [`manifest_v4.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/manifest_v4.py) | الفحص الاستباقي (`Pre-Flight v4.1`) وتجهيز `raw_round{N}_books.json` من ملفات الكتب الخام مع تطبيع مفاتيح الأجزاء (`i`, `t`, `pg`, `fn`) | `python3 scripts/manifest_v4.py` |
-| [`fn_linker_v4.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/fn_linker_v4.py) | ربط الحواشي بالمتن، كشف الآيات (`﴿...﴾` و`{...}`)، وتصنيف الحواشي المبتورة من المصدر (`(¬١)` عندما `fn=[]`) | يُستورد تلقائياً داخل `manifest_v4.py` و`merge_round.py` |
-| [`merge_round.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_round.py) | القص الحتمي للمقاطع وبوابة الجودة الصارمة (`Gate v4.3`) للكتب التراثية (22 علماً مسجلاً) | `python3 scripts/merge_round.py [--work-dir <dir>] <round_num>` |
-| [`check_round_p0.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/check_round_p0.py) | الفحص السريع لأخطاء `P0` لكل علم في الجولة دون كتابة ملف الدمج النهائي | `python3 scripts/check_round_p0.py [--work-dir <dir>] <round_num> [science]` |
-| [`merge_lecture.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_lecture.py) | القص الحتمي وبوابة الجودة (`Gate v5.1`) لتفريغات الدروس الصوتية/المرئية + إسقاط التوقيت من `.align.json` + تثليث المتون | `python3 scripts/merge_lecture.py [--work-dir <dir>] [lecture_id ...]` |
-| [`merge_course.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_course.py) | القص الحتمي وبوابة الجودة (`Gate v5.1`) للدورات التقنية والرياضية + حماية الكتل الذرية الخمس | `python3 scripts/merge_course.py [--work-dir <dir>] [course_id ...]` |
-| [`build_cross_corpus_graph.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/build_cross_corpus_graph.py) | بناء الرسم البياني العابر للمدونات (جسر الآيات مع تفاسير `firdaws`، جسر المتون المشروحة، وجسر الأعلام المشتركين) | `python3 scripts/build_cross_corpus_graph.py [--work-dir <dir>]` |
-| [`test_skill_gates.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/test_skill_gates.py) | حزمة الاختبارات الوحدوية والتراجعية للحالات الحدية (`Mistakes #27–#38`) | `python3 scripts/test_skill_gates.py` |
+1. **السكربت [`manifest_v4.py`](./scripts/manifest_v4.py)**: الوظيفة: الفحص الاستباقي (`Pre-Flight v4.1`) وتجهيز `raw_round{N}_books.json` من ملفات الكتب الخام مع تطبيع مفاتيح الأجزاء (`i`, `t`, `pg`, `fn`) — طريقة التشغيل القياسية: `python3 scripts/manifest_v4.py`
+2. **السكربت [`fn_linker_v4.py`](./scripts/fn_linker_v4.py)**: الوظيفة: ربط الحواشي بالمتن، كشف الآيات (`﴿...﴾` و`{...}`)، وتصنيف الحواشي المبتورة من المصدر (`(¬١)` عندما `fn=[]`) — طريقة التشغيل القياسية: يُستورد تلقائياً داخل `manifest_v4.py` و`merge_round.py`
+3. **السكربت [`merge_round.py`](./scripts/merge_round.py)**: الوظيفة: القص الحتمي للمقاطع وبوابة الجودة الصارمة (`Gate v4.3`) للكتب التراثية (22 علماً مسجلاً) — طريقة التشغيل القياسية: `python3 scripts/merge_round.py [--work-dir <dir>] <round_num>`
+4. **السكربت [`check_round_p0.py`](./scripts/check_round_p0.py)**: الوظيفة: الفحص السريع لأخطاء `P0` لكل علم في الجولة دون كتابة ملف الدمج النهائي — طريقة التشغيل القياسية: `python3 scripts/check_round_p0.py [--work-dir <dir>] <round_num> [science]`
+5. **السكربت [`merge_lecture.py`](./scripts/merge_lecture.py)**: الوظيفة: القص الحتمي وبوابة الجودة (`Gate v5.1`) لتفريغات الدروس الصوتية/المرئية + إسقاط التوقيت من `.align.json` + تثليث المتون — طريقة التشغيل القياسية: `python3 scripts/merge_lecture.py [--work-dir <dir>] [lecture_id ...]`
+6. **السكربت [`merge_course.py`](./scripts/merge_course.py)**: الوظيفة: القص الحتمي وبوابة الجودة (`Gate v5.1`) للدورات التقنية والرياضية + حماية الكتل الذرية الخمس — طريقة التشغيل القياسية: `python3 scripts/merge_course.py [--work-dir <dir>] [course_id ...]`
+7. **السكربت [`build_cross_corpus_graph.py`](./scripts/build_cross_corpus_graph.py)**: الوظيفة: بناء الرسم البياني العابر للمدونات (جسر الآيات مع تفاسير `firdaws`، جسر المتون المشروحة، وجسر الأعلام المشتركين) — طريقة التشغيل القياسية: `python3 scripts/build_cross_corpus_graph.py [--work-dir <dir>]`
+8. **السكربت [`test_skill_gates.py`](./scripts/test_skill_gates.py)**: الوظيفة: حزمة الاختبارات الوحدوية والتراجعية للحالات الحدية (`Mistakes #27–#38`) — طريقة التشغيل القياسية: `python3 scripts/test_skill_gates.py`
 
 ### ب) ملفات التوثيق المرجعية (`turath-deep-indexing/references/`)
-- [`SKILL.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/SKILL.md): الدليل التنفيذي الشامل للإصدار `v5.6`.
-- [`01-architecture-and-schema-v4.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/references/01-architecture-and-schema-v4.md): المعمارية ذات الطبقتين وجدول الـ 22 علماً المسجلة.
-- [`02-pre-flight-and-footnotes.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/references/02-pre-flight-and-footnotes.md): معالجة الحواشي والترقيم في طبعات الشاملة وتراث.
-- [`03-extraction-rules-and-gate-v4.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/references/03-extraction-rules-and-gate-v4.md): قواعد الاستخراج الوكيلي وبوابة `0 P0`.
-- [`04-all-mistakes-and-postmortems.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/references/04-all-mistakes-and-postmortems.md): سجل الأخطاء الـ 38 (`Mistakes #1–#38` في 6 مجموعات) وأسبابها الجذرية وحلولها البرمجية.
-- [`05-rounds-1-to-3-status-and-roadmap.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/references/05-rounds-1-to-3-status-and-roadmap.md): سجل الجولات `Round 1..10` (`81` كتاباً تراثياً مفهرساً بمعيار `0 P0`).
-- [`06-usdb-v5-universal-adapters.md`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/references/06-usdb-v5-universal-adapters.md): توثيق المحولات الأربعة (`Adapters A–D`) وترقيات `USDB v5.6`.
+- [`SKILL.md`](./SKILL.md): الدليل التنفيذي الشامل للإصدار `v5.6`.
+- [`01-architecture-and-schema-v4.md`](./references/01-architecture-and-schema-v4.md): المعمارية ذات الطبقتين وجدول الـ 22 علماً المسجلة.
+- [`02-pre-flight-and-footnotes.md`](./references/02-pre-flight-and-footnotes.md): معالجة الحواشي والترقيم في طبعات الشاملة وتراث.
+- [`03-extraction-rules-and-gate-v4.md`](./references/03-extraction-rules-and-gate-v4.md): قواعد الاستخراج الوكيلي وبوابة `0 P0`.
+- [`04-all-mistakes-and-postmortems.md`](./references/04-all-mistakes-and-postmortems.md): سجل الأخطاء الـ 38 (`Mistakes #1–#38` في 6 مجموعات) وأسبابها الجذرية وحلولها البرمجية.
+- [`05-rounds-1-to-3-status-and-roadmap.md`](./references/05-rounds-1-to-3-status-and-roadmap.md): سجل الجولات `Round 1..10` (`81` كتاباً تراثياً مفهرساً بمعيار `0 P0`).
+- [`06-usdb-v5-universal-adapters.md`](./references/06-usdb-v5-universal-adapters.md): توثيق المحولات الأربعة (`Adapters A–D`) وترقيات `USDB v5.6`.
 
 ---
 
 ## ٣. كيف تعمل المهارة على أي سلسلة دروس أو كتاب؟ (دورة العمل من ٣ خطوات)
 
 1. **الخطوة ١ (تجهيز ملف الإدخال الخام):**
-   - لسلسلة دروس مفرغة ومحاذاة صوتياً (مثلاً من `/Users/macm1pro/REPOS/hawshat/playlists/lessons/<series>/` أو من مخرجات `sheikh-series-pipeline` مثل `/tmp/bardouni_1005_after/`): يُبنى ملف `raw_lectures.json` يضم نص كل حلقة (`text`) ومسار ملف محاذاتها (`align_path`: `.align.json`) ورمز الفيديو (`video_id`) وفقرات المتن المشروح (`base_matn_clauses`) إن كانت السلسلة شرحاً لمتن.
+   - لسلسلة دروس مفرغة ومحاذاة صوتياً (مثلاً من `$LESSONS_REPO/<series>/` أو من مخرجات `sheikh-series-pipeline` مثل `/tmp/bardouni_1005_after/`): يُبنى ملف `raw_lectures.json` يضم نص كل حلقة (`text`) ومسار ملف محاذاتها (`align_path`: `.align.json`) ورمز الفيديو (`video_id`) وفقرات المتن المشروح (`base_matn_clauses`) إن كانت السلسلة شرحاً لمتن.
 2. **الخطوة ٢ (الاستخراج الوكيلي بالمراسي فقط — `deep_lecture_<id>.json`):**
    - يقرأ الوكيل نص الحلقة، ولا ينسخ المتن الطويل، بل يقسمه موضوعياً بوضع **مرساة نصية قصيرة (`anchor_start` من 4–8 كلمات حرفية)** لكل مقطع (`<= 2800` حرف)، ويستخرج:
      - `sub_heading`, `summary`, `topics`, `persons`, `places`, `chronology`, `evidences`, `search_queries`
@@ -63,7 +61,7 @@
 3. **الخطوة ٣ (الدمج الحتمي وبوابة `0 P0`):**
    - تشغيل:
      ```bash
-     python3 /Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_lecture.py --work-dir <dir>
+     python3 $SKILLS_DIR/turath-deep-indexing/scripts/merge_lecture.py --work-dir <dir>
      ```
    - يقوم السكربت بقص النص الأصلي حرفياً بين المراسي (`100% Zero Loss`)، وإسقاط ثواني البداية والنهاية (`start_sec`, `end_sec`, `youtube_clip_url`) لكل مقطع ودرة وقصة واقتباس من `.align.json`، والتحقق من خلو الاستخراج من أي خطأ `P0`.
 
@@ -97,8 +95,8 @@
 تم تنفيذ الفهرسة العميقة الكاملة (`Track 2: Spoken Video Lectures` + `Track 4: Cross-Corpus Knowledge Graph`) على كامل السلسلة (**9 دروس، 10 ساعات و23 دقيقة، 308,201 حرف، 55,481 كلمة**) في `/tmp/bardouni_muqaddimat_usdb/`:
 
 1. **إصلاحان برمجيان للتكامل المباشر مع `sheikh-series-pipeline` v4.2:**
-   - في [`merge_lecture.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/merge_lecture.py): دعم المفتاح `"x"` الذي يولده `ctc_pure_align.py` v4.2 في ملفات `.align.json` إلى جانب المفتاح `"w"`، مع إضافة اختبار انحداري `test_12_ctc_pure_v4_x_key_support` في [`test_skill_gates.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/test_skill_gates.py) (`12/12 OK`).
-   - في [`build_cross_corpus_graph.py`](file:///Users/macm1pro/REPOS/SKILLS/turath-deep-indexing/scripts/build_cross_corpus_graph.py): تجميع كل فقرات المتن (`base_matn_clauses`) عبر جميع دروس السلسلة المشتركة في `base_work_id` (`27` فقرة من `MUQ:01_1` إلى `MUQ:09_3`)، مع الرجوع التلقائي إلى مستودع الكتب التراثية (`81` كتاباً) عند تشغيل `--work-dir` في مجلد معزول.
+   - في [`merge_lecture.py`](./scripts/merge_lecture.py): دعم المفتاح `"x"` الذي يولده `ctc_pure_align.py` v4.2 في ملفات `.align.json` إلى جانب المفتاح `"w"`، مع إضافة اختبار انحداري `test_12_ctc_pure_v4_x_key_support` في [`test_skill_gates.py`](./scripts/test_skill_gates.py) (`12/12 OK`).
+   - في [`build_cross_corpus_graph.py`](./scripts/build_cross_corpus_graph.py): تجميع كل فقرات المتن (`base_matn_clauses`) عبر جميع دروس السلسلة المشتركة في `base_work_id` (`27` فقرة من `MUQ:01_1` إلى `MUQ:09_3`)، مع الرجوع التلقائي إلى مستودع الكتب التراثية (`81` كتاباً) عند تشغيل `--work-dir` في مجلد معزول.
 2. **حصيلة التحقق الصارم (`Gate v5.1` — `0 P0` في جميع الدروس التسعة):**
    - **الدروس المفهرسة:** `9 / 9` (`bardouni_muqaddimat_01` .. `bardouni_muqaddimat_09`) — كلها `passed=True, p0=0`، استرجاع نصي `100% Zero Loss` (`308,201 / 308,201` حرف)، ومحاذاة زمنية `ctc_forced_alignment` من `.align.json`.
    - **إجمالي المقاطع الموضوعية (`deep_toc_passages`):** `153` مقطعاً مفصلاً مع روابط يوتيوب بالثانية (`youtube_clip_url`).
